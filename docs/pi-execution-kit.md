@@ -28,6 +28,16 @@ After an eligible idle period, Fabric deterministically compacts before the next
 
 Retry activity and cancellation are retained. Final broker failures stop worker retries: an exhausted request must not be replayed by another retry owner. Same-provider credential pools use multiprovider; different models/providers require explicit fallback targets. Fallback never replays after output starts. Scheduler health is bounded process-local state; restarting a backend resets that health, not the saved routing policy. Credentials remain backend-only.
 
+## Bot memory across conversations
+
+Fabric provides explicit source-backed `memory.recall`, `memory.expand`, `memory.sessions`, and guest `memory.walk` primitives through its lightweight `pi-fabric/memory` entry. It does not decide which conversations a bot may read or automatically inject memories.
+
+Rakazo binds a backend source to the current space, owner, bot, and destination thread. Eligible private root runs can search the bot's retained DM and same-owner groups where it is still a member. Group turns receive one bounded, source-linked selection of relevant prior assistant work; exact retrieval stays available on demand. No `remember` call, live worker, or optional hosted memory service is required for retained conversation output.
+
+Every source read revalidates access. Foreign owners, bots and spaces, removed group membership, archived conversations, deleted messages, and cleared history do not gain access through cached pointers. Helpers, dispatched workers, external messaging and webhook-triggered runs do not inherit bot-wide archive authority. The existing current-session provider remains the fallback when no host memory callback is supplied.
+
+This is retained conversation memory, not a promise of complete lifetime capture. The source exposes sanitized product-visible evidence, not opaque checkpoints, private reasoning, credentials, or arbitrary tool state. The initial archive window prioritizes the latest 400 messages per conversation, up to 25 other group memberships, with per-message and total-text bounds. Enumeration and projection limits remain visible in coverage; this is not a complete lifetime index, and a missing result is not evidence that work never happened. Web, Electron and mobile share this backend behavior without additional status chrome.
+
 ## Model visibility
 
 Advanced model settings share one account-scoped preference across web, Electron, and mobile: `models.getVisibility()` and `models.setVisibility({ hide: [{ provider, model? }] })`. Omitting `model` hides a whole provider. `models.listForVisibility()` returns the existing public catalog for hide/unhide controls; ordinary `models.list()` excludes hidden entries. Rules use exact, case-sensitive canonical identities, with at most 100 rules, 100-character providers, and 300-character model IDs. Wildcards are rejected rather than passing network input to upstream's backtracking glob matcher.

@@ -16,7 +16,7 @@ import { DELEGATION_TOOL_NAMES } from "./builtin-tools.js";
 import { boundedExecutionEvidence } from "./pi-execution-evidence.js";
 import { applyManagedModelSelection } from "./pi-model-handoff.js";
 import { ModelBridge } from "./pi-rpc-model-bridge.js";
-import { type AgentProcessHost, type JsonRecord, record } from "./pi-rpc-protocol.js";
+import { type AgentProcessHost, type JsonRecord, memoryAction, record } from "./pi-rpc-protocol.js";
 import { RunAuthority, ToolBridge } from "./pi-rpc-tool-bridge.js";
 import { AsyncChannel, JsonPeer } from "./pi-rpc-transport.js";
 import { thinkingLevelFor, toPiImages } from "./pi-runtime.js";
@@ -32,7 +32,13 @@ export class ManagedPiRuntime implements AgentRuntime {
       id: "pi",
       contractVersion: "1",
       adapterVersion: "0.2.0",
-      capabilities: { streaming: true, compaction: true, tools: true, scripted: false },
+      capabilities: {
+        streaming: true,
+        compaction: true,
+        tools: true,
+        scripted: false,
+        memory: true,
+      },
     };
   }
   async abort(runId: string) {
@@ -289,6 +295,8 @@ export class ManagedPiRuntime implements AgentRuntime {
               ? (seen) => request.claimParticipantSteering!(childId, seen)
               : undefined,
             runtimeBoundary: request.runtimeBoundary,
+            // Least authority: delegated children never inherit host memory.
+            memory: undefined,
             queueOnly: false,
           },
           context,
@@ -563,6 +571,21 @@ export class ManagedPiRuntime implements AgentRuntime {
         messages: messages.map((item) => ({ ...item, images: toPiImages(item.images) })),
       };
     };
+    // Host-backed source memory crosses the same authenticated bridge and authority as tools.
+    const serveMemory = async (data: unknown) => {
+      const input = record(data);
+      const action = memoryAction(input.action);
+      const args = record(input.args);
+      await authority.check();
+      const memory = request.memory;
+      if (!memory) throw new Error("Host memory is not authorized for this run");
+      try {
+        return await memory({ action, args, signal });
+      } finally {
+        // A pause or lease revoke during the awaited read must not return a late result.
+        await authority.check();
+      }
+    };
     const handle = async (message: JsonRecord): Promise<unknown> => {
       switch (message.operation) {
         case "tool":
@@ -572,6 +595,8 @@ export class ManagedPiRuntime implements AgentRuntime {
         case "model_cancel":
           broker.cancel(message.data);
           return {};
+        case "memory":
+          return serveMemory(message.data);
         case "boundary":
           return boundary("before_model");
         case "checkpoint": {
@@ -732,12 +757,15 @@ export class ManagedPiRuntime implements AgentRuntime {
             tools: tools.catalog,
             model: broker.metadata(),
             thinkingLevel: thinkingLevelFor(broker.model, request.model.thinkingLevel),
+            memory: request.memory !== undefined,
           },
           signal,
         ),
       );
       if (ready.version !== 1 || ready.runtimeVersion !== "0.85.1" || ready.nativeTools !== false)
         throw new Error("Unsafe or incompatible Pi worker");
+      if (request.memory && ready.memory !== true)
+        throw new Error("Managed worker lacks host memory support");
       const previousSelection = ModelSelectionStatusSchema.safeParse(
         request.session?.restore ? record(request.session.restore).modelSelection : undefined,
       );

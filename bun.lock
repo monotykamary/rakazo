@@ -261,6 +261,7 @@
         "koffi": "^2.9.0",
         "nodemailer": "^7.0.11",
         "pg": "^8.16.3",
+        "pi-fabric": "file:../../vendor/pi-kit/pi-fabric-0.89.0-6f981b7f533a.tgz",
         "pi-multiprovider": "file:../../vendor/pi-kit/pi-multiprovider-0.2.10-7f54b802745f.tgz",
         "sendblue": "3.16.1",
         "sharp": "^0.35.3",
@@ -398,7 +399,7 @@
         "@earendil-works/pi-coding-agent": "0.85.1",
         "@earendil-works/pi-tui": "0.85.1",
         "@monotykamary/pi-retry": "file:../../vendor/pi-kit/monotykamary-pi-retry-0.8.6-ac70784e6bb9.tgz",
-        "pi-fabric": "file:../../vendor/pi-kit/pi-fabric-0.88.2-a0651b757cc0.tgz",
+        "pi-fabric": "file:../../vendor/pi-kit/pi-fabric-0.89.0-6f981b7f533a.tgz",
         "pi-fovea": "file:../../vendor/pi-kit/pi-fovea-0.22.1-b8a01161c936.tgz",
         "pi-hide-providers": "file:../../vendor/pi-kit/pi-hide-providers-0.1.18-d26f6fc7825e.tgz",
         "pi-multiprovider": "file:../../vendor/pi-kit/pi-multiprovider-0.2.10-7f54b802745f.tgz",
@@ -465,6 +466,17 @@
       },
     },
   },
+  "trustedDependencies": [
+    "esbuild",
+    "electron-winstaller",
+    "@prisma/engines",
+    "ssh2",
+    "cpu-features",
+    "electron",
+    "@ast-grep/cli",
+    "prisma",
+    "koffi",
+  ],
   "patchedDependencies": {
     "app-builder-lib@26.15.3": "patches/app-builder-lib@26.15.3.patch",
   },
@@ -1197,7 +1209,7 @@
 
     "@modelcontextprotocol/sdk": ["@modelcontextprotocol/sdk@1.30.0", "", { "dependencies": { "@hono/node-server": "1.19.17", "ajv": "8.20.0", "ajv-formats": "3.0.1", "content-type": "1.0.5", "cors": "2.8.6", "cross-spawn": "7.0.6", "eventsource": "3.0.7", "eventsource-parser": "3.1.1", "express": "5.2.1", "express-rate-limit": "8.6.2", "hono": "4.13.1", "jose": "6.2.8", "json-schema-typed": "8.0.2", "pkce-challenge": "5.0.1", "raw-body": "3.0.2", "zod-to-json-schema": "3.25.2" }, "peerDependencies": { "@cfworker/json-schema": "^4.1.1", "zod": "^3.25 || ^4.0" }, "optionalPeers": ["@cfworker/json-schema"] }, "sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA=="],
 
-    "@monotykamary/pi-retry": ["@monotykamary/pi-retry@vendor/pi-kit/monotykamary-pi-retry-0.8.6-ac70784e6bb9.tgz", { "peerDependencies": { "@earendil-works/pi-agent-core": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*" } }, "sha512-QtHwh59/mo+YrGwcAnUXFuUNqilJtQVyKZd8u2kxcgyXvY8fTYTDYCCcgGHrvGSDDLzo4M+ruUfuPobnf36hKA=="],
+    "@monotykamary/pi-retry": ["@monotykamary/pi-retry@../../vendor/pi-kit/monotykamary-pi-retry-0.8.6-ac70784e6bb9.tgz", { "peerDependencies": { "@earendil-works/pi-agent-core": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*" } }, "sha512-QtHwh59/mo+YrGwcAnUXFuUNqilJtQVyKZd8u2kxcgyXvY8fTYTDYCCcgGHrvGSDDLzo4M+ruUfuPobnf36hKA=="],
 
     "@mozilla/readability": ["@mozilla/readability@0.6.0", "", {}, "sha512-juG5VWh4qAivzTAeMzvY9xs9HY5rAcr2E4I7tiSSCokRFi7XIZCAu92ZkSTsIj1OPceCifL3cpfteP3pDT9/QQ=="],
 
@@ -3329,15 +3341,15 @@
 
     "pgpass": ["pgpass@1.0.5", "", { "dependencies": { "split2": "4.2.0" } }, "sha512-FdW9r/jQZhSeohs1Z3sI1yxFQNFvMcnmfuj4WBMUTxOrAyLMaTcE1aAMBiTlbMNaXvBCQuVi0R7hd8udDSP7ug=="],
 
-    "pi-fabric": ["pi-fabric@vendor/pi-kit/pi-fabric-0.88.2-a0651b757cc0.tgz", { "dependencies": { "@earendil-works/pi-ai": "0.85.1", "@jitl/quickjs-singlefile-mjs-release-sync": "0.32.0", "@shikijs/langs": "4.4.3", "@shikijs/themes": "4.4.3", "cross-spawn": "7.0.6", "diff": "9.0.0", "mcporter": "0.12.4", "quickjs-emscripten-core": "0.32.0", "shiki": "4.4.3", "typebox": "1.3.8", "typescript": "6.0.3", "yaml": "2.9.0" }, "optionalDependencies": { "@pydantic/monty": "0.0.23" }, "peerDependencies": { "@earendil-works/pi-coding-agent": ">=0.80.6", "@earendil-works/pi-tui": ">=0.80.6" } }, "sha512-ooBDBXaSHETjb1LzzhbFU3GMNnYyEBt7SeyXWP7UH3dR5qHkVwDxPVDJC9Ckq1HVZiNsGEL+2wovb8WIxtKacQ=="],
+    "pi-fabric": ["pi-fabric@../../vendor/pi-kit/pi-fabric-0.89.0-6f981b7f533a.tgz", { "dependencies": { "@earendil-works/pi-ai": "0.85.1", "@jitl/quickjs-singlefile-mjs-release-sync": "^0.32.0", "@shikijs/langs": "4.4.3", "@shikijs/themes": "4.4.3", "cross-spawn": "^7.0.6", "diff": "^9.0.0", "mcporter": "^0.12.3", "quickjs-emscripten-core": "^0.32.0", "shiki": "4.4.3", "typebox": "1.3.8", "typescript": "^6.0.3", "yaml": "^2.9.0" }, "optionalDependencies": { "@pydantic/monty": "0.0.23" }, "peerDependencies": { "@earendil-works/pi-coding-agent": ">=0.80.6", "@earendil-works/pi-tui": ">=0.80.6" } }, "sha512-14kduLP/JjiA3MlKleTKEpRIGMACvYiChzxIZZrVm0j5dSFD7yllKbR1Sa39+3zoHZIx42QinGeLLu+k0uJTQg=="],
 
-    "pi-fovea": ["pi-fovea@vendor/pi-kit/pi-fovea-0.22.1-b8a01161c936.tgz", { "optionalDependencies": { "@ast-grep/cli": "0.45.3" }, "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*", "typebox": "*" }, "optionalPeers": ["@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"] }, "sha512-Ie+OZr3GdOq2xoTe7P1Zo8eaKu4BWRG+pe4Rpi61tCIkj1JOJgSlID3VCsJ5NHkQHFTCiIsqJOodx7f9ydce/g=="],
+    "pi-fovea": ["pi-fovea@../../vendor/pi-kit/pi-fovea-0.22.1-b8a01161c936.tgz", { "optionalDependencies": { "@ast-grep/cli": "^0.45.3" }, "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*", "typebox": "*" }, "optionalPeers": ["@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"], "bin": { "fovea": "dist/cli.mjs" } }, "sha512-Ie+OZr3GdOq2xoTe7P1Zo8eaKu4BWRG+pe4Rpi61tCIkj1JOJgSlID3VCsJ5NHkQHFTCiIsqJOodx7f9ydce/g=="],
 
-    "pi-hide-providers": ["pi-hide-providers@vendor/pi-kit/pi-hide-providers-0.1.18-d26f6fc7825e.tgz", {}, "sha512-2P9gpVjLgUlUTXR3BMQq7t7d8A78L1FwqV7nLSzayhbQtknTiB1oYOdWu56X4ulLmrMgGMVCZ4nG+7J7QzZ1dQ=="],
+    "pi-hide-providers": ["pi-hide-providers@../../vendor/pi-kit/pi-hide-providers-0.1.18-d26f6fc7825e.tgz", {}, "sha512-2P9gpVjLgUlUTXR3BMQq7t7d8A78L1FwqV7nLSzayhbQtknTiB1oYOdWu56X4ulLmrMgGMVCZ4nG+7J7QzZ1dQ=="],
 
-    "pi-multiprovider": ["pi-multiprovider@vendor/pi-kit/pi-multiprovider-0.2.10-7f54b802745f.tgz", { "peerDependencies": { "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*" } }, "sha512-nqG3f5bc8FNKXkgiu6LjWEat/b2DkCxrcXtYNQY3QFo4CwaI6FF3mfcAqdh+an0ChhaFOlacmbYonNJPiggljQ=="],
+    "pi-multiprovider": ["pi-multiprovider@../../vendor/pi-kit/pi-multiprovider-0.2.10-7f54b802745f.tgz", { "peerDependencies": { "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*" } }, "sha512-nqG3f5bc8FNKXkgiu6LjWEat/b2DkCxrcXtYNQY3QFo4CwaI6FF3mfcAqdh+an0ChhaFOlacmbYonNJPiggljQ=="],
 
-    "pi-queue-steer-factory": ["pi-queue-steer-factory@vendor/pi-kit/pi-queue-steer-factory-0.16.2-7d5a12d3688f.tgz", { "peerDependencies": { "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*" } }, "sha512-r+NvWxn5+21xFH1rFrvZ7KetNdMWmtPnGLcG9PUUj3JnJit/k6kWmpSkfibsSiY8MaOgyDS/k43e6v7VMjv8Qg=="],
+    "pi-queue-steer-factory": ["pi-queue-steer-factory@../../vendor/pi-kit/pi-queue-steer-factory-0.16.2-7d5a12d3688f.tgz", { "peerDependencies": { "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*" } }, "sha512-r+NvWxn5+21xFH1rFrvZ7KetNdMWmtPnGLcG9PUUj3JnJit/k6kWmpSkfibsSiY8MaOgyDS/k43e6v7VMjv8Qg=="],
 
     "piccolore": ["piccolore@0.1.3", "", {}, "sha512-o8bTeDWjE086iwKrROaDf31K0qC/BENdm15/uH9usSC/uZjJOKb2YGiVHfLY4GhwsERiPI1jmwI2XrA7ACOxVw=="],
 
@@ -4247,8 +4259,6 @@
 
     "@react-native/babel-plugin-codegen/@react-native/codegen": ["@react-native/codegen@0.86.3", "", { "dependencies": { "@babel/parser": "7.29.8", "hermes-parser": "0.36.0", "invariant": "2.2.4", "nullthrows": "1.1.1", "tinyglobby": "0.2.17", "yargs": "17.7.3" }, "peerDependencies": { "@babel/core": "*" } }, "sha512-Ux4jHi0fh+bdtVEcL0gaPLbY56V+SvFUDl/8sRAE1jdb4k+o7fT/4Nc29yz4X+qfjstkSqObQTMBGhdzxH9JvA=="],
 
-    "@react-native/community-cli-plugin/@react-native/metro-config": ["@react-native/metro-config@0.86.2", "", { "dependencies": { "@react-native/js-polyfills": "0.86.2", "@react-native/metro-babel-transformer": "0.86.2", "metro-config": "0.84.5", "metro-runtime": "0.84.5" } }, "sha512-hJno256j+MS0b3JD1aD3ouTGZVacKNVBuXL2atMQQ8BZ060vl1ptnZ83y569aDW+/rgFSOcqn6ydKeSz4uUKQQ=="],
-
     "@react-native/dev-middleware/serve-static": ["serve-static@1.16.3", "", { "dependencies": { "encodeurl": "2.0.0", "escape-html": "1.0.3", "parseurl": "1.3.3", "send": "0.19.2" } }, "sha512-x0RTqQel6g5SY7Lg6ZreMmsOzncHFU7nhnRWkKgWuMTu5NN0DR5oruckMqRvacAN9d5w6ARnRBXl9xhDCgfMeA=="],
 
     "@react-native/dev-middleware/ws": ["ws@7.5.13", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": "^5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-rsKI6xDBFVf4r/x8XyChGK04QR/XHroxs/jUcoWvtEZM8TPU/X/uIY9B1CsSzYws9ZJb/6bbBu7dPhFW00CAoA=="],
@@ -4817,10 +4827,6 @@
 
     "@react-native-vector-icons/common/plist/@xmldom/xmldom": ["@xmldom/xmldom@0.9.11", "", {}, "sha512-tW8bcK3hsG0/uqSnNz6TK4BkcuZSezoU7DlnYssILmZDktPnSHHuDJJFM0AJv+13gz2r0iGdrj6qqKeUnxXEDg=="],
 
-    "@react-native/community-cli-plugin/@react-native/metro-config/@react-native/metro-babel-transformer": ["@react-native/metro-babel-transformer@0.86.2", "", { "dependencies": { "@react-native/babel-preset": "0.86.2", "hermes-parser": "0.36.0", "nullthrows": "1.1.1" }, "peerDependencies": { "@babel/core": "*" } }, "sha512-mX1wgLErdb2hDgXJr9zM9SWLe+ZteZTFTwRWGOQ53yEJwc9DVSnxdTlAtVdMeOj2ntycKh0R8jYdat2Am43cwQ=="],
-
-    "@react-native/community-cli-plugin/@react-native/metro-config/metro-runtime": ["metro-runtime@0.84.5", "", { "dependencies": { "@babel/runtime": "7.29.7", "flow-enums-runtime": "0.0.6" } }, "sha512-U1m2+d1Pr+JO2/iVXBB2OfXXityz7tqwIorxfrT15IEgaHvpJBq/OHiqnOWPKJbUl3JcxjcdviZZOKk85oK4Qg=="],
-
     "@react-native/dev-middleware/serve-static/send": ["send@0.19.2", "", { "dependencies": { "debug": "2.6.9", "depd": "2.0.0", "destroy": "1.2.0", "encodeurl": "2.0.0", "escape-html": "1.0.3", "etag": "1.8.1", "fresh": "0.5.2", "http-errors": "2.0.1", "mime": "1.6.0", "ms": "2.1.3", "on-finished": "2.4.1", "range-parser": "1.2.1", "statuses": "2.0.2" } }, "sha512-VMbMxbDeehAxpOtWJXlcUS5E8iXh6QmN+BkRX1GARS3wRaXEEgzCcB10gTQazO42tpNIya8xIyNx8fll1OFPrg=="],
 
     "@slack/web-api/p-queue/eventemitter3": ["eventemitter3@4.0.7", "", {}, "sha512-8guHBZCwKnFhYdHr2ysuRWErTwhoN2X8XELRlrRwpmfeY2jjuUN4taQMsULKUVo1K4DvZl+0pgfyoysHxvmvEw=="],
@@ -5081,8 +5087,6 @@
 
     "@rakazo/mobile/react-native/metro-source-map/source-map": ["source-map@0.5.7", "", {}, "sha512-LbrmJOMUSdEVxIKvdcJzQC+nQhe8FUZQTXQy6+I75skNgn3OoQ0DZA8YnFa7gp8tqtL3KPf1kmo0R5DoApeSGQ=="],
 
-    "@react-native/community-cli-plugin/@react-native/metro-config/@react-native/metro-babel-transformer/@react-native/babel-preset": ["@react-native/babel-preset@0.86.2", "", { "dependencies": { "@babel/plugin-proposal-export-default-from": "7.29.7", "@babel/plugin-syntax-dynamic-import": "7.8.3", "@babel/plugin-syntax-export-default-from": "7.29.7", "@babel/plugin-syntax-nullish-coalescing-operator": "7.8.3", "@babel/plugin-syntax-optional-chaining": "7.8.3", "@babel/plugin-transform-async-generator-functions": "7.29.7", "@babel/plugin-transform-async-to-generator": "7.29.7", "@babel/plugin-transform-block-scoping": "7.29.7", "@babel/plugin-transform-class-properties": "7.29.7", "@babel/plugin-transform-classes": "7.29.7", "@babel/plugin-transform-destructuring": "7.29.7", "@babel/plugin-transform-flow-strip-types": "7.29.7", "@babel/plugin-transform-for-of": "7.29.7", "@babel/plugin-transform-modules-commonjs": "7.29.7", "@babel/plugin-transform-named-capturing-groups-regex": "7.29.7", "@babel/plugin-transform-nullish-coalescing-operator": "7.29.7", "@babel/plugin-transform-optional-catch-binding": "7.29.7", "@babel/plugin-transform-optional-chaining": "7.29.7", "@babel/plugin-transform-private-methods": "7.29.7", "@babel/plugin-transform-private-property-in-object": "7.29.7", "@babel/plugin-transform-react-display-name": "7.29.7", "@babel/plugin-transform-react-jsx": "7.29.7", "@babel/plugin-transform-react-jsx-self": "7.29.7", "@babel/plugin-transform-react-jsx-source": "7.29.7", "@babel/plugin-transform-regenerator": "7.29.8", "@babel/plugin-transform-runtime": "7.29.7", "@babel/plugin-transform-typescript": "7.29.7", "@babel/plugin-transform-unicode-regex": "7.29.7", "@react-native/babel-plugin-codegen": "0.86.2", "babel-plugin-syntax-hermes-parser": "0.36.0", "babel-plugin-transform-flow-enums": "0.0.2", "react-refresh": "0.14.2" }, "peerDependencies": { "@babel/core": "*" } }, "sha512-4XKEJ6jKW9lXMB1O5o47gBoGgolde1fbX13gLW/erlcn+1ky+MHHo5UjuM3RWGdPJHIvIzekDDumSUHhB9x5iQ=="],
-
     "@react-native/dev-middleware/serve-static/send/debug": ["debug@2.6.9", "", { "dependencies": { "ms": "2.0.0" }, "peerDependencies": { "supports-color": "*" }, "optionalPeers": ["supports-color"] }, "sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA=="],
 
     "@react-native/dev-middleware/serve-static/send/fresh": ["fresh@0.5.2", "", {}, "sha512-zJ2mQYM18rEFOudeV4GShTGIQ7RbzA7ozbU9I/XBpm7kqgMywgmylMwXHxZJmkVoYkna9d2pVXVXPdYTP9ej8Q=="],
@@ -5172,8 +5176,6 @@
     "@rakazo/mobile/react-native/@react-native/community-cli-plugin/@react-native/dev-middleware/@react-native/debugger-shell": ["@react-native/debugger-shell@0.86.3", "", { "dependencies": { "cross-spawn": "7.0.6", "debug": "4.4.3", "fb-dotslash": "0.5.8" } }, "sha512-O4ds+J7xZfxkbih9T+cAGegBdvKSPKYJm/lDgC9CpEjFMkmzWTpVLU3Qsv9sqZuo58z+sGhIcJfPsCFFWHpqbQ=="],
 
     "@rakazo/mobile/react-native/@react-native/community-cli-plugin/@react-native/dev-middleware/serve-static": ["serve-static@1.16.3", "", { "dependencies": { "encodeurl": "2.0.0", "escape-html": "1.0.3", "parseurl": "1.3.3", "send": "0.19.2" } }, "sha512-x0RTqQel6g5SY7Lg6ZreMmsOzncHFU7nhnRWkKgWuMTu5NN0DR5oruckMqRvacAN9d5w6ARnRBXl9xhDCgfMeA=="],
-
-    "@react-native/community-cli-plugin/@react-native/metro-config/@react-native/metro-babel-transformer/@react-native/babel-preset/@react-native/babel-plugin-codegen": ["@react-native/babel-plugin-codegen@0.86.2", "", { "dependencies": { "@babel/traverse": "7.29.8", "@react-native/codegen": "0.86.2" } }, "sha512-NNDZqOlNbH5SzgPks1jFDYH3234Rpa5e/nhZymxhIiBH3NcE3uD+rGj/HWXhH7nHF2ToGK6XbUpqy7nmJPeh+g=="],
 
     "@react-native/dev-middleware/serve-static/send/debug/ms": ["ms@2.0.0", "", {}, "sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A=="],
 

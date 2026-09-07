@@ -13,6 +13,7 @@ integration("executor durable runtime boundary", () => {
   let botId: string;
   let threadId: string;
   const requests: AgentRunRequest[] = [];
+  let inspectRequest: ((request: AgentRunRequest) => Promise<void>) | undefined;
   beforeAll(async () => {
     const { createApp } = await import("../../../apps/api/src/app.js");
     app = await createApp({
@@ -60,6 +61,7 @@ integration("executor durable runtime boundary", () => {
     vi.spyOn(app.runtime, "describe").mockReturnValue({ ...descriptor, id: "pi" });
     vi.spyOn(app.runtime, "run").mockImplementation(async function* (request) {
       requests.push(request);
+      await inspectRequest?.(request);
       await request.session?.save({
         version: 1,
         marker: "private transcript",
@@ -82,12 +84,12 @@ integration("executor durable runtime boundary", () => {
     await app?.stop();
     rmSync(dir, { recursive: true, force: true });
   });
-  const run = async (trigger = "user") => {
+  const run = async (trigger = "user", destination = threadId, prompt = "Continue") => {
     const task = await app.prisma.task.create({
-      data: { ...owner, botId, threadId, prompt: "Continue", status: "queued" },
+      data: { ...owner, botId, threadId: destination, prompt, status: "queued" },
     });
     const row = await app.prisma.run.create({
-      data: { ...owner, botId, threadId, taskId: task.id, trigger, status: "queued" },
+      data: { ...owner, botId, threadId: destination, taskId: task.id, trigger, status: "queued" },
     });
     await app.executor.continueRun(row.id, "runtime-test-worker");
     expect((await app.prisma.run.findUniqueOrThrow({ where: { id: row.id } })).status).toBe(
@@ -122,6 +124,62 @@ integration("executor durable runtime boundary", () => {
     });
     const stored = await app.prisma.runtimeSession.findFirstOrThrow({ where: { threadId } });
     expect(stored.revision).toBe(2);
+  });
+  it("recalls retained DM work in fresh and restored group turns without remember", async () => {
+    await app.prisma.message.create({
+      data: {
+        threadId,
+        botId,
+        seq: 9000,
+        role: "assistant",
+        blocks: [{ kind: "text", text: "The deployment uses the cobalt queue." }],
+      },
+    });
+    const group = await app.prisma.chatGroup.create({
+      data: {
+        ...owner,
+        name: "Memory group",
+        members: { create: { botId } },
+        thread: { create: owner },
+      },
+      include: { thread: true },
+    });
+    let turn = 0;
+    inspectRequest = async (request) => {
+      expect(request.memory).toBeTypeOf("function");
+      expect(
+        request.history.some(
+          (item) => item.id === `memory:${request.runId}` && item.content.includes("cobalt"),
+        ),
+      ).toBe(true);
+      if (turn++) expect(request.session?.restore).toMatchObject({ marker: "private transcript" });
+      const signal = new AbortController().signal;
+      const page = (await request.memory!({
+        action: "recall",
+        args: { query: "cobalt" },
+        signal,
+      })) as any;
+      expect(page.error).toBeUndefined();
+      const pointer = page.hits.find((hit: any) => hit.follow.ref === "memory.expand").follow;
+      const expanded = await request.memory!({ action: "expand", args: pointer.args, signal });
+      expect(JSON.stringify(expanded)).toContain("cobalt queue");
+      if (turn === 2) {
+        await app.prisma.message.deleteMany({ where: { threadId, seq: 9000 } });
+        const cleared = (await request.memory!({
+          action: "expand",
+          args: pointer.args,
+          signal,
+        })) as any;
+        expect(cleared.error).toBeDefined();
+        expect(JSON.stringify(cleared)).not.toContain("cobalt queue");
+      }
+    };
+    try {
+      await run("user", group.thread!.id, "Which cobalt deployment queue did we choose?");
+      await run("user", group.thread!.id, "Recall the cobalt deployment queue.");
+    } finally {
+      inspectRequest = undefined;
+    }
   });
   it.each(["messaging", "bot_message", "webhook"])(
     "never restores or dispatches private state in %s",

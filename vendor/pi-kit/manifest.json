@@ -3,10 +3,10 @@
   "packages": [
     {
       "name": "pi-fabric",
-      "version": "0.88.2",
-      "filename": "pi-fabric-0.88.2-a0651b757cc0.tgz",
-      "sha256": "a0651b757cc087c1a359f944db57f4145bdef431c5c7d4aeeee0e5fe01694bdc",
-      "baseCommit": "c0a7846b55061c32079878d48e0ea74b8ab6e722"
+      "version": "0.89.0",
+      "filename": "pi-fabric-0.89.0-6f981b7f533a.tgz",
+      "sha256": "6f981b7f533ab0b4c665272904dfe51911c879519579f5acb8e897a8c2aadfa4",
+      "baseCommit": "0ed499ed3e14d331d5d8cfa88655a5d1dadafe4e"
     },
     {
       "name": "pi-fovea",

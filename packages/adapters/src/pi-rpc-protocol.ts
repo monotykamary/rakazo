@@ -21,6 +21,13 @@ export interface AgentProcessConnection {
 export interface AgentProcessHost {
   start(scope: Readonly<AgentProcessScope>, signal: AbortSignal): Promise<AgentProcessConnection>;
 }
+export const MEMORY_ACTIONS = ["recall", "expand", "sessions"] as const;
+export type MemoryRpcAction = (typeof MEMORY_ACTIONS)[number];
+export function memoryAction(value: unknown): MemoryRpcAction {
+  if (typeof value !== "string" || !(MEMORY_ACTIONS as readonly string[]).includes(value))
+    throw new Error("Unsupported memory action");
+  return value as MemoryRpcAction;
+}
 export type JsonRecord = Record<string, unknown>;
 export function record(value: unknown): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value))

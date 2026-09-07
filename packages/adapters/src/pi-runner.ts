@@ -418,6 +418,12 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
       instructions: String(data.instructions),
       proxyTools: proxies,
       restore: restore?.kitState ? record(restore.kitState).managed : undefined,
+      // Root-only host memory authority; delegated children never see a host memory half.
+      hostMemory:
+        data.memory === true
+          ? async (call) =>
+              peer.request("memory", { action: call.action, args: call.args }, call.signal)
+          : undefined,
       checkpoint,
       activity: (activity, status, state) => {
         const evidence = boundedExecutionEvidence(record(state ?? {}), 262144);
@@ -505,6 +511,7 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
       runtimeVersion: kit.runtimeVersion,
       nativeTools: false,
       unavailable: managedKit.unavailable,
+      memory: data.memory === true,
     };
   };
   const peer = new JsonPeer(bridgePort, handler, (message) => {

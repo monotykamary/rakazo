@@ -47,6 +47,19 @@ describe("distributable kit artifacts", () => {
     expect(Object.keys(packed.dependencies ?? {})).toEqual([]);
     expect(packed.devDependencies["@earendil-works/pi-coding-agent"]).toBe("0.85.1");
   });
+  it("ships portable memory as a public host entry", () => {
+    const entry = manifest.packages.find((item) => item.name === "pi-fabric")!;
+    const archive = fileURLToPath(new URL(`vendor/pi-kit/${entry.filename}`, root));
+    const packed = JSON.parse(
+      execFileSync("tar", ["-xOzf", archive, "package/package.json"], { encoding: "utf8" }),
+    );
+    const memory = packed.exports["./memory"];
+    expect(memory.import).toMatch(/^\.\/dist\/.+\.js$/);
+    expect(memory.types).toMatch(/^\.\/dist\/.+\.d\.ts$/);
+    const files = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" }).split("\n");
+    expect(files).toContain(`package/${memory.import.slice(2)}`);
+    expect(files).toContain(`package/${memory.types.slice(2)}`);
+  });
   it("ships queue control exports without relying on a sibling checkout", () => {
     const entry = manifest.packages.find((item) => item.name === "pi-queue-steer-factory")!;
     const archive = fileURLToPath(new URL(`vendor/pi-kit/${entry.filename}`, root));

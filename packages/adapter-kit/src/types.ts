@@ -327,6 +327,18 @@ export interface AgentSteeringMessage {
   placement?: { cwd: string; worktreeId?: string };
 }
 
+export type AgentMemoryAction = "recall" | "expand" | "sessions";
+
+/** One host-backed memory authority call. The runtime always supplies the signal. */
+export interface BotMemoryCall {
+  action: AgentMemoryAction;
+  args: Record<string, unknown>;
+  signal: AbortSignal;
+}
+
+/** Backend-owned source memory for the root run. Never inherited by child participants. */
+export type BotMemoryCallback = (call: BotMemoryCall) => Promise<unknown>;
+
 export interface AgentRunRequest {
   botId: string;
   threadId: string;
@@ -423,6 +435,8 @@ export interface AgentRunRequest {
   ) => Promise<unknown>;
   /** Atomically claim durable user steering at the runtime's next safe turn boundary. */
   claimSteering?: (seenIds: string[]) => Promise<AgentSteeringMessage[]>;
+  /** Host-backed source memory authority; root run only, revalidated and fail-closed per call. */
+  memory?: BotMemoryCallback;
 }
 
 export interface ScriptedTurn {
@@ -491,6 +505,8 @@ export interface AgentRuntimeCapabilities {
   compaction: boolean;
   tools: boolean;
   scripted: boolean;
+  /** Runtime can bridge host-backed memory actions for a root run. */
+  memory?: boolean;
 }
 
 export interface VoiceInfo {
