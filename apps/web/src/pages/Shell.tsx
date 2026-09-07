@@ -104,6 +104,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  type ClipboardEvent,
   type DragEvent,
   lazy,
   type MutableRefObject,
@@ -154,7 +155,11 @@ import { scheduleFocusPrompt } from "../lib/focus-prompt";
 import { localTimezone } from "../lib/local-timezone";
 import { copyableMessageText } from "../lib/message-text";
 import { messageProviderLabel } from "../lib/messaging";
-import { isFileDrag, revokePendingAttachmentPreviews } from "../lib/pending-attachments";
+import {
+  isFileDrag,
+  isFilePaste,
+  revokePendingAttachmentPreviews,
+} from "../lib/pending-attachments";
 import { markAfterPaint, markOnce } from "../lib/performance";
 import { clearSpaceSelection, rpc, selectedSpaceId, selectSpace } from "../lib/rpc";
 import { readSeenRunErrorIds, rememberSeenRunErrorId } from "../lib/run-error-storage";
@@ -419,6 +424,7 @@ export function ShellPage() {
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
   const [messagingSettingsOpen, setMessagingSettingsOpen] = useState(false);
   const [messagingSurfaceEnabled, setMessagingSurfaceEnabled] = useState(false);
+  const [messagingProviders, setMessagingProviders] = useState<string[]>([]);
   const [accountSettingsFocusUsage, setAccountSettingsFocusUsage] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
   const [memorySettingsOpen, setMemorySettingsOpen] = useState(false);
@@ -441,7 +447,6 @@ export function ShellPage() {
   const [botsSidebarCollapsed, setBotsSidebarCollapsed] = useState(false);
   const focusPromptAbortRef = useRef<AbortController | null>(null);
   const focusPromptBotIdRef = useRef<string | null>(null);
-  const creatingBotRef = useRef(false);
   const botsSidebarEdgeDragRef = useRef<{ startX: number; mode: "expand" | "collapse" } | null>(
     null,
   );
@@ -508,7 +513,10 @@ export function ShellPage() {
     void rpc.messaging
       .status()
       .then((status) => {
-        if (!cancelled) setMessagingSurfaceEnabled(status.enabled);
+        if (!cancelled) {
+          setMessagingSurfaceEnabled(status.enabled);
+          setMessagingProviders(status.providers);
+        }
       })
       .catch(() => undefined);
     return () => {
@@ -2176,24 +2184,6 @@ export function ShellPage() {
     await refreshBots().catch(() => undefined);
   }
 
-  async function createBotQuick(computerMode: ComputerMode = "team") {
-    if (creatingBotRef.current) return;
-    creatingBotRef.current = true;
-    try {
-      await createBot({
-        name: "New Bot",
-        title: "",
-        description: "",
-        computerMode,
-      });
-    } catch (error) {
-      // Keep the current chat open when create fails, but surface the error.
-      setSendError(error instanceof Error ? error.message : t`Could not create bot`);
-    } finally {
-      creatingBotRef.current = false;
-    }
-  }
-
   async function bootComputer({
     takeControl,
     overlay,
@@ -2481,9 +2471,10 @@ export function ShellPage() {
                 >
                   <BotCreatePicker
                     bots={bots}
-                    onCreateBot={(computerMode) => {
+                    onCreateBot={() => {
                       setCreateMenuOpen(false);
-                      void createBotQuick(computerMode);
+                      setMobileSidebarOpen(false);
+                      setPanel("create");
                     }}
                     onOpenBot={(id) => {
                       setCreateMenuOpen(false);
@@ -2492,10 +2483,12 @@ export function ShellPage() {
                     }}
                     onCreateGroup={() => {
                       setCreateMenuOpen(false);
+                      setMobileSidebarOpen(false);
                       setPanel("create-group");
                     }}
                     onCreateSpace={() => {
                       setCreateMenuOpen(false);
+                      setMobileSidebarOpen(false);
                       setNewSpaceOpen(true);
                     }}
                   />
@@ -3426,6 +3419,7 @@ export function ShellPage() {
                     ? `${window.location.origin}/api/v1/bots/${active.id}/github`
                     : `/api/v1/bots/${active.id}/github`
                 }
+                messageProviders={messagingProviders}
                 saving={savingRoutine}
                 running={runningRoutine}
                 error={routineError}
@@ -3442,9 +3436,10 @@ export function ShellPage() {
                   if (
                     !routineDraft.schedules.length &&
                     !routineDraft.webhookEnabled &&
-                    !routineDraft.githubEnabled
+                    !routineDraft.githubEnabled &&
+                    !routineDraft.messageProvider
                   ) {
-                    setRoutineError(t`Add a schedule, webhook, or GitHub trigger`);
+                    setRoutineError(t`Add a schedule, webhook, GitHub, or message trigger`);
                     return;
                   }
                   const saveRequest = ++routineSaveRequest.current;
@@ -3484,6 +3479,7 @@ export function ShellPage() {
                         active: armOneShot ? true : routineDraft.active,
                         webhookEnabled: routineDraft.webhookEnabled,
                         githubEnabled: routineDraft.githubEnabled,
+                        messageProvider: routineDraft.messageProvider,
                         ...(runAt ? { runAt } : {}),
                       });
                     } else {
@@ -3497,6 +3493,7 @@ export function ShellPage() {
                         notify: true,
                         webhookEnabled: routineDraft.webhookEnabled,
                         githubEnabled: routineDraft.githubEnabled,
+                        messageProvider: routineDraft.messageProvider,
                       });
                     }
                     if (
@@ -4599,6 +4596,24 @@ const Composer = memo(function Composer({
     if (!disabled) void onAttachmentPick(dataTransfer.files);
   }
 
+  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const clipboardData = event.clipboardData;
+    // Only intercept real FileList pastes; leave text-only / empty-files native.
+    if (disabled || !clipboardData || !isFilePaste(clipboardData)) return;
+    event.preventDefault();
+    void onAttachmentPick(clipboardData.files);
+    const text = clipboardData.getData("text/plain");
+    if (!text) return;
+    const textarea = event.currentTarget;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    updateDraft(`${draft.slice(0, start)}${text}${draft.slice(end)}`);
+    const caret = start + text.length;
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.setSelectionRange(caret, caret);
+    });
+  }
+
   const showComposerPlaceholder =
     draft.length === 0 && selectedSkill === null && selectedMentions.length === 0;
   const replyName = replyTarget ? (replyTargetName ?? previewMessageText(replyTarget)) : "";
@@ -4871,6 +4886,7 @@ const Composer = memo(function Composer({
             ref={textareaRef}
             value={draft}
             onChange={(event) => updateDraft(event.target.value)}
+            onPaste={handlePaste}
             onKeyDown={(event) => {
               if (
                 event.key === "Backspace" &&

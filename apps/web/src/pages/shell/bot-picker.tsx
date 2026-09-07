@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro";
-import type { Bot, ComputerMode } from "@rakazo/contracts";
+import type { Bot } from "@rakazo/contracts";
 import {
   BotAvatar,
   Command,
@@ -9,7 +9,7 @@ import {
   CommandList,
   CommandSeparator,
 } from "@rakazo/ui-web";
-import { ArrowLeft, Lock, Plus } from "lucide-react";
+import { Lock, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 
 export function BotCreatePicker({
@@ -20,14 +20,13 @@ export function BotCreatePicker({
   onCreateSpace,
 }: {
   bots: Bot[];
-  onCreateBot: (computerMode: ComputerMode) => void;
+  onCreateBot: () => void;
   onOpenBot: (botId: string) => void;
   onCreateGroup: () => void;
   onCreateSpace: () => void;
 }) {
   const { t } = useLingui();
   const [query, setQuery] = useState("");
-  const [step, setStep] = useState<"pick" | "computer">("pick");
   const needle = query.trim().toLowerCase();
   const matched = useMemo(() => {
     if (!needle) return bots;
@@ -39,45 +38,6 @@ export function BotCreatePicker({
     !needle ||
     "create new bot".includes(needle) ||
     needle.split(/\s+/).every((part) => "create new bot".includes(part));
-
-  if (step === "computer") {
-    return (
-      <div data-testid="bot-create-picker" className="w-[min(320px,calc(100vw-2rem))]">
-        <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-          <button
-            type="button"
-            data-testid="create-bot-computer-back"
-            className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label={t`Back`}
-            onClick={() => setStep("pick")}
-          >
-            <ArrowLeft size={16} strokeWidth={1.8} aria-hidden="true" />
-          </button>
-          <span className="text-[13px] text-muted-foreground">
-            <Trans>Computer</Trans>
-          </span>
-        </div>
-        <div data-testid="create-bot-computer" className="grid grid-cols-2 gap-2 p-3">
-          <button
-            type="button"
-            data-testid="create-bot-team"
-            className="rounded-lg border border-border px-3 py-2 text-[14px] text-foreground hover:border-foreground/40"
-            onClick={() => onCreateBot("team")}
-          >
-            <Trans>Team</Trans>
-          </button>
-          <button
-            type="button"
-            data-testid="create-bot-private"
-            className="rounded-lg border border-border px-3 py-2 text-[14px] text-foreground hover:border-foreground/40"
-            onClick={() => onCreateBot("dedicated")}
-          >
-            <Trans>Private</Trans>
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div data-testid="bot-create-picker" className="w-[min(320px,calc(100vw-2rem))]">
@@ -103,7 +63,7 @@ export function BotCreatePicker({
               <CommandItem
                 value="create-new-bot"
                 data-testid="create-new-bot"
-                onSelect={() => setStep("computer")}
+                onSelect={() => onCreateBot()}
                 className="gap-2"
               >
                 <Plus size={16} strokeWidth={1.8} aria-hidden="true" />

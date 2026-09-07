@@ -78,7 +78,8 @@ describe.skipIf(!databaseAvailable)("eval history accounting", () => {
               baseUrl: model.baseUrl,
               apiKey: fixtureKey,
             },
-            timeoutMs: 20_000,
+            // This journey starts two isolated workers; its assertion is the tool budget.
+            timeoutMs: 45_000,
             maxToolCalls,
             createApp: async (composio) => {
               const handles = await createApp({
@@ -104,7 +105,7 @@ describe.skipIf(!databaseAvailable)("eval history accounting", () => {
           },
         );
         expect(result.cleanupFailed).toBe(false);
-        expect(result.toolCalls).toBe(2);
+        expect(result.toolCalls, result.reason ?? undefined).toBe(2);
         if (maxToolCalls === 2) {
           model.assertComplete();
           expect(result).toMatchObject({ status: "passed", category: null, reason: null });
@@ -126,6 +127,6 @@ describe.skipIf(!databaseAvailable)("eval history accounting", () => {
         await rm(dataDir, { recursive: true, force: true });
       }
     },
-    30_000,
+    60_000,
   );
 });

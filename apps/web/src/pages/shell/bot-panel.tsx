@@ -43,9 +43,13 @@ const fieldLabelClass = "mt-4 block text-[14px] text-muted-foreground";
 function ComputerModePicker({
   value,
   onChange,
+  teamTestId,
+  privateTestId,
 }: {
   value: ComputerMode;
   onChange: (value: ComputerMode) => void;
+  teamTestId?: string;
+  privateTestId?: string;
 }) {
   return (
     <div className="mt-4">
@@ -58,6 +62,7 @@ function ComputerModePicker({
             key={mode}
             variant="outline"
             pressed={value === mode}
+            data-testid={mode === "team" ? teamTestId : privateTestId}
             onPressedChange={(pressed) => {
               if (pressed) onChange(mode);
             }}
@@ -111,7 +116,7 @@ export function CreateBotForm({
   }
 
   return (
-    <div>
+    <div data-testid="create-bot-form">
       <div className="mb-4 flex items-center justify-between">
         <span className="text-[13.5px] text-muted-foreground">
           <Trans>New bot</Trans>
@@ -163,7 +168,14 @@ export function CreateBotForm({
           className="mt-2"
         />
       </label>
-      <ComputerModePicker value={computerMode} onChange={setComputerMode} />
+      <div data-testid="create-bot-computer">
+        <ComputerModePicker
+          value={computerMode}
+          onChange={setComputerMode}
+          teamTestId="create-bot-team"
+          privateTestId="create-bot-private"
+        />
+      </div>
       <Button
         className="mt-5"
         disabled={!name.trim() || submitting}

@@ -18,6 +18,7 @@ export type WebhookEvents = {
     prompt: string;
     trigger: "webhook";
     clientNonce?: string;
+    allowParallelRun?: boolean;
   }): Promise<{ messageId: string; runId: string | null; seq: number }>;
 };
 
@@ -25,7 +26,7 @@ export type WebhookDeps = {
   prisma: PrismaClient;
   secrets: EncryptedSecretStore;
   events: WebhookEvents;
-  jobs: JobPublisher;
+  jobs: Pick<JobPublisher, "enqueue">;
 };
 
 export type WebhookTarget = {
@@ -37,6 +38,11 @@ export type WebhookTarget = {
   };
   threadId: string;
   expected: string;
+};
+
+export type InboundTarget = {
+  bot: Pick<WebhookTarget["bot"], "id" | "spaceId" | "userId">;
+  threadId: string;
 };
 
 function escapePromptData(value: string): string {
@@ -128,15 +134,30 @@ export async function loadWebhookTarget(
   };
 }
 
-/** Fan out inbound delivery into a bot message and optional continue job. */
+/** Idempotency key shared by messaging wakes and TeamChat duplicate-skip lookups. */
+export function messagingWakeIdempotencyKey(provider: string, handle: string): string {
+  return `${provider}:${handle}`;
+}
+
+/** Client nonce for idempotent inbound deliveries (webhook / github / messaging). */
+export function inboundDeliveryClientNonce(
+  source: "webhook" | "github" | "messaging",
+  botId: string,
+  idempotencyKey: string,
+): string {
+  return `${source}:${botId}:${createHash("sha256").update(idempotencyKey).digest("base64url")}`;
+}
+
 export async function deliverWebhookEvent(
-  deps: WebhookDeps,
-  target: WebhookTarget,
+  deps: Pick<WebhookDeps, "events" | "jobs">,
+  target: InboundTarget,
   input: {
     prompt: string;
     routines: Array<{ name: string; prompt: string }>;
-    source: "webhook" | "github";
+    source: "webhook" | "github" | "messaging";
     idempotencyKey?: string;
+    /** Messaging wakes share the live chat thread; keep a separate webhook run. */
+    allowParallelRun?: boolean;
   },
 ) {
   const promptText =
@@ -146,15 +167,17 @@ export async function deliverWebhookEvent(
             (routine) => `Run routine "${routine.name}":\n${routine.prompt.trim()}`,
           ),
           "",
-          input.source === "github" ? "Inbound GitHub event metadata:" : "Inbound webhook payload:",
+          input.source === "github"
+            ? "Inbound GitHub event metadata:"
+            : input.source === "messaging"
+              ? "Inbound messaging event:"
+              : "Inbound webhook payload:",
           input.prompt,
         ].join("\n")
       : input.prompt;
 
   const clientNonce = input.idempotencyKey
-    ? `${input.source}:${target.bot.id}:${createHash("sha256")
-        .update(input.idempotencyKey)
-        .digest("base64url")}`
+    ? inboundDeliveryClientNonce(input.source, target.bot.id, input.idempotencyKey)
     : undefined;
 
   const sent = await deps.events.sendUserMessage({
@@ -166,6 +189,7 @@ export async function deliverWebhookEvent(
     prompt: promptText,
     trigger: "webhook",
     clientNonce,
+    ...(input.allowParallelRun ? { allowParallelRun: true } : {}),
   });
 
   if (sent.runId) {

@@ -10,6 +10,15 @@ import { BOT_MESSAGE_MAX_HOPS } from "@rakazo/core";
 import type { PrismaClient, ThreadEvents } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import type { TeamChatEngagementJudge } from "./team-chat-judge.js";
+import {
+  MESSAGE_ROUTING_REARMED_REASON,
+  MESSAGE_ROUTING_REASON,
+  MESSAGE_ROUTING_RESERVATION_MS,
+  settleWithTimeout,
+  TEAM_CHAT_STARTUP_SHUTDOWN_MS,
+  TEAMCHAT_AGENT_OWNERSHIP_REASON,
+} from "./team-chat-startup.js";
+import { inboundDeliveryClientNonce, messagingWakeIdempotencyKey } from "./webhook-inbound.js";
 
 const DEFAULT_RECONCILE_INTERVAL_MS = 1_000;
 const DEFAULT_AMBIENT_DEBOUNCE_MS = 15_000;
@@ -17,7 +26,25 @@ const BATCH_SIZE = 20;
 const AMBIENT_BATCH_SIZE = 100;
 const AMBIENT_CONTEXT_MESSAGES = 20;
 const AMBIENT_CONTEXT_MESSAGE_CHARS = 2_000;
+const DEFERRED_RESERVATION_MS = 2 * 60_000;
+/** Hold the deferred row while routine routing may still be writing its wake nonce. */
+const ROUTING_RESERVATION_MS = MESSAGE_ROUTING_RESERVATION_MS;
+const ROUTING_RESERVATION_RENEWAL_MS = 60_000;
+const QUEUE_RESERVATION_MS = 2 * 60_000;
 const DELIVERY_RESERVATION_MS = 2 * 60_000;
+const ROUTING_OWNERSHIP_REASON = MESSAGE_ROUTING_REASON;
+/** Legacy grace marker; still exclusive ownership, never promote while set. */
+const ROUTING_OWNERSHIP_REARMED_REASON = MESSAGE_ROUTING_REARMED_REASON;
+const AGENT_OWNERSHIP_REASON = TEAMCHAT_AGENT_OWNERSHIP_REASON;
+const DEFERRED_RESERVATION_LOST = "Team chat deferred reservation was lost";
+
+export function isDeferredReservationLost(error: unknown): boolean {
+  return error instanceof Error && error.message === DEFERRED_RESERVATION_LOST;
+}
+
+function isRoutingOwnershipReason(reason: string | null | undefined): boolean {
+  return reason === ROUTING_OWNERSHIP_REASON || reason === ROUTING_OWNERSHIP_REARMED_REASON;
+}
 
 interface TeamChatBridgeDeps {
   prisma: PrismaClient;
@@ -38,6 +65,18 @@ type TargetBot = {
   name: string;
   modelProvider: string | null;
   modelId: string | null;
+};
+
+export type TeamChatInboundTarget = {
+  spaceId: string;
+  userId: string;
+  botId: string;
+  threadId: string;
+};
+
+type DeferredTeamChatInboundTarget = TeamChatInboundTarget & {
+  deferred: boolean;
+  externalMessageId: string;
 };
 
 export function teamChatPrompt(provider: string, senderName: string, content: string): string {
@@ -87,11 +126,35 @@ export class TeamChatBridge {
   private target: TargetBot | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
   private reconciling: Promise<void> | undefined;
+  /** Bumped by stop() so an in-flight start() exits before arming the timer. */
+  private startGeneration = 0;
+  /** Same-process wakes still delivering; do not treat their expired leases as orphans. */
+  private readonly inFlightRoutineWakes = new Set<string>();
 
   constructor(private readonly deps: TeamChatBridgeDeps) {}
 
+  /** Provider used for ExternalConversation rows and wake clientNonce recovery. */
+  get providerId(): string {
+    return this.deps.providerId;
+  }
+
+  /** Mark a deferred row as having an in-process routine wake until clearRoutineWake. */
+  markRoutineWakeInFlight(externalMessageId: string): void {
+    this.inFlightRoutineWakes.add(externalMessageId);
+  }
+
+  clearRoutineWakeInFlight(externalMessageId: string): void {
+    this.inFlightRoutineWakes.delete(externalMessageId);
+  }
+
   async start(): Promise<void> {
     if (this.timer) return;
+    const generation = ++this.startGeneration;
+    const throwIfStopped = () => {
+      if (generation !== this.startGeneration) {
+        throw new Error("Team chat bridge start cancelled");
+      }
+    };
     const target = await this.deps.prisma.bot.findFirst({
       where: { id: this.deps.botId, archivedAt: null },
       select: {
@@ -103,10 +166,17 @@ export class TeamChatBridge {
         modelId: true,
       },
     });
+    throwIfStopped();
     if (!target) throw new Error(`Team chat target bot ${this.deps.botId} was not found`);
     this.target = target;
+    // Release abandoned routes before any later setup that might throw and leave
+    // start() unfinished (for example transcript mirroring).
+    await this.recoverInterruptedRoutineRoutes(target);
+    throwIfStopped();
     await this.mirrorMissingMessages();
+    throwIfStopped();
     await this.reconcileOnce();
+    throwIfStopped();
     this.timer = setInterval(
       () => void this.reconcileSafely(),
       this.deps.reconcileIntervalMs ?? DEFAULT_RECONCILE_INTERVAL_MS,
@@ -115,12 +185,26 @@ export class TeamChatBridge {
   }
 
   async stop(): Promise<void> {
+    // Invalidate any in-flight start() so later startup phases abort.
+    this.startGeneration += 1;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
-    await this.reconciling?.catch(() => undefined);
+    // Do not let a blocked reconcileOnce from start() hang process shutdown.
+    await settleWithTimeout(this.reconciling, TEAM_CHAT_STARTUP_SHUTDOWN_MS);
   }
 
-  async receive(message: TeamChatInboundMessage): Promise<void> {
+  async receive(
+    message: TeamChatInboundMessage,
+    options: { queueAgent: false },
+  ): Promise<DeferredTeamChatInboundTarget>;
+  async receive(
+    message: TeamChatInboundMessage,
+    options?: { queueAgent?: true },
+  ): Promise<TeamChatInboundTarget>;
+  async receive(
+    message: TeamChatInboundMessage,
+    options?: { queueAgent?: boolean },
+  ): Promise<TeamChatInboundTarget | DeferredTeamChatInboundTarget> {
     const target = this.target;
     if (!target) throw new Error("Team chat bridge is not started");
     const conversation = await this.deps.prisma.externalConversation.upsert({
@@ -157,6 +241,8 @@ export class TeamChatBridge {
     ) {
       throw new Error("Team chat conversation belongs to a different Rakazo target");
     }
+    const now = new Date();
+    const deferredUntil = new Date(now.getTime() + DEFERRED_RESERVATION_MS);
     const externalMessage = await this.deps.prisma.externalMessage.upsert({
       where: {
         externalConversationId_providerEventId: {
@@ -173,12 +259,155 @@ export class TeamChatBridge {
         senderIsBot: message.senderIsBot ?? false,
         content: message.content,
         replyThreadId: message.replyThreadId,
-        status: message.kind === "ambient" ? "observed" : "received",
+        status:
+          options?.queueAgent === false
+            ? "deferred"
+            : message.kind === "ambient"
+              ? "observed"
+              : "received",
+        nextAttemptAt: options?.queueAgent === false ? deferredUntil : null,
       },
       update: {},
     });
     await this.ensureTranscriptMessage(externalMessage, conversation);
+    if (options?.queueAgent === false) {
+      const deferred =
+        (externalMessage.status === "deferred" &&
+          externalMessage.nextAttemptAt?.getTime() === deferredUntil.getTime()) ||
+        (
+          await this.deps.prisma.externalMessage.updateMany({
+            where: {
+              id: externalMessage.id,
+              OR: [
+                { status: { in: ["received", "observed"] } },
+                { status: "deferred", nextAttemptAt: { lte: now } },
+              ],
+            },
+            data: { status: "deferred", nextAttemptAt: deferredUntil },
+          })
+        ).count === 1;
+      return {
+        spaceId: conversation.spaceId,
+        userId: conversation.userId,
+        botId: conversation.botId,
+        threadId: conversation.thread.id,
+        deferred,
+        externalMessageId: externalMessage.id,
+      };
+    }
     await this.reconcileOnce();
+    return {
+      spaceId: conversation.spaceId,
+      userId: conversation.userId,
+      botId: conversation.botId,
+      threadId: conversation.thread.id,
+    };
+  }
+
+  /** Keep a deferred lease alive while routine routing is still in progress. */
+  async extendDeferredReservation(externalMessageId: string): Promise<boolean> {
+    const target = this.target;
+    if (!target) return false;
+    const result = await this.deps.prisma.externalMessage.updateMany({
+      where: {
+        id: externalMessageId,
+        status: "deferred",
+        externalConversation: { provider: this.deps.providerId, botId: target.id },
+      },
+      // Routing can outlive the short deferred window; hold long enough for the
+      // wake nonce to commit before reconcile is allowed to promote the row.
+      // engagementReason marks exclusive routine ownership for recovery/queue.
+      data: {
+        nextAttemptAt: new Date(Date.now() + ROUTING_RESERVATION_MS),
+        engagementReason: ROUTING_OWNERSHIP_REASON,
+      },
+    });
+    return result.count === 1;
+  }
+
+  /** Refresh the deferred lease until the caller stops the heartbeat after routing settles. */
+  async startDeferredReservationHeartbeat(
+    externalMessageId: string,
+    intervalMs = ROUTING_RESERVATION_RENEWAL_MS,
+  ): Promise<{ stop: () => void; lost: Promise<never> }> {
+    if (!(await this.extendDeferredReservation(externalMessageId))) {
+      throw new Error(DEFERRED_RESERVATION_LOST);
+    }
+    let active = true;
+    let renewing = false;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    let rejectLost: ((error: Error) => void) | undefined;
+    const lost = new Promise<never>((_, reject) => {
+      rejectLost = reject;
+    });
+    // Prevent an unhandled rejection if the caller stops before awaiting lost.
+    void lost.catch(() => undefined);
+    const fail = (error: Error) => {
+      if (!active) return;
+      active = false;
+      if (timer) clearInterval(timer);
+      rejectLost?.(error);
+    };
+    timer = setInterval(() => {
+      if (!active || renewing) return;
+      renewing = true;
+      void this.extendDeferredReservation(externalMessageId)
+        .then((held) => {
+          if (!held) fail(new Error(DEFERRED_RESERVATION_LOST));
+        })
+        .catch((error) => {
+          getLogger().error("team chat deferred reservation renewal failed", error);
+          fail(error instanceof Error ? error : new Error(String(error)));
+        })
+        .finally(() => {
+          renewing = false;
+        });
+    }, intervalMs);
+    timer.unref?.();
+    return {
+      stop: () => {
+        active = false;
+        if (timer) clearInterval(timer);
+      },
+      lost,
+    };
+  }
+
+  /**
+   * Resolve a deferred message before the reconciler is allowed to claim it.
+   * Routine ownership may also reclaim `received` / `observed` rows when the
+   * deferred lease expired mid-wake before this resolve ran. Do not reclaim
+   * `queueing`: that status means fallback delivery may already be creating a
+   * TeamChat run, and flipping it to ignored races that path.
+   */
+  async resolveDeferredMessage(
+    externalMessageId: string,
+    resolution: "routine" | "agent",
+    kind: TeamChatInboundMessage["kind"],
+  ): Promise<boolean> {
+    const target = this.target;
+    if (!target) return false;
+    const result = await this.deps.prisma.externalMessage.updateMany({
+      where: {
+        id: externalMessageId,
+        status:
+          resolution === "routine" ? { in: ["deferred", "received", "observed"] } : "deferred",
+        externalConversation: { provider: this.deps.providerId, botId: target.id },
+      },
+      data:
+        resolution === "routine"
+          ? {
+              status: "ignored",
+              engagementReason: "message_routine_wake",
+              nextAttemptAt: null,
+            }
+          : {
+              status: kind === "ambient" ? "observed" : "received",
+              engagementReason: null,
+              nextAttemptAt: null,
+            },
+    });
+    return result.count === 1;
   }
 
   private async mirrorMissingMessages(): Promise<void> {
@@ -207,6 +436,30 @@ export class TeamChatBridge {
         await this.ensureTranscriptMessage(message, message.externalConversation);
       }
     }
+  }
+
+  /**
+   * Release expired routing ownership left by a stopped process before
+   * reconciliation starts. Active claims (future nextAttemptAt) stay owned by a
+   * live wake on another bridge instance.
+   */
+  private async recoverInterruptedRoutineRoutes(target: TargetBot): Promise<void> {
+    const now = new Date();
+    await this.deps.prisma.externalMessage.updateMany({
+      where: {
+        status: "deferred",
+        engagementReason: {
+          in: [ROUTING_OWNERSHIP_REASON, ROUTING_OWNERSHIP_REARMED_REASON],
+        },
+        nextAttemptAt: { lte: now },
+        externalConversation: {
+          provider: this.deps.providerId,
+          botId: target.id,
+          spaceId: target.spaceId,
+        },
+      },
+      data: { engagementReason: null, nextAttemptAt: now },
+    });
   }
 
   private async ensureTranscriptMessage(
@@ -243,6 +496,114 @@ export class TeamChatBridge {
     });
   }
 
+  /**
+   * Promote expired deferred leases. If wakeMessageRoutines already persisted a
+   * routine run (crash before resolveDeferredMessage), mark the row ignored so
+   * recovery cannot also start a TeamChat agent run for the same provider event.
+   * Expired routing ownership is cleared (not promoted) so a later reconcile can
+   * take over; live wakes re-hold the heartbeat after renewal loss. Ambient judge
+   * reasons are not ownership and may promote.
+   */
+  private async recoverExpiredDeferredMessages(target: TargetBot, now: Date): Promise<void> {
+    const expired = await this.deps.prisma.externalMessage.findMany({
+      where: {
+        status: "deferred",
+        nextAttemptAt: { lte: now },
+        externalConversation: {
+          provider: this.deps.providerId,
+          botId: target.id,
+        },
+      },
+      select: {
+        id: true,
+        kind: true,
+        providerEventId: true,
+        engagementReason: true,
+        nextAttemptAt: true,
+        externalConversation: { select: { thread: { select: { id: true } } } },
+      },
+      orderBy: { createdAt: "asc" },
+      take: BATCH_SIZE,
+    });
+    for (const message of expired) {
+      const threadId = message.externalConversation.thread?.id;
+      const woken = threadId
+        ? await this.deps.prisma.message.findUnique({
+            where: {
+              threadId_clientNonce: {
+                threadId,
+                clientNonce: inboundDeliveryClientNonce(
+                  "messaging",
+                  target.id,
+                  messagingWakeIdempotencyKey(this.deps.providerId, message.providerEventId),
+                ),
+              },
+            },
+            select: { id: true },
+          })
+        : null;
+      if (woken) {
+        await this.deps.prisma.externalMessage.updateMany({
+          where: { id: message.id, status: "deferred", nextAttemptAt: { lte: now } },
+          data: {
+            status: "ignored",
+            engagementReason: "message_routine_wake",
+            nextAttemptAt: null,
+          },
+        });
+        continue;
+      }
+      if (isRoutingOwnershipReason(message.engagementReason)) {
+        if (this.inFlightRoutineWakes.has(message.id)) {
+          // Same-process wake still delivering; keep exclusive ownership.
+          continue;
+        }
+        // Lease expired and no local wake: drop orphaned ownership so a later
+        // reconcile can promote. Live wakes re-hold the heartbeat after renewal
+        // loss, or are tracked in inFlightRoutineWakes above.
+        await this.deps.prisma.externalMessage.updateMany({
+          where: {
+            id: message.id,
+            status: "deferred",
+            nextAttemptAt: { lte: now },
+            engagementReason: {
+              in: [ROUTING_OWNERSHIP_REASON, ROUTING_OWNERSHIP_REARMED_REASON],
+            },
+          },
+          data: { engagementReason: null, nextAttemptAt: now },
+        });
+        continue;
+      }
+      // Promote when free of ownership claims. Ambient judge text is not ownership.
+      await this.deps.prisma.externalMessage.updateMany({
+        where: {
+          id: message.id,
+          status: "deferred",
+          nextAttemptAt: { lte: now },
+          OR: [
+            { engagementReason: null },
+            {
+              NOT: {
+                engagementReason: {
+                  in: [
+                    ROUTING_OWNERSHIP_REASON,
+                    ROUTING_OWNERSHIP_REARMED_REASON,
+                    AGENT_OWNERSHIP_REASON,
+                  ],
+                },
+              },
+            },
+          ],
+        },
+        data: {
+          status: message.kind === "ambient" ? "observed" : "received",
+          engagementReason: null,
+          nextAttemptAt: null,
+        },
+      });
+    }
+  }
+
   async reconcileOnce(): Promise<void> {
     if (this.reconciling) return this.reconciling;
     this.reconciling = this.reconcile().finally(() => {
@@ -255,6 +616,18 @@ export class TeamChatBridge {
     const target = this.target;
     if (!target) return;
     const now = new Date();
+    await this.recoverExpiredDeferredMessages(target, now);
+    await this.deps.prisma.externalMessage.updateMany({
+      where: {
+        status: "queueing",
+        nextAttemptAt: { lte: now },
+        externalConversation: {
+          provider: this.deps.providerId,
+          botId: target.id,
+        },
+      },
+      data: { status: "received", engagementReason: null, nextAttemptAt: null },
+    });
     await this.evaluateAmbient(now);
     const received = await this.deps.prisma.externalMessage.findMany({
       where: {
@@ -573,6 +946,7 @@ export class TeamChatBridge {
     senderName: string;
     content: string;
     batchContext: string | null;
+    engagementReason?: string | null;
     externalConversation: {
       spaceId: string;
       botId: string;
@@ -582,6 +956,94 @@ export class TeamChatBridge {
   }): Promise<void> {
     const thread = message.externalConversation.thread;
     if (!thread) throw new Error("Team chat conversation has no Rakazo thread");
+    // In-flight routine wakes own the row via engagementReason; never start a
+    // fallback TeamChat agent until that claim is cleared.
+    if (isRoutingOwnershipReason(message.engagementReason)) {
+      return;
+    }
+    const wakeNonce = inboundDeliveryClientNonce(
+      "messaging",
+      message.externalConversation.botId,
+      messagingWakeIdempotencyKey(this.deps.providerId, message.providerEventId),
+    );
+    const findWake = () =>
+      this.deps.prisma.message.findUnique({
+        where: {
+          threadId_clientNonce: {
+            threadId: thread.id,
+            clientNonce: wakeNonce,
+          },
+        },
+        select: { id: true },
+      });
+    const abandonForRoutine = async (status: "received" | "queueing") => {
+      await this.deps.prisma.externalMessage.updateMany({
+        where: {
+          id: message.id,
+          status,
+          ...(status === "queueing" ? { runId: null } : {}),
+        },
+        data: {
+          status: "ignored",
+          engagementReason: "message_routine_wake",
+          nextAttemptAt: null,
+        },
+      });
+    };
+    // Lease recovery may have promoted this row before wake finished. If the
+    // messaging routine nonce now exists, do not start a fallback agent run.
+    if (await findWake()) {
+      await abandonForRoutine("received");
+      return;
+    }
+    // Atomically claim queueing + exclusive agent ownership before creating a
+    // run so a concurrent wake cannot also deliver for this provider event.
+    // Allow null or non-ownership reasons (e.g. ambient judge text); refuse when
+    // routing ownership was reasserted by an in-flight wake.
+    const claimed = await this.deps.prisma.externalMessage.updateMany({
+      where: {
+        id: message.id,
+        status: "received",
+        OR: [
+          { engagementReason: null },
+          {
+            NOT: {
+              engagementReason: {
+                in: [
+                  ROUTING_OWNERSHIP_REASON,
+                  ROUTING_OWNERSHIP_REARMED_REASON,
+                  AGENT_OWNERSHIP_REASON,
+                ],
+              },
+            },
+          },
+        ],
+      },
+      data: {
+        status: "queueing",
+        engagementReason: AGENT_OWNERSHIP_REASON,
+        nextAttemptAt: new Date(Date.now() + QUEUE_RESERVATION_MS),
+      },
+    });
+    if (claimed.count !== 1) return;
+    // Wake may commit between the pre-claim check and this reservation.
+    if (await findWake()) {
+      await abandonForRoutine("queueing");
+      return;
+    }
+    // Final pre-create barrier: refuse if routing ownership reappeared.
+    const latest = await this.deps.prisma.externalMessage.findUnique({
+      where: { id: message.id },
+      select: { status: true, engagementReason: true },
+    });
+    if (
+      latest?.status !== "queueing" ||
+      latest.engagementReason !== AGENT_OWNERSHIP_REASON ||
+      (await findWake())
+    ) {
+      await abandonForRoutine("queueing");
+      return;
+    }
     const prompt =
       message.batchContext ??
       teamChatPrompt(this.deps.providerId, message.senderName, message.content);
@@ -597,9 +1059,49 @@ export class TeamChatBridge {
       linkMessageToRun: true,
       allowParallelRun: true,
     });
+    // Routine wake may have committed during sendUserMessage. Cancel the
+    // fallback run before abandoning so the job reconciler cannot enqueue it
+    // beside the routine wake.
+    if (await findWake()) {
+      if (sent.runId) {
+        const cancelledAt = new Date();
+        await this.deps.prisma.run.updateMany({
+          where: {
+            id: sent.runId,
+            status: { in: ["queued", "running", "leased", "waiting_input", "waiting_takeover"] },
+          },
+          data: {
+            status: "cancelled",
+            completedAt: cancelledAt,
+            leaseOwner: null,
+            leaseExpiresAt: null,
+          },
+        });
+        const taskId =
+          sent.taskId ??
+          (
+            await this.deps.prisma.run.findUnique({
+              where: { id: sent.runId },
+              select: { taskId: true },
+            })
+          )?.taskId;
+        if (taskId) {
+          await this.deps.prisma.task.updateMany({
+            where: { id: taskId },
+            data: { status: "cancelled" },
+          });
+        }
+      }
+      await abandonForRoutine("queueing");
+      return;
+    }
     if (!sent.runId) throw new Error("Team chat message did not create an agent run");
-    await this.deps.prisma.externalMessage.update({
-      where: { id: message.id },
+    const linked = await this.deps.prisma.externalMessage.updateMany({
+      where: {
+        id: message.id,
+        status: "queueing",
+        engagementReason: AGENT_OWNERSHIP_REASON,
+      },
       data: {
         status: "running",
         runId: sent.runId,
@@ -607,6 +1109,7 @@ export class TeamChatBridge {
         nextAttemptAt: null,
       },
     });
+    if (linked.count !== 1) throw new Error("Team chat queue reservation was lost");
     await this.deps.jobs.enqueue(runContinueJob(sent.runId));
   }
 
@@ -763,7 +1266,11 @@ export class TeamChatBridge {
     if (current.status === "delivered") return;
     // Once reserved for delivery, stay in delivering. Restoring the pre-reserve
     // "running" status would let reconciliation send again after a lost ack.
-    const status = current.status === "delivering" ? "delivering" : message.status;
+    // A queueing failure happened before the run was linked and can safely be
+    // retried from received. Once linked, preserve running so the shared run
+    // reconciler can recover a failed continuation enqueue without creating a
+    // second message/run from this stale snapshot.
+    const status = current.status === "queueing" ? "received" : current.status;
     // Conditional write: if reserveDelivery finalized between the read and this
     // update, leave the delivered/unconfirmed row alone.
     await this.deps.prisma.externalMessage.updateMany({
@@ -774,6 +1281,7 @@ export class TeamChatBridge {
       },
       data: {
         status,
+        ...(current.status === "queueing" ? { engagementReason: null } : {}),
         attempts,
         lastError: error instanceof Error ? error.message.slice(0, 500) : "Unknown bridge error",
         nextAttemptAt: new Date(Date.now() + delay),
