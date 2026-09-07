@@ -36,6 +36,20 @@ describe("managed agent image composition", () => {
     expect(defaults).toContain("supervisor");
     for (const service of defaults) expect(services[service]).toBeDefined();
   });
+  it("includes vendored workspace dependencies before installing the updater image", () => {
+    const dockerfile = readFileSync(path.join(root, "infra/updater/Dockerfile"), "utf8");
+    expect(dockerfile).toMatch(/^FROM node:24-bookworm-slim@sha256:[a-f0-9]{64}$/m);
+    const copy = dockerfile.indexOf("COPY vendor/pi-kit vendor/pi-kit");
+    expect(copy).toBeGreaterThan(-1);
+    expect(copy).toBeLessThan(dockerfile.indexOf("RUN corepack enable"));
+    const core = JSON.parse(readFileSync(path.join(root, "packages/core/package.json"), "utf8"));
+    const archive = core.dependencies["pi-queue-steer-factory"];
+    expect(archive).toMatch(/^file:.*vendor\/pi-kit\//);
+    expect(
+      readFileSync(path.resolve(root, "packages/core", archive.slice(5))).length,
+    ).toBeGreaterThan(0);
+  });
+
   it("exposes one build command for both required local images", () => {
     const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
     expect(pkg.scripts["sandbox:build"]).toContain("pnpm sandbox:agent:build");
