@@ -3098,7 +3098,7 @@ export function ShellPage() {
         ) : null}
         {activeSnapshot?.threadId && inGroup && (
           <GroupQueueStrip
-            key={activeSnapshot.threadId}
+            key={`group-queue:${activeSnapshot.threadId}`}
             threadId={activeSnapshot.threadId}
             members={transcriptMembers ?? []}
             runIds={[

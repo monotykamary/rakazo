@@ -140,10 +140,11 @@ test("create group from + and see two bots in one transcript", async ({ page }, 
   await composer.fill(`${await composer.inputValue()}gather sources.`);
   await composer.press("Enter");
 
-  await expect(page.getByTestId("transcript")).toContainText(/handled|on it|gather/i, {
+  const transcript = page.getByTestId("transcript");
+  await expect(transcript).toHaveCount(1);
+  await expect(transcript).toContainText(/handled|on it|gather/i, {
     timeout: 60_000,
   });
-  const transcript = page.getByTestId("transcript");
   await expect(transcript.getByText("Researcher", { exact: true }).first()).toBeVisible();
   await expect(transcript.getByText("Research Writer", { exact: true }).first()).toBeVisible();
   const researcherReply = transcript.getByText("Researcher", { exact: true }).first().locator("..");
@@ -208,7 +209,8 @@ test("create group from + and see two bots in one transcript", async ({ page }, 
   await sidebar.getByRole("button", { name: /^Review team/ }).click();
   await reviewSnapshotIntercepted;
   await expect(page).toHaveURL(new RegExp(`/app/g/${reviewGroup.id}$`));
-  await expect(page.getByTestId("transcript")).not.toContainText("Answered: Paris");
+  await expect(transcript).toHaveCount(1);
+  await expect(transcript).not.toContainText("Answered: Paris");
   releaseReviewSnapshot();
   await expect(page.getByRole("combobox", { name: "Message Review team" })).toBeVisible();
   await page.unroute("**/rpc/threads/get");
