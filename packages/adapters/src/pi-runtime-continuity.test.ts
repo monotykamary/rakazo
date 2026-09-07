@@ -353,6 +353,12 @@ describe("managed runtime continuity", () => {
         },
       });
       expect(harness.requests).toHaveLength(0);
+      const restoredIds = [
+        ...(saved as { sourceMessageIds: string[] }).sourceMessageIds,
+        ...Array.from({ length: 2048 }, (_, i) => `retained-message-${i}`),
+        "retained-message-0",
+      ];
+      saved = { ...(saved as object), sourceMessageIds: restoredIds };
       await harness.run({
         runId: "quiet-wake",
         queueOnly: true,
@@ -382,6 +388,9 @@ describe("managed runtime continuity", () => {
       expect(JSON.stringify(harness.requests[0])).toContain("Original paused task marker");
       expect(JSON.stringify(harness.requests[0])).toContain("Continue the paused task.");
       expect(saved).toMatchObject({ sourceMessageIds: expect.arrayContaining([sourceMessageId]) });
+      const checkpointIds = (saved as { sourceMessageIds: string[] }).sourceMessageIds;
+      expect(Array.isArray(checkpointIds)).toBe(true);
+      expect(checkpointIds).toEqual([...new Set([...restoredIds, sourceMessageId])]);
       expect(harness.host.reaped).toBe(3);
     } finally {
       await harness.close();

@@ -51,3 +51,39 @@ body,
     opacity: 0.3;
   }
 }
+
+/* Width changes settle once; only compositor-friendly properties animate. */
+.rk-panel-enter {
+  animation: rk-panel-enter 140ms ease-out both;
+}
+.rk-thread-enter {
+  animation: rk-thread-reveal 120ms ease-out both;
+}
+.rk-thread-loading {
+  animation: rk-thread-reveal 120ms ease-out 120ms both;
+}
+@keyframes rk-thread-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes rk-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateX(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rk-panel-enter,
+  .rk-thread-enter,
+  .rk-thread-loading {
+    animation: none;
+  }
+}

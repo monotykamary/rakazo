@@ -21,6 +21,7 @@ function isPeer(block: MessageBlock) {
 /** Collapse only evidence-backed activity, keeping its original row if the reply is not loaded. */
 export function projectMessageActivity<T extends ActivityMessage>(messages: readonly T[]) {
   const activities = new Map<string, MessageActivity[]>();
+  const activityIndexes = new Map<string, Map<string, MessageActivity>>();
   const byId = new Map(messages.map((message) => [message.id, message]));
   const replies = new Map<string, T>();
   const scope = (message: ActivityMessage) => `${message.botId ?? ""}:${message.runId}`;
@@ -43,6 +44,7 @@ export function projectMessageActivity<T extends ActivityMessage>(messages: read
     }
   }
   const result: T[] = [];
+  const resultIds = new Set<string>();
   const anchors = new Set<string>();
   for (const message of messages) {
     const blocks = message.blocks.filter(
@@ -55,33 +57,25 @@ export function projectMessageActivity<T extends ActivityMessage>(messages: read
     const add = (activity: MessageActivity, source = message) => {
       const anchor = source.runId ? (replies.get(scope(source)) ?? source) : source;
       const entries = activities.get(anchor.id) ?? [];
-      const peer =
+      const index = activityIndexes.get(anchor.id) ?? new Map<string, MessageActivity>();
+      activityIndexes.set(anchor.id, index);
+      const key = JSON.stringify(
         activity.kind === "peer"
-          ? entries.find(
-              (item) =>
-                item.kind === "peer" &&
-                item.botId === activity.botId &&
-                item.peerBotId === activity.peerBotId,
-            )
-          : undefined;
-      const routine =
-        activity.kind === "routine"
-          ? entries.find(
-              (item) =>
-                item.kind === "routine" &&
-                item.routineId === activity.routineId &&
-                item.action === activity.action,
-            )
-          : undefined;
-      if (routine?.kind === "routine" && activity.kind === "routine") routine.name = activity.name;
-      else if (peer?.kind === "peer" && activity.kind === "peer") {
-        peer.count += activity.count;
-        peer.peerBotName = activity.peerBotName;
-      } else if (
-        activity.kind !== "execution" ||
-        !entries.some((item) => item.kind === "execution" && item.runId === activity.runId)
-      )
+          ? [activity.kind, activity.botId, activity.peerBotId]
+          : activity.kind === "routine"
+            ? [activity.kind, activity.routineId, activity.action]
+            : [activity.kind, activity.runId],
+      );
+      const previous = index.get(key);
+      if (previous?.kind === "routine" && activity.kind === "routine") {
+        previous.name = activity.name;
+      } else if (previous?.kind === "peer" && activity.kind === "peer") {
+        previous.count += activity.count;
+        previous.peerBotName = activity.peerBotName;
+      } else if (!previous) {
         entries.push(activity);
+        index.set(key, activity);
+      }
       activities.set(anchor.id, entries);
       anchors.add(anchor.id);
       if (anchor.id === message.id) ownActivity = true;
@@ -125,12 +119,18 @@ export function projectMessageActivity<T extends ActivityMessage>(messages: read
         add({ kind: "execution", runId: message.runId, botId: message.botId });
       }
     }
-    if (blocks.length || ownActivity) result.push({ ...message, blocks });
+    if (blocks.length || ownActivity) {
+      // Unchanged rows retain identity so streaming does not invalidate every message memo.
+      result.push(blocks.length === message.blocks.length ? message : { ...message, blocks });
+      resultIds.add(message.id);
+    }
   }
   // A later return receipt can attach to an earlier activity-only anchor.
   for (const message of messages) {
-    if (anchors.has(message.id) && !result.some((item) => item.id === message.id))
+    if (anchors.has(message.id) && !resultIds.has(message.id)) {
       result.push({ ...message, blocks: [] });
+      resultIds.add(message.id);
+    }
   }
   const order = new Map(messages.map((message, index) => [message.id, index]));
   result.sort((a, b) => order.get(a.id)! - order.get(b.id)!);

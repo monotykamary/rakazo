@@ -48,7 +48,7 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
   const boundaryMessages: import("@earendil-works/pi-agent-core").AgentMessage[] = [];
   let kitState: unknown;
   let placement: { cwd: string; worktreeId?: string } | undefined;
-  let sourceMessageIds: string[] = [];
+  let sourceMessageIds = new Set<string>();
   let modelSelection: ModelSelectionStatus | undefined;
   let committedModel: Model<Api> | undefined;
   let committedThinking: string | undefined;
@@ -70,7 +70,7 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
       header: manager.getHeader(),
       entries: extra ? [...entries, extra] : entries,
       leafId: extra && "id" in extra ? extra.id : manager.getLeafId(),
-      sourceMessageIds,
+      sourceMessageIds: [...sourceMessageIds],
       modelSelection,
       modelConfiguration: committedModel
         ? { model: committedModel, thinkingLevel: committedThinking }
@@ -195,7 +195,7 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
         placement = next;
       }
       const messageId = string(data.messageId);
-      if (sourceMessageIds.includes(messageId)) return { delivered: true };
+      if (sourceMessageIds.has(messageId)) return { delivered: true };
       const text = String(data.text ?? "");
       const images = Array.isArray(data.images) ? data.images : [];
       if (runtime.session.isStreaming) {
@@ -208,10 +208,10 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
         runtime.session.sessionManager.appendMessage(user);
         runtime.session.agent.state.messages = [...runtime.session.agent.state.messages, user];
         boundaryMessages.push(user);
-        sourceMessageIds.push(messageId);
+        sourceMessageIds.add(messageId);
         await checkpoint();
       } else {
-        sourceMessageIds.push(messageId);
+        sourceMessageIds.add(messageId);
         let acknowledge!: () => void;
         let reject!: (error: unknown) => void;
         const accepted = new Promise<void>((resolve, fail) => {
@@ -306,16 +306,16 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
       : SessionManager.inMemory(cwd);
     if (restore?.leafId === null) manager.resetLeaf();
     else if (restore?.leafId) manager.branch(string(restore.leafId));
-    sourceMessageIds = restore ? (restore.sourceMessageIds as unknown[]).map(string) : [];
+    sourceMessageIds = new Set(restore ? (restore.sourceMessageIds as unknown[]).map(string) : []);
     kitState = restore?.kitState ? record(restore.kitState).queue : undefined;
     for (const id of Array.isArray(data.initialMessageIds) ? data.initialMessageIds : []) {
-      if (typeof id === "string" && !sourceMessageIds.includes(id)) sourceMessageIds.push(id);
+      if (typeof id === "string") sourceMessageIds.add(id);
     }
     for (const value of data.history) {
       const item = record(value);
       if (
         item.id === data.sourceMessageId ||
-        (typeof item.id === "string" && sourceMessageIds.includes(item.id))
+        (typeof item.id === "string" && sourceMessageIds.has(item.id))
       )
         continue;
       // Unidentified legacy history is imported once, never stacked on a restored Pi context.
@@ -326,13 +326,9 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
           content: `${item.role === "assistant" ? "Assistant: " : ""}${String(item.content)}`,
           timestamp: Date.now(),
         });
-      if (typeof item.id === "string") sourceMessageIds.push(item.id);
+      if (typeof item.id === "string") sourceMessageIds.add(item.id);
     }
-    if (
-      typeof data.sourceMessageId === "string" &&
-      !sourceMessageIds.includes(data.sourceMessageId)
-    )
-      sourceMessageIds.push(data.sourceMessageId);
+    if (typeof data.sourceMessageId === "string") sourceMessageIds.add(data.sourceMessageId);
     const settings = SettingsManager.inMemory({
       compaction: { enabled: true },
       retry: { enabled: false },
@@ -479,8 +475,7 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
       let imported = false;
       for (const value of Array.isArray(boundary.messages) ? boundary.messages : []) {
         const item = record(value);
-        if (typeof item.messageId === "string" && sourceMessageIds.includes(item.messageId))
-          continue;
+        if (typeof item.messageId === "string" && sourceMessageIds.has(item.messageId)) continue;
         const images = Array.isArray(item.images) ? item.images : [];
         const user = {
           role: "user" as const,
@@ -490,7 +485,7 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
         runtime!.session.sessionManager.appendMessage(user);
         agent.state.messages = [...agent.state.messages, user];
         boundaryMessages.push(user);
-        if (typeof item.messageId === "string") sourceMessageIds.push(item.messageId);
+        if (typeof item.messageId === "string") sourceMessageIds.add(item.messageId);
         imported = true;
       }
       if (imported) await checkpoint();

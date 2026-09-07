@@ -84,3 +84,53 @@ describe("contextual message activity", () => {
     expect(JSON.stringify(rows)).toBe(before);
   });
 });
+
+describe("activity projection work and identity", () => {
+  it("retains every unchanged historical row when one streaming row changes", () => {
+    const history = Array.from({ length: 2000 }, (_, i) =>
+      message(`history-${i}`, `run-${i}`, [{ kind: "text", text: "Retained reply" }]),
+    );
+    const progress = message("progress", "live", [{ kind: "progress", text: "One" }]);
+    const first = projectMessageActivity([...history, progress]);
+    const next = projectMessageActivity([
+      ...history,
+      { ...progress, blocks: [{ kind: "progress", text: "Two" }] },
+    ]);
+    history.forEach((row, index) => {
+      expect(first.messages[index]).toBe(row);
+      expect(next.messages[index]).toBe(row);
+    });
+    expect(next.messages.at(-1)).not.toBe(first.messages.at(-1));
+  });
+
+  it("deduplicates a large peer fan-out without changing first-seen order", () => {
+    const peers: MessageBlock[] = Array.from({ length: 5000 }, (_, i) => ({
+      kind: "bot_message_sent",
+      toBotId: `peer-${i}`,
+      toBotName: `Peer ${i}`,
+      text: "Fixture request",
+    }));
+    const result = projectMessageActivity([
+      message("receipt", "run", [...peers, ...peers]),
+      message("reply", "run", [{ kind: "text", text: "Done" }]),
+    ]);
+    expect(result.messages.map((row) => row.id)).toEqual(["reply"]);
+    expect(result.activities.get("reply")).toEqual(
+      peers.map((_, i) => ({
+        kind: "peer",
+        botId: "bot",
+        peerBotId: `peer-${i}`,
+        peerBotName: `Peer ${i}`,
+        count: 2,
+      })),
+    );
+  });
+
+  it("keeps thousands of activity-only anchors in input order exactly once", () => {
+    const rows = Array.from({ length: 2000 }, (_, i) => message(`receipt-${i}`, undefined, [sent]));
+    const result = projectMessageActivity(rows);
+    expect(result.messages.map((row) => row.id)).toEqual(rows.map((row) => row.id));
+    expect(result.messages.every((row) => row.blocks.length === 0)).toBe(true);
+    expect(result.activities.size).toBe(rows.length);
+  });
+});

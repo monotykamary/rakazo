@@ -73,6 +73,8 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
+  Skeleton,
+  useFrameState,
 } from "@rakazo/ui-web";
 import {
   ArrowDown,
@@ -341,7 +343,7 @@ export function ShellPage() {
   const [query, setQuery] = useState("");
   const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
-  const [snapshot, setSnapshot] = useState<ThreadSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useFrameState<ThreadSnapshot | null>(null);
   const snapshotRef = useRef<ThreadSnapshot | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [replyTarget, setReplyTarget] = useState<ThreadMessage | null>(null);
@@ -369,6 +371,8 @@ export function ShellPage() {
   const [taughtSkills, setTaughtSkills] = useState<TaughtSkill[]>([]);
   const [taughtSkillsBotId, setTaughtSkillsBotId] = useState<string | null>(null);
   const [agentSkills, setAgentSkills] = useState<AgentSkillCatalogEntry[]>([]);
+  const [mentionMetadataRequested, setMentionMetadataRequested] = useState(false);
+  const requestMentionMetadata = useCallback(() => setMentionMetadataRequested(true), []);
   const [mentionRoutines, setMentionRoutines] = useState<Array<Routine & { botName?: string }>>([]);
   const [mentionConnectors, setMentionConnectors] = useState<
     Array<{
@@ -416,9 +420,17 @@ export function ShellPage() {
     }
   }
 
-  function commitSnapshot(next: ThreadSnapshot | null) {
+  function commitSnapshot(next: ThreadSnapshot | null, deferPaint = false) {
+    const previous = snapshotRef.current;
+    // Replay/cursor correctness is synchronous; only React's paint is coalesced.
     snapshotRef.current = next;
-    setSnapshot(next);
+    setSnapshot(
+      next,
+      !deferPaint ||
+        next === null ||
+        next.threadId !== previous?.threadId ||
+        next.run?.status !== previous?.run?.status,
+    );
   }
 
   function commitComputer(next: ComputerStatus | null) {
@@ -1144,7 +1156,13 @@ export function ShellPage() {
         }
       },
       applyEvent: (event) =>
-        applyThreadEvent(event, commitSnapshot, commitComputer, snapshotRef, computerRef),
+        applyThreadEvent(
+          event,
+          (next) => commitSnapshot(next, true),
+          commitComputer,
+          snapshotRef,
+          computerRef,
+        ),
       onEvent: (event, initial) => {
         const currentBot = botsRef.current.find((bot) => bot.id === active.id);
         notifyBrowserForEvent(
@@ -1244,7 +1262,13 @@ export function ShellPage() {
       currentSnapshot: () => snapshotRef.current,
       subscribe: (cursor) => rpc.threads.subscribe({ groupId, cursor }, { signal: abort.signal }),
       applyEvent: (event) =>
-        applyThreadEvent(event, commitSnapshot, commitComputer, snapshotRef, computerRef),
+        applyThreadEvent(
+          event,
+          (next) => commitSnapshot(next, true),
+          commitComputer,
+          snapshotRef,
+          computerRef,
+        ),
       onEvent: (event, initial) => {
         const eventBot = botsRef.current.find((bot) => bot.id === event.botId);
         notifyBrowserForEvent(
@@ -1663,6 +1687,7 @@ export function ShellPage() {
   botsForMentionsRef.current = bots;
 
   useEffect(() => {
+    if (!mentionMetadataRequested) return;
     const bots = botsForMentionsRef.current;
     if (!initialBotsLoaded || bots.length === 0) {
       setMentionRoutines([]);
@@ -1725,7 +1750,7 @@ export function ShellPage() {
     return () => {
       cancelled = true;
     };
-  }, [initialBotsLoaded, mentionBotsKey]);
+  }, [initialBotsLoaded, mentionBotsKey, mentionMetadataRequested]);
 
   useLayoutEffect(() => {
     if (initialBotsLoaded) {
@@ -2107,6 +2132,16 @@ export function ShellPage() {
     setEditingRoutine(null);
     setPanel("routine");
   }, []);
+  const openPeerMessages = useCallback(
+    (peer: { botId?: string; peerBotId: string; peerBotName: string }) => {
+      peerReturnFocus.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setPanel(null);
+      setThreadInspector(null);
+      setPeerConversation(peer);
+    },
+    [],
+  );
   const speakingMessageIdRef = useRef(speakingMessageId);
   speakingMessageIdRef.current = speakingMessageId;
   const speakMessage = useCallback((message: ThreadMessage) => {
@@ -2420,7 +2455,7 @@ export function ShellPage() {
         data-testid="bots-sidebar"
         data-collapsed={botsSidebarCollapsed ? "true" : "false"}
         inert={botsSidebarCollapsed && !mobileSidebarOpen ? true : undefined}
-        className={`absolute inset-y-0 start-0 z-40 flex w-[calc(100%-48px)] max-w-[316px] shrink-0 flex-col border-e border-sidebar-border bg-sidebar transition-[transform,width,opacity] md:static md:z-auto md:translate-x-0 ${
+        className={`absolute inset-y-0 start-0 z-40 flex w-[calc(100%-48px)] max-w-[316px] shrink-0 flex-col border-e border-sidebar-border bg-sidebar transition-[transform,opacity] motion-reduce:transition-none md:static md:z-auto md:translate-x-0 ${
           mobileSidebarOpen ? "translate-x-0" : "-translate-x-full rtl:translate-x-full"
         } ${
           botsSidebarCollapsed
@@ -3088,7 +3123,8 @@ export function ShellPage() {
             </div>
           </div>
           <Transcript
-            key={activeSnapshot?.threadId}
+            key={inGroup ? `transcript:group:${groupId}` : `transcript:bot:${active?.id}`}
+            loading={!activeSnapshot && Boolean(active || activeGroup)}
             scrollRef={messageScroll}
             artifactTarget={transcriptArtifactTarget}
             messages={transcriptMessages}
@@ -3103,13 +3139,7 @@ export function ShellPage() {
             onReply={setReplyTarget}
             onReact={reactToMessage}
             onJumpToMessage={jumpToReplyMessage}
-            onOpenPeerMessages={(peer) => {
-              peerReturnFocus.current =
-                document.activeElement instanceof HTMLElement ? document.activeElement : null;
-              setPanel(null);
-              setThreadInspector(null);
-              setPeerConversation(peer);
-            }}
+            onOpenPeerMessages={openPeerMessages}
             onOpenExecution={(runId, botId) =>
               setThreadInspector({ view: "execution", runId, botId })
             }
@@ -3207,6 +3237,7 @@ export function ShellPage() {
             replyTargetName={replyTargetName}
             onClearReply={() => setReplyTarget(null)}
             mentionTargets={composerMentionTargets}
+            onMentionOpen={requestMentionMetadata}
             agentSkills={agentSkills}
             onSlashOpen={refreshAgentSkills}
             onSlashAction={(action) => {
@@ -3259,14 +3290,14 @@ export function ShellPage() {
       <aside
         data-testid="side-panel"
         data-panel={panel ?? "closed"}
-        className={`absolute inset-y-0 end-0 z-20 flex min-h-0 shrink-0 flex-col overflow-hidden bg-background transition-[width] duration-150 ease-out md:relative ${
+        className={`absolute inset-y-0 end-0 z-20 flex min-h-0 shrink-0 flex-col overflow-hidden bg-background md:relative ${
           panel && (active || activeGroup)
             ? "w-full max-w-[384px] border-s border-sidebar-border md:w-[384px] md:max-w-none"
             : "pointer-events-none w-0"
         }`}
       >
         {panel && (active || activeGroup) ? (
-          <div className="rk-scroll h-full w-full overflow-y-auto px-5 py-[17px] md:w-[384px]">
+          <div className="rk-panel-enter rk-scroll h-full w-full overflow-y-auto px-5 py-[17px] md:w-[384px]">
             {panel !== "routine" &&
             panel !== "create" &&
             panel !== "create-group" &&
@@ -4067,6 +4098,7 @@ export function ShellPage() {
 }
 
 const Transcript = memo(function Transcript({
+  loading,
   scrollRef,
   artifactTarget,
   messages,
@@ -4093,6 +4125,7 @@ const Transcript = memo(function Transcript({
   speakingMessageId,
   onSpeak,
 }: {
+  loading: boolean;
   scrollRef: RefObject<HTMLDivElement | null>;
   artifactTarget: ArtifactTarget;
   messages: ThreadMessage[];
@@ -4241,8 +4274,20 @@ const Transcript = memo(function Transcript({
             following.current = false;
           }
         }}
-        className="rk-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 py-5 md:px-7 md:py-6"
+        aria-busy={loading}
+        className={`rk-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 py-5 md:px-7 md:py-6 ${loading ? "" : "rk-thread-enter"}`}
       >
+        {loading ? (
+          <div
+            data-testid="thread-loading"
+            className="rk-thread-loading space-y-3"
+            aria-hidden="true"
+          >
+            <Skeleton className="h-3 w-40 motion-reduce:animate-none" />
+            <Skeleton className="h-3 w-64 max-w-full motion-reduce:animate-none" />
+            <Skeleton className="h-3 w-52 max-w-full motion-reduce:animate-none" />
+          </div>
+        ) : null}
         {olderCursor != null ? (
           <button
             type="button"
@@ -4319,7 +4364,7 @@ const Transcript = memo(function Transcript({
                     onAddRoutine={onAddRoutine}
                     voiceReady={voiceReady}
                     speaking={speakingMessageId === message.id}
-                    onSpeak={() => onSpeak(message)}
+                    onSpeak={onSpeak}
                   />
                   <MessageActivityLinks
                     activities={activities}
@@ -4396,6 +4441,7 @@ const Composer = memo(function Composer({
   replyTargetName,
   onClearReply,
   mentionTargets,
+  onMentionOpen,
   agentSkills,
   onSlashOpen,
   onSlashAction,
@@ -4421,6 +4467,7 @@ const Composer = memo(function Composer({
   replyTargetName?: string;
   onClearReply?: () => void;
   mentionTargets?: ComposerMention[];
+  onMentionOpen?: () => void;
   agentSkills?: AgentSkillCatalogEntry[];
   onSlashOpen?: () => void;
   onSlashAction?: (action: SlashActionId) => void;
@@ -4506,6 +4553,7 @@ const Composer = memo(function Composer({
   function updateDraft(value: string) {
     setDraft(value);
     const mentionMatch = /(?:^|\s)@([\w-]*)$/.exec(value);
+    if (mentionMatch && mentionQuery === null) onMentionOpen?.();
     setMentionQuery(mentionMatch ? (mentionMatch[1] ?? "") : null);
     // `/` only at the start of the draft so forced skills expand (`Use skill:` / `/Name` prefix).
     const slashMatch = selectedSkill === null ? /^\/([^\n]*)$/.exec(value) : null;
@@ -5288,7 +5336,7 @@ const MessageView = memo(function MessageView({
   onAddRoutine: (name: string, prompt: string) => void;
   voiceReady: boolean;
   speaking: boolean;
-  onSpeak: () => void;
+  onSpeak: (message: ThreadMessage) => void;
 }) {
   const { t } = useLingui();
   const isNarration =
@@ -5346,7 +5394,7 @@ const MessageView = memo(function MessageView({
               <button
                 type="button"
                 aria-label={speaking ? t`Stop speaking` : t`Speak this reply`}
-                onClick={onSpeak}
+                onClick={() => onSpeak(message)}
                 className="text-[12px] text-muted-foreground hover:text-foreground"
               >
                 {speaking ? <Trans>Stop</Trans> : <Trans>Speak</Trans>}
@@ -5597,7 +5645,7 @@ const MessageView = memo(function MessageView({
                   <button
                     type="button"
                     aria-label={speaking ? t`Stop speaking` : t`Speak this reply`}
-                    onClick={onSpeak}
+                    onClick={() => onSpeak(message)}
                     className="mt-2 text-[12px] text-muted-foreground hover:text-foreground"
                   >
                     {speaking ? <Trans>Stop</Trans> : <Trans>Speak</Trans>}
