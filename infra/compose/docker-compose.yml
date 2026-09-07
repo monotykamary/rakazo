@@ -25,6 +25,7 @@ services:
       SUPERVISOR_PORT: "7091"
       DOCKER_SOCKET: /var/run/docker.sock
       RAKAZO_COMPUTER_IMAGE: rakazo/computer:local
+      RAKAZO_AGENT_IMAGE: rakazo/agent:local
       RAKAZO_COMPUTER_MEMORY: ${RAKAZO_COMPUTER_MEMORY:-2g}
       RAKAZO_COMPUTER_CPUS: ${RAKAZO_COMPUTER_CPUS:-2}
       RAKAZO_COMPUTER_PIDS_LIMIT: ${RAKAZO_COMPUTER_PIDS_LIMIT:-2048}
@@ -43,6 +44,16 @@ services:
     depends_on:
       computer:
         condition: service_completed_successfully
+      agent:
+        condition: service_completed_successfully
+
+  agent:
+    image: rakazo/agent:local
+    build:
+      context: ../..
+      dockerfile: infra/compose/Dockerfile
+    command: ["true"]
+    restart: "no"
 
   computer:
     image: rakazo/computer:local

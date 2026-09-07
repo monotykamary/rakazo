@@ -29,6 +29,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { ModelRoutingSettings } from "../components/ModelRoutingSettings";
 import { localizedProviderHint } from "../lib/localized-provider-hint";
 import type { ModelCatalogEntry, ModelCredential } from "../lib/model-auth";
 import { rpc } from "../lib/rpc";
@@ -545,6 +546,16 @@ export function ModelSettingsOverlay({ onClose }: { onClose: () => void }) {
                     </div>
                   </div>
                 ) : null}
+
+                {credential && (
+                  <ModelRoutingSettings
+                    key={`${credential.id}:${modelId}`}
+                    credential={credential}
+                    credentials={credentials}
+                    modelId={modelId}
+                    catalog={catalog}
+                  />
+                )}
 
                 {subscriptionSignIn ? (
                   <div className="mt-5">

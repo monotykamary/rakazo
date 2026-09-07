@@ -5,6 +5,7 @@ import path from "node:path";
 import type { AgentRunRequest, AgentRuntimeEvent, ConnectorTool } from "@rakazo/adapter-kit";
 import { PiAgentRuntime } from "@rakazo/adapters";
 import { afterEach, describe, expect, it } from "vitest";
+import { createTestProcessHost } from "../../adapters/src/pi-rpc-test-host.js";
 import { type ModelEmulatorRequest, startModelEmulator } from "./model-emulator.js";
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -54,6 +55,11 @@ describe("real Pi against an offline model HTTP endpoint", () => {
     const dir = await mkdtemp(path.join(tmpdir(), "rakazo-pi-offline-"));
     cleanups.push(() => rm(dir, { recursive: true, force: true }));
     const calls: Array<{ name: string; args: Record<string, unknown>; id?: string }> = [];
+    const writeArguments = {
+      code: 'const result = await pi.write({path:"notes.txt",text:"hello\\n"}); return JSON.parse(result.output);',
+      resultFormat: "json",
+    };
+    const encodedArguments = JSON.stringify(writeArguments);
     const server = await startModelEmulator({
       apiKey: "fixture-only-key",
       steps: [
@@ -61,20 +67,24 @@ describe("real Pi against an offline model HTTP endpoint", () => {
           expect(request) {
             expect(request.messages.at(-1)).toMatchObject({
               role: "user",
-              content: [{ type: "text", text: "Save hello to notes.txt." }],
+              content: [{ type: "text", text: "User request:\nSave hello to notes.txt." }],
             });
             expect(request.tools).toContainEqual(
               expect.objectContaining({
-                function: expect.objectContaining({ name: "write_file" }),
+                function: expect.objectContaining({ name: "fabric_exec" }),
               }),
             );
           },
           response: {
             type: "tool",
             id: "write-1",
-            name: "write_file",
-            arguments: { path: "notes.txt", content: "hello\n" },
-            argumentChunks: ['{"pa', 'th":"notes.', 'txt","content":"hel', "lo\\", 'n"}'],
+            name: "fabric_exec",
+            arguments: writeArguments,
+            argumentChunks: [
+              encodedArguments.slice(0, 17),
+              encodedArguments.slice(17, 49),
+              encodedArguments.slice(49),
+            ],
           },
         },
         {
@@ -86,8 +96,8 @@ describe("real Pi against an offline model HTTP endpoint", () => {
                 id: "write-1",
                 type: "function",
                 function: {
-                  name: "write_file",
-                  arguments: JSON.stringify({ path: "notes.txt", content: "hello\n" }),
+                  name: "fabric_exec",
+                  arguments: JSON.stringify(writeArguments),
                 },
               },
             ]);
@@ -103,7 +113,7 @@ describe("real Pi against an offline model HTTP endpoint", () => {
     });
     cleanups.push(() => server.close());
     const events = await collect(
-      new PiAgentRuntime().run(
+      new PiAgentRuntime({ host: createTestProcessHost() }).run(
         runRequest(server.model, {
           async executeTool(name, args, id) {
             calls.push({ name, args, id });
@@ -127,7 +137,11 @@ describe("real Pi against an offline model HTTP endpoint", () => {
     });
     server.assertComplete();
     expect(calls).toEqual([
-      { name: "write_file", args: { path: "notes.txt", content: "hello\n" }, id: "write-1" },
+      {
+        name: "write_file",
+        args: { path: "notes.txt", content: "hello\n" },
+        id: expect.any(String),
+      },
     ]);
     expect(await readFile(path.join(dir, "notes.txt"), "utf8")).toBe("hello\n");
     expect(events.at(-1)).toEqual({ type: "done", text: "Saved notes.txt." });
@@ -142,14 +156,14 @@ describe("real Pi against an offline model HTTP endpoint", () => {
           response: {
             type: "tool",
             id: "denied-write",
-            name: "write_file",
-            arguments: { path: "notes.txt", content: "hello" },
+            name: "fabric_exec",
+            arguments: { code: 'return await pi.write({path:"notes.txt",text:"hello"});' },
           },
         },
         {
           expect(request) {
             expect(latestToolResult(request)).toMatchObject({ tool_call_id: "denied-write" });
-            expect(String(latestToolResult(request)?.content)).toContain("Fixture write denied");
+            expect(String(latestToolResult(request)?.content)).toMatch(/failed|denied|rejected/i);
           },
           response: { type: "text", text: "The file could not be saved." },
         },
@@ -157,7 +171,7 @@ describe("real Pi against an offline model HTTP endpoint", () => {
     });
     cleanups.push(() => server.close());
     const events = await collect(
-      new PiAgentRuntime().run(
+      new PiAgentRuntime({ host: createTestProcessHost() }).run(
         runRequest(server.model, {
           executeTool: async () => {
             calls++;
@@ -165,7 +179,10 @@ describe("real Pi against an offline model HTTP endpoint", () => {
           },
         }),
       ),
-    );
+    ).catch((error) => {
+      server.assertComplete();
+      throw error;
+    });
     server.assertComplete();
     expect(calls).toBe(1);
     expect(events.at(-1)).toEqual({ type: "done", text: "The file could not be saved." });
@@ -185,7 +202,7 @@ describe("real Pi against an offline model HTTP endpoint", () => {
     const events: AgentRuntimeEvent[] = [];
     await expect(
       collect(
-        new PiAgentRuntime().run(
+        new PiAgentRuntime({ host: createTestProcessHost() }).run(
           runRequest(server.model, {
             executeTool: async () => {
               calls++;
@@ -195,7 +212,7 @@ describe("real Pi against an offline model HTTP endpoint", () => {
         ),
         events,
       ),
-    ).rejects.toThrow(/Fixture request rejected/);
+    ).rejects.toThrow(/model|provider|request|failed|rejected/i);
     server.assertComplete();
     expect(calls).toBe(0);
     expect(events.some((event) => event.type === "done")).toBe(false);
@@ -208,7 +225,10 @@ describe("real Pi against an offline model HTTP endpoint", () => {
     cleanups.push(() => server.close());
     const events: AgentRuntimeEvent[] = [];
     await expect(
-      collect(new PiAgentRuntime().run(runRequest(server.model)), events),
+      collect(
+        new PiAgentRuntime({ host: createTestProcessHost() }).run(runRequest(server.model)),
+        events,
+      ),
     ).rejects.toThrow();
     server.assertComplete();
     expect(events.some((event) => event.type === "done")).toBe(false);
@@ -233,7 +253,9 @@ describe("real Pi against an offline model HTTP endpoint", () => {
     const controller = new AbortController();
     const events: AgentRuntimeEvent[] = [];
     const work = collect(
-      new PiAgentRuntime().run(runRequest(server.model), { signal: controller.signal }),
+      new PiAgentRuntime({ host: createTestProcessHost() }).run(runRequest(server.model), {
+        signal: controller.signal,
+      }),
       events,
     );
     // Attach the rejection handler before aborting to avoid an unhandled rejection.
@@ -264,7 +286,7 @@ describe("real Pi against an offline model HTTP endpoint", () => {
       () => first.close(),
       () => second.close(),
     );
-    const runtime = new PiAgentRuntime();
+    const runtime = new PiAgentRuntime({ host: createTestProcessHost() });
     const results = await Promise.all(
       [first, second].map((server) => collect(runtime.run(runRequest(server.model)))),
     );

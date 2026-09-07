@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "packages": [
+    {
+      "name": "pi-fabric",
+      "version": "0.88.1",
+      "filename": "pi-fabric-0.88.1-5ad25726a04e.tgz",
+      "sha256": "5ad25726a04e21bc2a5104526a504897066afab9065e40a38e543f0553eb8f35",
+      "baseCommit": "82d39b26f17c0eca583f9de739460f7d1e618ba7"
+    },
+    {
+      "name": "pi-fovea",
+      "version": "0.22.0",
+      "filename": "pi-fovea-0.22.0-051f3431b171.tgz",
+      "sha256": "051f3431b171a109ef955fd63db1c694d4bbb7635e7f7dfd604fe7ea8338d394",
+      "baseCommit": "ab8bf15a8d3f07518a264b538cebd1de7f3d5711"
+    },
+    {
+      "name": "pi-queue-steer-factory",
+      "version": "0.16.1",
+      "filename": "pi-queue-steer-factory-0.16.1-083935d87583.tgz",
+      "sha256": "083935d87583075b7c1f92f96f54b91fcf0832d26e4d441949891c9f6f0943f4",
+      "baseCommit": "c0c78571bf51d99a09d3612fed69560c5c2fada0"
+    },
+    {
+      "name": "@monotykamary/pi-retry",
+      "version": "0.8.5",
+      "filename": "monotykamary-pi-retry-0.8.5-cf28c9d2fedd.tgz",
+      "sha256": "cf28c9d2fedd3bcffa21f3bd6b531668a95925efd5f2f3a1eac55f9605cbbf73",
+      "baseCommit": "4b00163100f383024ea51b228297eed23ecf7240"
+    },
+    {
+      "name": "pi-multiprovider",
+      "version": "0.2.9",
+      "filename": "pi-multiprovider-0.2.9-46e2d86bf274.tgz",
+      "sha256": "46e2d86bf2748d329a36aa475d0a03d7b0a16b606a668a72a643054555fc3324",
+      "baseCommit": "78b7855d9c4b4852cbe33c6fd0af8fb672a5af86"
+    }
+  ]
+}

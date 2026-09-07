@@ -60,6 +60,7 @@ import {
   type MarkdownArtifactPreviewTarget,
 } from "../components/markdown-artifact-preview";
 import { NativeSymbol } from "../components/native-symbol";
+import { GroupQueueStrip, QueueStrip } from "../components/QueueStrip";
 import {
   applyMobileThreadEvent,
   blockText,
@@ -1585,6 +1586,35 @@ function Thread() {
         ) : null}
       </View>
       <View style={{ paddingBottom: Math.max(insets.bottom + 12, 24) }}>
+        {notificationThreadId && inGroup && (
+          <GroupQueueStrip
+            key={notificationThreadId}
+            threadId={notificationThreadId}
+            members={snap?.members ?? []}
+            runIds={[
+              ...new Set([
+                ...(snap?.activeRuns?.map((run) => run.id) ?? []),
+                ...(snap?.run ? [snap.run.id] : []),
+                ...(snap?.messages.flatMap((message) => (message.runId ? [message.runId] : [])) ??
+                  []),
+              ]),
+            ]}
+          />
+        )}
+        {notificationThreadId && botId && !inGroup && (
+          <QueueStrip
+            key={`${notificationThreadId}:${botId}`}
+            threadId={notificationThreadId}
+            botId={botId}
+            runIds={[
+              ...new Set([
+                ...(snap?.run ? [snap.run.id] : []),
+                ...(snap?.messages.flatMap((message) => (message.runId ? [message.runId] : [])) ??
+                  []),
+              ]),
+            ]}
+          />
+        )}
         {replyTarget ? (
           <View
             style={{

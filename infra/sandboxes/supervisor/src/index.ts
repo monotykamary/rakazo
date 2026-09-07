@@ -17,6 +17,8 @@ import { requestLogging } from "@rakazo/logging/hono";
 import Docker from "dockerode";
 import { Hono } from "hono";
 import { z } from "zod";
+import { AgentProcessHost } from "./agent-process.js";
+import { agentProcessRoutes } from "./agent-routes.js";
 import {
   COMPUTER_GID,
   COMPUTER_IMAGE,
@@ -92,6 +94,13 @@ const app = new Hono();
 export { app as supervisorApp };
 
 app.use("*", requestLogging());
+
+const agentProcesses = new AgentProcessHost({
+  docker,
+  bridgeRoot: path.join(dataDir, ".agent-bridges"),
+  hostPath: async (directory) => hostHomePath(directory, await inspectSupervisorContainer()),
+});
+app.route("/agents", agentProcessRoutes(agentProcesses, supervisorToken));
 
 export function resolveDockerSocketPath(
   env: NodeJS.ProcessEnv = process.env,
@@ -700,6 +709,7 @@ function startSupervisor() {
   const shutdown = async () => {
     if (stopping) return;
     stopping = true;
+    await agentProcesses.close();
     await closeListeningServer(server);
     await logger.flush({ timeoutMs: 2_000 });
     process.exit(0);

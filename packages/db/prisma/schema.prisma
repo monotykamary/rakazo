@@ -284,6 +284,7 @@ model SpaceModelPreference {
   credentialId String
   credential   UserModelCredential @relation(fields: [credentialId, userId], references: [id, userId], onDelete: Cascade)
   modelId      String?
+  routing      Json?
   isDefault    Boolean             @default(false)
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
@@ -360,6 +361,9 @@ model Bot {
   tasks             Task[]
   runs              Run[]
   steeringMessages  SteeringMessage[]
+  runtimeSessions RuntimeSession[]
+  runtimePlacements RuntimePlacement[]
+  premoveQueues PremoveQueue[]
   mcpServers        BotMcpServer[]
   groupMembers      ChatGroupMember[]
   botSecrets BotSecret[]
@@ -462,6 +466,9 @@ model Thread {
   tasks                       Task[]
   runs                        Run[]
   routines                    Routine[]
+  runtimeSessions             RuntimeSession[]
+  runtimePlacements           RuntimePlacement[]
+  premoveQueues               PremoveQueue[]
 
   @@index([spaceId])
   @@map("threads")
@@ -581,6 +588,52 @@ model Run {
   @@index([threadId, status, createdAt])
   @@index([routineId])
   @@map("runs")
+}
+
+model RuntimeSession {
+  spaceId String
+  threadId String
+  thread Thread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  botId String
+  bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)
+  generation Int
+  revision Int @default(0)
+  state Json
+  updatedAt DateTime @updatedAt
+
+  @@id([spaceId, threadId, botId])
+  @@map("runtime_sessions")
+}
+
+model RuntimePlacement {
+  spaceId String
+  threadId String
+  thread Thread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  botId String
+  bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)
+  computerId String
+  homeKey String
+  projectPath String
+  worktreePath String?
+  revision Int @default(1)
+  updatedAt DateTime @updatedAt
+
+  @@id([spaceId, threadId, botId])
+  @@map("runtime_placements")
+}
+
+model PremoveQueue {
+  spaceId String
+  threadId String
+  thread Thread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  botId String
+  bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)
+  revision Int @default(0)
+  state Json
+  updatedAt DateTime @updatedAt
+
+  @@id([spaceId, threadId, botId])
+  @@map("premove_queues")
 }
 
 model SteeringMessage {

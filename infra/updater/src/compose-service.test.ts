@@ -60,13 +60,14 @@ describe("the updater compose service", () => {
     expect(compose.networks).toHaveProperty("control");
   });
 
-  it("is the only service holding the Docker socket", () => {
+  it("shares Docker access only with the isolated agent supervisor", () => {
     const withSocket = Object.entries(compose.services)
       .filter(([, service]) =>
         (service.volumes ?? []).some((volume) => volume.includes("docker.sock")),
       )
       .map(([name]) => name);
-    expect(withSocket).toEqual(["updater"]);
+    expect(withSocket.sort()).toEqual(["supervisor", "updater"]);
+    expect(compose.services.supervisor?.ports ?? []).toEqual([]);
   });
 
   it("is bind-mounted at the same path it has on the host", () => {
@@ -115,7 +116,7 @@ describe("the updater compose service", () => {
       interpolated("RAKAZO_COMPOSE_FILE", "infra/compose/docker-compose.prod.yml"),
     );
     expect(updater.environment?.RAKAZO_UPDATE_SERVICES).toBe(
-      interpolated("RAKAZO_UPDATE_SERVICES"),
+      interpolated("RAKAZO_UPDATE_SERVICES", "supervisor"),
     );
     expect(updater.environment?.COMPOSE_PATH_SEPARATOR).toBe(
       interpolated("COMPOSE_PATH_SEPARATOR"),

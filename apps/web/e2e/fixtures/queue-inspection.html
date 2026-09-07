@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Queue inspection</title></head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      import { i18n } from "@lingui/core";
+      import { createElement as h } from "react";
+      import { createRoot } from "react-dom/client";
+      import { QueueStrip } from "../../src/components/QueueStrip.tsx";
+      import "../../src/styles.css";
+
+      i18n.load("en", {});
+      i18n.activate("en");
+      createRoot(document.getElementById("root")).render(h("main", { className: "mx-auto max-w-3xl bg-background py-8 text-foreground" }, h(QueueStrip, { threadId: "thread", botId: "bot", runIds: ["run"] })));
+    </script>
+  </body>
+</html>

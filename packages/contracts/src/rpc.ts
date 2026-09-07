@@ -72,7 +72,19 @@ import {
   VoiceStatusSchema,
 } from "./domain.js";
 import { ProductEventSchema } from "./events.js";
+import { ExecutionInspectInputSchema, ExecutionInspectionSchema } from "./execution.js";
 import { Id, IsoDate } from "./ids.js";
+import {
+  ModelRoutingGetInputSchema,
+  ModelRoutingSchema,
+  ModelRoutingSetInputSchema,
+} from "./model-routing.js";
+import {
+  QueueMutationSchema,
+  QueueReplySchema,
+  QueueScopeSchema,
+  QueueSnapshotSchema,
+} from "./queue.js";
 import { RunsListOutputSchema } from "./runs.js";
 import { SearchQueryOutputSchema } from "./search.js";
 
@@ -128,6 +140,11 @@ const threadSendInput = threadTarget
   });
 
 export const appContract = {
+  queue: {
+    list: oc.input(QueueScopeSchema).output(QueueSnapshotSchema),
+    mutate: oc.input(QueueMutationSchema).output(QueueReplySchema),
+  },
+  execution: { inspect: oc.input(ExecutionInspectInputSchema).output(ExecutionInspectionSchema) },
   health: oc.output(z.object({ ok: z.literal(true), version: z.string() })),
   me: oc.output(MeSchema),
   preferences: {
@@ -161,6 +178,8 @@ export const appContract = {
     apply: oc.input(ServerUpdateRequestSchema).output(ServerUpdateRunSchema),
   },
   models: {
+    getRouting: oc.input(ModelRoutingGetInputSchema).output(ModelRoutingSchema.nullable()),
+    setRouting: oc.input(ModelRoutingSetInputSchema).output(ModelRoutingSchema.nullable()),
     list: oc.output(z.array(ModelCatalogEntrySchema)),
     credentials: oc.output(z.array(ModelCredentialSchema)),
     connect: oc.input(ModelConnectInputSchema).output(ModelCredentialSchema),

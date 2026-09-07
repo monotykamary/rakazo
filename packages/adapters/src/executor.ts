@@ -66,24 +66,32 @@ import {
   type ToolCallStreak,
   toolRequiresApproval,
   toolRequiresExplicitApproval,
+  translateQueueControl,
   userTurnBlocksForRun,
 } from "@rakazo/core";
 import { approvalEffectKey } from "@rakazo/core/node/approval-effect-key";
 import {
   appendEventInTransaction,
+  captureQueuePlacement,
+  createRuntimeSession,
   createSpaceForMember,
   createThreadMessageInTransaction,
+  dispatchPremoveQueue,
   effectiveMemoryScope,
   findDefaultModelCredential,
   findModelCredential,
   InvalidSpaceNameError,
+  isPremoveGracefulPauseRequested,
   loadRunHistoryMessages,
   type McpServer,
   type Prisma,
   type PrismaClient,
   parseComputerMode,
+  pendingPremoveMessageIds,
   SpaceLimitError,
+  setRuntimePlacement,
   type ThreadEvents,
+  wakePremoveQueue,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { parse as parseShellCommand } from "shell-quote";
@@ -125,6 +133,7 @@ import {
   settleUncertainEffect,
   uncertainEffectResult,
 } from "./approval-effect.js";
+import { atomicFileEdit, type ExactFileEdit } from "./atomic-file-edit.js";
 import {
   autoReviewTimeoutMs,
   buildAutoReviewPrompt,
@@ -176,6 +185,7 @@ import {
 import { withComputerScreenAvailability } from "./computer-screens.js";
 import {
   displayBotWorkspacePath,
+  normalizeWorkspacePath,
   resolveBotWorkspaceCwd,
   resolveBotWorkspacePath,
   teamBotWorkspaceDirectory,
@@ -184,6 +194,7 @@ import { observationToolResult, parseComputerActions } from "./computer-tools.js
 import { checkpointAndRecordComputerWorkspace } from "./computer-workspace.js";
 import { sanitizeConnectorError } from "./connector-safety.js";
 import { resolveDeploymentModel } from "./deployment-model.js";
+import { resolveExecutorModelRouting } from "./executor-model-routing.js";
 import { handoffToGroupBot, loadGroupContext } from "./group-handoff.js";
 import {
   COMPACTION_BATCH_SIZE,
@@ -223,6 +234,7 @@ import {
   secretValuesToRedact,
   serializeModelSecret,
 } from "./pi-oauth.js";
+import { authorizedRelativePlacement, bindPlacementExecutor } from "./pi-placement.js";
 import {
   assertPlotDataWithinLimits,
   PLOT_TOOL_GUIDE,
@@ -232,6 +244,7 @@ import {
   renderPlotSpecToSvg,
   searchChartCatalog,
 } from "./plot-tool.js";
+import { managePremoveTool } from "./premove-tools.js";
 import type { RemoteTransportDependencies } from "./remote-mcp.js";
 import {
   commitConsumedRunSecret,
@@ -917,7 +930,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
         const [
           bot,
           thread,
-          messages,
+          loadedMessages,
           peerMessage,
           task,
           storedConnections,
@@ -967,6 +980,17 @@ export function createRunExecutor(deps: ExecutorDeps) {
             },
           }),
         ]);
+        const queuedSourceIds =
+          deps.runtime.describe().id === "pi"
+            ? new Set(
+                await pendingPremoveMessageIds(deps.prisma, {
+                  spaceId: run.spaceId,
+                  threadId: thread.id,
+                  botId: bot.id,
+                }),
+              )
+            : new Set<string>();
+        const messages = loadedMessages.filter((message) => !queuedSourceIds.has(message.id));
         const agentEnvironment = decryptAgentEnvironment(agentSecretRows, deps.secretStore);
         runSecrets.push(...Object.values(agentEnvironment));
         const agentEnvironmentInstruction = formatAgentEnvironmentInstruction(agentEnvironment);
@@ -1055,10 +1079,28 @@ export function createRunExecutor(deps: ExecutorDeps) {
           },
           messagingChannelRun,
         );
+        const managedRuntime = deps.runtime.describe().id === "pi";
+        const privateRuntime =
+          managedRuntime &&
+          !messagingChannelRun &&
+          run.trigger !== "messaging" &&
+          run.trigger !== "bot_message";
+        const runtimeSession = privateRuntime
+          ? await createRuntimeSession(deps.prisma, {
+              spaceId: run.spaceId,
+              threadId: thread.id,
+              botId: bot.id,
+              runId,
+              leaseOwner: workerId,
+              leaseFence: fence,
+            })
+          : undefined;
         const compactedHistory = selectCompactedHistory({
           messages: threadContext.messages,
-          summary: threadContext.summary,
-          historyCompactedUpToSeq: threadContext.historyCompactedUpToSeq,
+          summary: runtimeSession?.restore ? null : threadContext.summary,
+          historyCompactedUpToSeq: runtimeSession?.restore
+            ? null
+            : threadContext.historyCompactedUpToSeq,
         });
         let history = compactedHistory.history.map(({ id, role, content }) => ({
           id,
@@ -1199,6 +1241,38 @@ export function createRunExecutor(deps: ExecutorDeps) {
           (values) => runSecrets.push(...values),
         );
         runSecrets.push(...resolved.redact);
+        const modelRouting = managedRuntime
+          ? await resolveExecutorModelRouting({
+              prisma: deps.prisma,
+              userId: run.userId,
+              spaceId: run.spaceId,
+              credential: credential ?? undefined,
+              provider: runModelProvider,
+              modelId: runModelId,
+              explicitOverride: hasModelOverride,
+              thinkingLevel,
+              resolve: async (candidate) => {
+                const auth = await resolveModelKey(
+                  deps,
+                  run.userId,
+                  run.spaceId,
+                  candidate,
+                  candidate.provider,
+                  (values) => runSecrets.push(...values),
+                );
+                runSecrets.push(...auth.redact);
+                return {
+                  apiKey: auth.oauth ? undefined : auth.apiKey,
+                  baseUrl: auth.baseUrl,
+                  reasoning: auth.reasoning,
+                  oauth: auth.oauth
+                    ? { credential: auth.oauth, persist: auth.persistOAuth }
+                    : undefined,
+                };
+              },
+              acceptsImages: modelAcceptsImageInput,
+            })
+          : undefined;
         await deps.prisma.run.updateMany({
           where: { id: runId, status: "running", leaseOwner: workerId, leaseFence: fence },
           data: { modelProvider: runModelProvider, modelId: runModelId },
@@ -1318,6 +1392,28 @@ export function createRunExecutor(deps: ExecutorDeps) {
             ? `Your Team Computer home is ${teamBotWorkspaceDirectory(bot.id)}. Relative file paths and shell working directories start there. Put intentionally shared work under shared/. Other bots' folders are visible under bots/; treat them as their working areas.`
             : "This entire computer workspace is your private home. Relative file paths and shell working directories start at its root.";
 
+        const capturedPlacement = privateRuntime
+          ? await deps.prisma.$transaction((tx) =>
+              captureQueuePlacement(tx, {
+                spaceId: run.spaceId,
+                threadId: thread.id,
+                botId: bot.id,
+              }),
+            )
+          : { kind: "none" as const };
+        if (
+          capturedPlacement.kind === "unbound" &&
+          (await deps.prisma.runtimePlacement.findUnique({
+            where: {
+              spaceId_threadId_botId: { spaceId: run.spaceId, threadId: thread.id, botId: bot.id },
+            },
+          }))
+        ) {
+          throw new Error(
+            "Stored project placement no longer matches this computer; explicit rebinding is required",
+          );
+        }
+        let placementSeeded = capturedPlacement.kind !== "unbound";
         let assembled = "";
         let currentTextSegment = "";
         let messageSegments: MessageBlock[] = [];
@@ -1376,6 +1472,18 @@ export function createRunExecutor(deps: ExecutorDeps) {
         let lastComputerFrameId: string | undefined;
         let terminalCheckpointComplete = false;
         let approvalPausePending = false;
+        let deferredRuntimePause: (() => Promise<boolean>) | undefined;
+        let runtimePauseCommitted = false;
+        let runtimeQueuePaused = false;
+        // Managed Pi must acknowledge a fenced checkpoint before releasing the run lease.
+        const pauseRunAtCheckpoint = async (
+          input: Parameters<typeof deps.events.pauseRunForInput>[0],
+        ) => {
+          if (!runtimeSession) return deps.events.pauseRunForInput(input);
+          if (deferredRuntimePause) throw new Error("A runtime pause is already pending");
+          deferredRuntimePause = () => deps.events.pauseRunForInput(input);
+          return true;
+        };
         let handedOff = false;
         let progressRedactor = createStreamingRedactor(runSecrets);
         const scripted = deps.runtime.describe().capabilities.scripted;
@@ -1443,6 +1551,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
           executionId: string,
         ) => {
           context.signal.throwIfAborted();
+          if (approvalPausePending) return approvalPausedToolResult();
+          if (!leaseValid || !(await renewRunLease(deps, runId, workerId, fence))) {
+            leaseValid = false;
+            throw new Error("Run lease lost before tool dispatch");
+          }
           if (handedOff) {
             return { error: "This stage was handed off. End the turn without more tool calls." };
           }
@@ -1814,7 +1927,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               return pauseForApproval();
             }
             await workspaceCheckpoint.flush();
-            const paused = await deps.events.pauseRunForInput({
+            const paused = await pauseRunAtCheckpoint({
               spaceId: run.spaceId,
               threadId: run.threadId,
               botId: run.botId,
@@ -1954,16 +2067,17 @@ export function createRunExecutor(deps: ExecutorDeps) {
           }
           if (name === "list_files") {
             const requestedPath = String(args.path ?? "");
+            const directoryPath = requestedPath === "." ? "" : requestedPath;
             const entries = await deps.sandbox.listFiles(
               computer,
-              resolveBotWorkspacePath(computerMode, bot.id, requestedPath),
+              resolveBotWorkspacePath(computerMode, bot.id, directoryPath),
               context,
             );
             return {
               path: requestedPath,
               entries: entries.map((entry) => ({
                 ...entry,
-                path: displayBotWorkspacePath(computerMode, bot.id, requestedPath, entry.path),
+                path: displayBotWorkspacePath(computerMode, bot.id, directoryPath, entry.path),
               })),
             };
           }
@@ -2005,6 +2119,20 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 path: filePath,
               };
             }
+          }
+          if (name === "edit_file") {
+            workspaceCheckpoint.markDirty();
+            const result = await atomicFileEdit(
+              {
+                path: normalizeWorkspacePath(
+                  resolveBotWorkspacePath(computerMode, bot.id, String(args.path ?? "")),
+                ),
+                edits: args.edits as ExactFileEdit[],
+                ...(args.all === undefined ? {} : { all: args.all as boolean }),
+              },
+              (argv) => runSandboxCommand(deps.sandbox, computer, argv, undefined, {}, context),
+            );
+            return finish(result);
           }
           if (name === "write_file") {
             const filePath = String(args.path ?? "notes/result.txt");
@@ -2775,7 +2903,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               return pauseForSecret();
             }
             await workspaceCheckpoint.flush();
-            const paused = await deps.events.pauseRunForInput({
+            const paused = await pauseRunAtCheckpoint({
               spaceId: run.spaceId,
               threadId: run.threadId,
               botId: run.botId,
@@ -2807,6 +2935,26 @@ export function createRunExecutor(deps: ExecutorDeps) {
               threadId: thread.id,
             });
             return pauseForSecret();
+          }
+          if (name === "manage_queue") {
+            if (!privateRuntime || thread.groupId)
+              return { error: "Private premoves are unavailable in this conversation surface" };
+            const user = await deps.prisma.user.findUniqueOrThrow({
+              where: { id: run.userId },
+              select: { email: true },
+            });
+            return managePremoveTool(
+              deps.prisma,
+              {
+                userId: run.userId,
+                spaceId: run.spaceId,
+                email: user.email,
+                isDeploymentOwner: false,
+              },
+              { threadId: thread.id, botId: bot.id, runId, trigger: run.trigger },
+              args,
+              executionId,
+            );
           }
           if (name === "request_takeover") return { ok: true };
           if (name === "run_subagent") {
@@ -3133,7 +3281,13 @@ export function createRunExecutor(deps: ExecutorDeps) {
               botId: bot.id,
               threadId: thread.id,
               runId,
-              sourceMessageId: run.sourceMessageId,
+              sourceMessageId:
+                run.sourceMessageId ??
+                (privateRuntime &&
+                run.trigger === "follow_up" &&
+                run.clientNonce?.startsWith("queue-resume:")
+                  ? run.clientNonce
+                  : undefined),
               prompt,
               instructions: [
                 bot.instructions || `${bot.name}: ${bot.title}\n${bot.description}`,
@@ -3150,7 +3304,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 "A bot and a subagent are different. Never use both for the same request.",
                 "create_space proposes a new privacy boundary inside the current organization. Use it when the user asks to create a space or separate data between teams or projects. It always pauses for explicit user approval; never claim the space exists before the tool succeeds.",
                 "spawn_bot creates a lasting regular bot (own chat, computer, memory) that appears in the user's bot list. If the user asked to create a bot, call spawn_bot once and stop. Do not run_subagent to demo it.",
-                "run_subagent is a short helper inside this turn only. It is not a bot, has no thread, and does not show in the list. Use it for parallel work you will summarize here.",
+                "Use agents.run for scoped helper work. Helpers retain their own context and can resume by participantId in later turns; they are not separate bots in the bot list. Choose an explicit cwd for project work and summarize their results here.",
                 botDirectory,
                 "archive_bot safely archives a bot this bot created, and only that bot. Use it when the user asks to remove that bot or when it is finished and unused. The user can restore it or permanently delete it later. confirm_name must exactly match its name.",
                 pluginLine,
@@ -3178,11 +3332,224 @@ export function createRunExecutor(deps: ExecutorDeps) {
                   ? { credential: resolved.oauth, persist: resolved.persistOAuth }
                   : undefined,
               },
+              modelRouting,
+              queueOnly: privateRuntime && !task.prompt.trim() && !run.sourceMessageId,
+              placement:
+                capturedPlacement.kind === "project"
+                  ? {
+                      cwd: capturedPlacement.worktreePath ?? capturedPlacement.projectPath!,
+                      worktreeId: capturedPlacement.worktreePath ?? undefined,
+                    }
+                  : { cwd: "." },
+              authorizeSubagentPlacement: async (placement) => {
+                const cwd = authorizedRelativePlacement(placement.cwd ?? ".");
+                const result = await applyTool(
+                  "list_files",
+                  { path: cwd },
+                  `${runId}:placement:${cwd}`,
+                );
+                if (
+                  isToolPauseResult(result) ||
+                  (result && typeof result === "object" && "error" in result)
+                )
+                  throw new Error("Placement could not be authorized");
+                return {
+                  placement: { cwd, worktreeId: placement.worktreeId },
+                  executeTool: bindPlacementExecutor(cwd, applyTool),
+                };
+              },
+              runtimeBoundary: privateRuntime
+                ? async (boundary, control) => {
+                    if (control.participantId !== runId) return;
+                    const scope = {
+                      spaceId: run.spaceId,
+                      threadId: thread.id,
+                      botId: bot.id,
+                      runId,
+                      leaseOwner: workerId,
+                      leaseFence: fence,
+                    };
+                    const validate = async (path: string) => {
+                      const cwd = authorizedRelativePlacement(path);
+                      const result = await applyTool(
+                        "list_files",
+                        { path: cwd },
+                        `${runId}:queue-placement:${cwd}`,
+                      );
+                      if (isToolPauseResult(result)) {
+                        await control.pause();
+                        throw new Error("Placement validation paused");
+                      }
+                      if (result && typeof result === "object" && "error" in result)
+                        throw new Error("Placement validation failed");
+                    };
+                    if (
+                      boundary === "idle" &&
+                      control.participantId === runId &&
+                      !placementSeeded
+                    ) {
+                      // The provider, policy and run lease authorize the logical computer root, not a host cwd.
+                      await setRuntimePlacement(
+                        deps.prisma,
+                        scope,
+                        {
+                          computerId: storedComputer.id,
+                          homeKey: storedComputer.homeKey,
+                          projectPath: ".",
+                        },
+                        async () => validate("."),
+                      );
+                      placementSeeded = true;
+                    }
+                    await dispatchPremoveQueue(
+                      deps.prisma,
+                      scope,
+                      boundary === "before_model" ? "turn-end" : boundary,
+                      {
+                        validatePlacement: async (placement) => {
+                          await validate(placement.worktreePath ?? placement.projectPath ?? ".");
+                        },
+                        gracefulPause:
+                          boundary === "paused" ? async () => undefined : control.pause,
+                        command: async (row, parsed, dispatchContext) => {
+                          let command: ReturnType<typeof translateQueueControl>;
+                          try {
+                            command = translateQueueControl(parsed, row.target);
+                          } catch {
+                            return { outcome: "rejected", error: "Unsupported queued control" };
+                          }
+                          return control.command(command, {
+                            id: row.id,
+                            signal: dispatchContext.signal,
+                          });
+                        },
+                        send: async (row) => {
+                          const blocks = row.blocks ?? [];
+                          const { images, files, unavailableInstruction } =
+                            await settleSteeringAttachmentLoads(
+                              loadCurrentTurnImages(deps, blocks, context),
+                              deps.artifacts
+                                ? materializeCurrentTurnFiles(
+                                    {
+                                      prisma: deps.prisma,
+                                      artifacts: deps.artifacts,
+                                      sandbox: deps.sandbox,
+                                    },
+                                    blocks,
+                                    {
+                                      context,
+                                      computer,
+                                      computerMode,
+                                      markWorkspaceDirty: workspaceCheckpoint.markDirty,
+                                    },
+                                  )
+                                : Promise.resolve([]),
+                              blocks,
+                              context.signal,
+                            );
+                          workspaceCheckpoint.markFiles(files);
+                          await control.deliver({
+                            id: row.id,
+                            participantId: row.target?.participantId,
+                            messageId: `queue:${row.id}`,
+                            text: [
+                              row.text,
+                              currentTurnFilesInstruction(files),
+                              unavailableInstruction,
+                            ]
+                              .filter(Boolean)
+                              .join("\n\n"),
+                            images: [
+                              ...(images ?? []),
+                              ...(row.images ?? []).map((image) => ({
+                                name: "queued-image",
+                                mimeType: image.mimeType as "image/png",
+                                data: Buffer.from(image.data, "base64"),
+                              })),
+                            ],
+                            ...(!row.target && row.placement.kind === "project"
+                              ? {
+                                  placement: {
+                                    cwd: row.placement.worktreePath ?? row.placement.projectPath!,
+                                    worktreeId: row.placement.worktreePath ?? undefined,
+                                  },
+                                }
+                              : {}),
+                          });
+                          return { outcome: "accepted" };
+                        },
+                      },
+                    );
+                    if (boundary === "paused") runtimeQueuePaused = true;
+                  }
+                : undefined,
+              session: runtimeSession
+                ? {
+                    restore: runtimeSession.restore,
+                    save: async (state) => {
+                      if (runtimePauseCommitted) return;
+                      await runtimeSession.save(
+                        JSON.parse(redactSecrets(JSON.stringify(state), runSecrets)),
+                      );
+                      const evidence =
+                        state && typeof state === "object" && "runtimeExecutionEvidence" in state
+                          ? state.runtimeExecutionEvidence
+                          : [];
+                      if (Array.isArray(evidence))
+                        for (const event of evidence) {
+                          await deps.events.append({
+                            spaceId: run.spaceId,
+                            threadId: thread.id,
+                            botId: bot.id,
+                            runId,
+                            type: "agent.execution.updated",
+                            payload: JSON.parse(redactSecrets(JSON.stringify(event), runSecrets)),
+                          });
+                        }
+                      if (deferredRuntimePause) {
+                        if (!(await deferredRuntimePause()))
+                          throw new Error("Run lease lost before durable pause");
+                        runtimePauseCommitted = true;
+                        deferredRuntimePause = undefined;
+                      }
+                    },
+                  }
+                : undefined,
+              assertActive: async (boundary) => {
+                context.signal.throwIfAborted();
+                if (
+                  approvalPausePending ||
+                  !leaseValid ||
+                  !(await renewRunLease(deps, runId, workerId, fence))
+                )
+                  throw new Error("Run is paused or its lease was lost");
+                if (
+                  boundary?.effects &&
+                  privateRuntime &&
+                  (await isPremoveGracefulPauseRequested(deps.prisma, {
+                    spaceId: run.spaceId,
+                    threadId: thread.id,
+                    botId: bot.id,
+                    runId,
+                    leaseOwner: workerId,
+                    leaseFence: fence,
+                  }))
+                ) {
+                  return "pause";
+                }
+              },
               resumeFromCheckpoint: takeoverResume?.checkpoint,
               script,
               allowSilentEmpty: allowSilentPeerMessage || messagingChannelRun,
               emptyResponseText,
-              executeTool: scripted ? undefined : applyTool,
+              executeTool: scripted
+                ? undefined
+                : capturedPlacement.kind === "project"
+                  ? bindPlacementExecutor(
+                      capturedPlacement.worktreePath ?? capturedPlacement.projectPath!,
+                      applyTool,
+                    )
+                  : applyTool,
               claimSteering: scripted
                 ? undefined
                 : async (seenIds) => {
@@ -3294,6 +3661,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 },
               });
             } else if (event.type === "ask") {
+              // The managed worker saved this choice checkpoint before publishing the event.
               if (!(await renewRunLease(deps, runId, workerId, fence))) return;
               const safeText = redactSecrets(event.text, runSecrets);
               const safeDetail = event.detail
@@ -3490,6 +3858,16 @@ export function createRunExecutor(deps: ExecutorDeps) {
                   subagentMarksUnread(run.trigger, event.status),
                 );
               }
+            } else if (event.type === "execution" || event.type === "runtime_activity") {
+              const { type, ...payload } = event;
+              await deps.events.append({
+                spaceId: run.spaceId,
+                threadId: thread.id,
+                botId: bot.id,
+                runId,
+                type: type === "execution" ? "agent.execution.updated" : "runtime.activity",
+                payload: JSON.parse(redactSecrets(JSON.stringify(payload), runSecrets)),
+              });
             } else if (event.type === "usage") {
               await deps.prisma.usageRecord.create({
                 data: {
@@ -3568,7 +3946,10 @@ export function createRunExecutor(deps: ExecutorDeps) {
             // only progress was posted, result when a final reply exists).
             messageSegments = completionMessageSegments(messageSegments, {
               allowSilentEmpty:
-                allowSilentPeerMessage || messagingChannelRun || publishedMidTurnUserMessage,
+                allowSilentPeerMessage ||
+                messagingChannelRun ||
+                publishedMidTurnUserMessage ||
+                runtimeQueuePaused,
               emptyResponseText,
               suppressOutput: handedOff,
               skipEmptyFallback: publishedTerminalSubagent || publishedMidTurnUserMessage,
@@ -3762,6 +4143,35 @@ export function createRunExecutor(deps: ExecutorDeps) {
             data: { status: "interrupted", finishedAt: new Date() },
           })
           .catch(() => undefined);
+        if (deps.runtime.describe().id === "pi") {
+          try {
+            const finished = await deps.prisma.run.findFirst({
+              where: { id: runId, status: { in: ["completed", "failed", "cancelled"] } },
+              select: { id: true },
+            });
+            if (finished) {
+              const user = await deps.prisma.user.findUnique({
+                where: { id: run.userId },
+                select: { email: true },
+              });
+              if (user) {
+                const next = await wakePremoveQueue(
+                  deps.prisma,
+                  {
+                    userId: run.userId,
+                    spaceId: run.spaceId,
+                    email: user.email,
+                    isDeploymentOwner: false,
+                  },
+                  { spaceId: run.spaceId, threadId: run.threadId, botId: run.botId },
+                );
+                if (next) await deps.jobs.enqueue(runContinueJob(next));
+              }
+            }
+          } catch (error) {
+            getLogger().error("private queue continuation enqueue", error);
+          }
+        }
       }
     },
   };
@@ -3863,9 +4273,14 @@ export function selectBuiltinToolsForRun(options: {
     Boolean(options.cloudAgentEnabled),
   ).filter(
     (tool) =>
-      !options.messagingChannelRun ||
-      (!["remember", "save_memory", "recall_memory"].includes(tool.name) &&
-        !tool.name.startsWith("scratchpad_")),
+      (tool.name !== "manage_queue" ||
+        (!options.messagingChannelRun &&
+          options.trigger !== "messaging" &&
+          options.trigger !== "bot_message" &&
+          !options.groupId)) &&
+      (!options.messagingChannelRun ||
+        (!["remember", "save_memory", "recall_memory"].includes(tool.name) &&
+          !tool.name.startsWith("scratchpad_"))),
   );
 }
 
@@ -4198,6 +4613,7 @@ async function resolveModelKey(
       const plaintext = deps.secretStore.load(row.ciphertext, row.id);
       registerSecrets?.(secretValuesToRedact(parseModelSecret(plaintext)));
       const persist = async (next: string) => {
+        registerSecrets?.(secretValuesToRedact(parseModelSecret(next)));
         const stored = await deps.secretStore.put(
           next,
           {
@@ -4228,6 +4644,7 @@ async function resolveModelKey(
         oauth,
         persistOAuth: oauth
           ? async (next) => {
+              registerSecrets?.([next.access, next.refresh]);
               await withModelCredentialLock(credential.secretId, async () => {
                 const currentRow = await deps.prisma.secret.findFirst({
                   where: { id: credential.secretId, userId, spaceId: null },

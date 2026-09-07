@@ -39,6 +39,7 @@ import {
   resolveSandboxProvider,
   ScriptedAgentRuntime,
   SpaceMemoryProviderResolver,
+  SupervisorAgentProcessHost,
 } from "@rakazo/adapters";
 import { resolveEncryptionKey, resolveSupervisorToken } from "@rakazo/core";
 import { createDb, createThreadEvents } from "@rakazo/db";
@@ -61,7 +62,16 @@ async function main() {
     runSecretWriter: createRunSecretWriter(secrets),
   });
   const runtime =
-    process.env.AGENT_RUNTIME === "scripted" ? new ScriptedAgentRuntime() : new PiAgentRuntime();
+    process.env.AGENT_RUNTIME === "scripted"
+      ? new ScriptedAgentRuntime()
+      : new PiAgentRuntime({
+          host: process.env.SANDBOX_SUPERVISOR_TOKEN
+            ? new SupervisorAgentProcessHost({
+                baseUrl: process.env.SANDBOX_SUPERVISOR_URL ?? "http://127.0.0.1:7091",
+                token: resolveSupervisorToken(process.env),
+              })
+            : undefined,
+        });
   const dataDir = process.env.DATA_DIR ?? "./data";
   // Same resolver the API uses, so both processes agree on provider, model and key.
   const { key: deploymentModelKey } = resolveDeploymentModel();

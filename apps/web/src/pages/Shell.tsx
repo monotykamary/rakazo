@@ -129,6 +129,7 @@ import {
   computersAreUnavailable,
 } from "../components/ComputersUnavailableHint";
 import { MessageHoverMetadata } from "../components/MessageHoverMetadata";
+import { GroupQueueStrip, QueueStrip } from "../components/QueueStrip";
 import { SkillDraftCard } from "../components/teach/SkillDraftCard";
 import { TeachCaptureOverlay } from "../components/teach/TeachCaptureOverlay";
 import { TeachComputerOverlayControl } from "../components/teach/TeachComputerOverlay";
@@ -3080,6 +3081,36 @@ export function ShellPage() {
             <Trans>Teaching in progress. Stop teaching before sending a new message.</Trans>
           </div>
         ) : null}
+        {activeSnapshot?.threadId && inGroup && (
+          <GroupQueueStrip
+            key={activeSnapshot.threadId}
+            threadId={activeSnapshot.threadId}
+            members={transcriptMembers ?? []}
+            runIds={[
+              ...new Set([
+                ...currentRuns.map((run) => run.id),
+                ...activeSnapshot.messages.flatMap((message) =>
+                  message.runId ? [message.runId] : [],
+                ),
+              ]),
+            ]}
+          />
+        )}
+        {activeSnapshot?.threadId && !inGroup && active && (
+          <QueueStrip
+            key={`${activeSnapshot.threadId}:${active.id}`}
+            threadId={activeSnapshot.threadId}
+            botId={active.id}
+            runIds={[
+              ...new Set([
+                ...currentRuns.map((run) => run.id),
+                ...activeSnapshot.messages.flatMap((message) =>
+                  message.runId ? [message.runId] : [],
+                ),
+              ]),
+            ]}
+          />
+        )}
         <Composer
           key={inGroup ? `group:${groupId}` : `bot:${active?.id}`}
           activeName={inGroup ? (activeGroup?.name ?? activeSnapshot?.groupName) : active?.name}

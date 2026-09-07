@@ -5,8 +5,9 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { serve } from "@hono/node-server";
 import type { ComputerRef } from "@rakazo/adapter-kit";
-import { ComputerBrowserProvider, DockerSandboxProvider } from "@rakazo/adapters";
+import { ComputerBrowserProvider, DockerSandboxProvider, PiAgentRuntime } from "@rakazo/adapters";
 import { describe, expect, it } from "vitest";
+import { createTestProcessHost } from "../../adapters/src/pi-rpc-test-host.js";
 import { computerReplayContext, runComputerReplay, waitForReplayFile } from "./computer-replay.js";
 import {
   CONTACTS_CSV,
@@ -72,6 +73,7 @@ describe.skipIf(process.env.RUN_COMPUTER_REPLAY_DOCKER !== "1")(
             new ComputerBrowserProvider({ sandbox }),
             computer,
             context,
+            new PiAgentRuntime({ host: createTestProcessHost() }),
           );
           expect(result.modelRequests).toBe(9);
           // These reads are independent of the agent's reply and tool-result assertions.

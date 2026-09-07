@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ComposioEmulator } from "@rakazo/adapters";
+import { ComposioEmulator, PiAgentRuntime } from "@rakazo/adapters";
 import { describe, expect, it } from "vitest";
+import { createTestProcessHost } from "../../adapters/src/pi-rpc-test-host.js";
 import { sessionCookieHeader } from "./index.js";
 import { startModelEmulator } from "./model-emulator.js";
 
@@ -22,25 +23,25 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
             expect(JSON.stringify(request.messages)).toContain("Save hello to notes/result.txt.");
             expect(request.tools).toContainEqual(
               expect.objectContaining({
-                function: expect.objectContaining({ name: "write_file" }),
+                function: expect.objectContaining({ name: "fabric_exec" }),
               }),
             );
           },
           response: {
             type: "tool",
             id: "product-write",
-            name: "write_file",
-            arguments: { path: "notes/result.txt", content: "hello" },
+            name: "fabric_exec",
+            arguments: {
+              code: 'return await pi.write({path: "notes/result.txt", text: "hello"});',
+            },
           },
         },
         {
           expect(request) {
             const result = request.messages.findLast((message) => message.role === "tool");
             expect(result?.tool_call_id).toBe("product-write");
-            expect(JSON.parse(String(result?.content))).toMatchObject({
-              ok: true,
-              path: "notes/result.txt",
-            });
+            expect(String(result?.content)).toContain("notes/result.txt");
+            expect(String(result?.content)).not.toContain(fixtureKey);
           },
           response: { type: "text", text: "Saved notes/result.txt." },
         },
@@ -63,6 +64,8 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
         composio: new ComposioEmulator(),
         encryptionKey: "offline-model-fixture-encryption-key",
       });
+      const runtime = new PiAgentRuntime({ host: createTestProcessHost() });
+      handles.runtime.run = runtime.run.bind(runtime);
       stop = handles.stop;
       const signup = await handles.app.request("/api/auth/sign-up/email", {
         method: "POST",
@@ -102,9 +105,9 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
           async () => {
             const run = await handles.prisma.run.findUnique({
               where: { id: sent.runId },
-              select: { status: true },
+              select: { status: true, error: true },
             });
-            if (run?.status === "failed") model.assertComplete();
+            if (run?.status === "failed") throw new Error(`Product run failed: ${run.error}`);
             return run?.status;
           },
           { timeout: 15_000, interval: 100 },

@@ -260,11 +260,11 @@ export function registerOpenAiCompatibleCatalog(models: MutableModels): MutableM
 /** Register a concrete model + base URL for an agent run. */
 export function registerOpenAiCompatibleRuntime(
   models: MutableModels,
-  opts: { modelId: string; baseUrl: string; reasoning?: boolean },
+  opts: { modelId: string; baseUrl: string; reasoning?: boolean; acceptsImages?: boolean },
 ): MutableModels {
   const baseUrl = normalizeOpenAiCompatibleBaseUrl(opts.baseUrl);
   const modelId = opts.modelId.trim();
-  const acceptsImages = openAiCompatibleVisionModelIds().has(modelId);
+  const acceptsImages = opts.acceptsImages ?? openAiCompatibleVisionModelIds().has(modelId);
   models.setProvider(
     openAiCompatibleProvider([
       openAiCompatibleModel(modelId, baseUrl, opts.reasoning, acceptsImages),

@@ -21,6 +21,7 @@ import {
   createThreadMessageInTransaction,
   RunHistoryWriteError,
 } from "./messages.js";
+import { stagePremoveSteeringInTransaction } from "./premove-queue.js";
 import { withTransactionRetry } from "./transaction-retry.js";
 
 const EVENT_BATCH_SIZE = 200;
@@ -281,6 +282,15 @@ export async function clearThread(
         executionLeaseExpiresAt: null,
       },
     });
+    await tx.runtimePlacement.deleteMany({
+      where: { threadId: input.threadId, spaceId: input.spaceId },
+    });
+    await tx.runtimeSession.deleteMany({
+      where: { threadId: input.threadId, spaceId: input.spaceId },
+    });
+    await tx.premoveQueue.deleteMany({
+      where: { threadId: input.threadId, spaceId: input.spaceId },
+    });
     await tx.message.deleteMany({ where: { threadId: input.threadId } });
     await tx.event.deleteMany({ where: { threadId: input.threadId } });
     if (thread.nextMessageSeq > 0) {
@@ -419,14 +429,16 @@ export async function sendUserMessage(
           await tx.message.update({ where: { id: message.id }, data: { runId: run.id } });
         }
       } else if (createRun && busy) {
-        await tx.steeringMessage.create({
-          data: {
-            messageId: message.id,
-            botId: input.botId,
-            userId: input.userId,
-            runId: busy.id,
-          },
-        });
+        if (!(await stagePremoveSteeringInTransaction(tx, { ...input, messageId: message.id }))) {
+          await tx.steeringMessage.create({
+            data: {
+              messageId: message.id,
+              botId: input.botId,
+              userId: input.userId,
+              runId: busy.id,
+            },
+          });
+        }
         await tx.message.update({ where: { id: message.id }, data: { runId: busy.id } });
       }
       const event = await appendEventInTransaction(tx, {
@@ -475,6 +487,15 @@ export async function claimSteering(
       select: { id: true, trigger: true, sourceMessage: { select: { blocks: true } } },
     });
     if (!run) return [];
+    if (
+      run.trigger !== "messaging" &&
+      run.trigger !== "bot_message" &&
+      (await tx.premoveQueue.findFirst({
+        where: { threadId: input.threadId, botId: input.botId },
+        select: { botId: true },
+      }))
+    )
+      return [];
     const channelId =
       run.trigger === "messaging"
         ? messagingChannelId(run.sourceMessage?.blocks as MessageBlock[] | undefined)

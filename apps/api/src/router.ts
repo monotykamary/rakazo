@@ -115,6 +115,7 @@ import {
   SpaceLimitError,
   selectSpaceModelPreference,
   selectSpaceVoicePreference,
+  stagePremoveSteeringInTransaction,
   type ThreadEvents,
   touchGroupUpdatedAt,
 } from "@rakazo/db";
@@ -135,6 +136,7 @@ import {
   serializeSpaceMemoryConfig,
   updateMemoryProviderDefaultScope,
 } from "./memory-provider-config.js";
+import { getModelRouting, setModelRouting } from "./model-routing.js";
 import {
   chooseFocus,
   dismissFocus,
@@ -396,6 +398,9 @@ function mcpAssignmentDto(row: {
   };
 }
 
+import { inspectExecution } from "./execution.js";
+import { listQueue, mutateQueue } from "./queue.js";
+
 export interface RouterDeps {
   prisma: PrismaClient;
   events: ThreadEvents;
@@ -452,6 +457,19 @@ export function createRouter(deps: RouterDeps) {
   });
 
   return os.router({
+    queue: {
+      list: authed.queue.list.handler(({ context, input }) =>
+        listQueue(deps.prisma, context.actor, input),
+      ),
+      mutate: authed.queue.mutate.handler(({ context, input }) =>
+        mutateQueue(deps.prisma, context.actor, input, deps.jobs),
+      ),
+    },
+    execution: {
+      inspect: authed.execution.inspect.handler(({ context, input }) =>
+        inspectExecution(deps.prisma, context.actor, input),
+      ),
+    },
     health: os.health.handler(async () => ({ ok: true as const, version: "0.1.0" })),
     me: authed.me.handler(async ({ context }): Promise<Me> => meDto(deps, context.actor)),
     preferences: {
@@ -580,6 +598,12 @@ export function createRouter(deps: RouterDeps) {
       }),
     },
     models: {
+      getRouting: authed.models.getRouting.handler(({ context, input }) =>
+        getModelRouting(deps.prisma, context.actor, input.credentialId),
+      ),
+      setRouting: authed.models.setRouting.handler(({ context, input }) =>
+        setModelRouting(deps.prisma, context.actor, input, listPiCatalog()),
+      ),
       list: authed.models.list.handler(async () => [...listPiCatalog(), scriptedCatalogEntry]),
       credentials: authed.models.credentials.handler(async ({ context }) => {
         const rows = await deps.prisma.userModelCredential.findMany({
@@ -1342,14 +1366,24 @@ export function createRouter(deps: RouterDeps) {
             });
             await tx.message.update({ where: { id: message.id }, data: { runId: run.id } });
           } else {
-            await tx.steeringMessage.create({
-              data: {
-                messageId: message.id,
+            if (
+              !(await stagePremoveSteeringInTransaction(tx, {
+                spaceId: context.actor.spaceId,
+                threadId: target.threadId,
                 botId,
-                userId: context.actor.userId,
-                runId: active.id,
-              },
-            });
+                messageId: message.id,
+                blocks,
+              }))
+            ) {
+              await tx.steeringMessage.create({
+                data: {
+                  messageId: message.id,
+                  botId,
+                  userId: context.actor.userId,
+                  runId: active.id,
+                },
+              });
+            }
             await tx.message.update({ where: { id: message.id }, data: { runId: active.id } });
           }
           const event = await appendEventInTransaction(tx, {

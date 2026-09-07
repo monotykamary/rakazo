@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import type {
   AdapterContext,
+  AgentRuntime,
   BrowserProvider,
   ComputerRef,
   SandboxProvider,
@@ -11,7 +12,6 @@ import {
   browserSnapshotFromTool,
   builtinAgentTools,
   observationToolResult,
-  PiAgentRuntime,
 } from "@rakazo/adapters";
 import { CONTACTS_CSV, CONTACTS_PATH, EXPORT_FIXTURE_URL } from "./computer-replay-fixture.js";
 import {
@@ -38,18 +38,31 @@ export async function runComputerReplay(
   browser: BrowserProvider,
   computer: ComputerRef,
   context: AdapterContext,
+  runtime: AgentRuntime,
 ) {
   const tool = (
     id: string,
     name: string,
     args: Record<string, unknown>,
-  ): ModelEmulatorResponse => ({ type: "tool", id, name, arguments: args });
+  ): ModelEmulatorResponse => ({
+    type: "tool",
+    id,
+    name: "fabric_exec",
+    arguments: {
+      code: `return await extensions.${name}(${JSON.stringify(args)});`,
+      resultFormat: "json",
+    },
+  });
   const step = (
     response: ModelEmulatorStep["response"],
     expectedId?: string,
     verify?: (result: Record<string, unknown>) => void,
   ): ModelEmulatorStep => ({
     expect(request) {
+      assert.deepEqual(
+        request.tools?.map((tool) => tool.function.name),
+        ["fabric_exec"],
+      );
       if (!expectedId) return;
       const result = lastToolResult(request, expectedId);
       assert.ok(
@@ -64,6 +77,7 @@ export async function runComputerReplay(
     step((request) => {
       const result = lastToolResult(request, expectedId);
       const elements = result.elements as Array<{ name: string; ref: string }>;
+      assert.ok(Array.isArray(elements), JSON.stringify(result));
       const target = elements.find((element) => element.name === name);
       assert.ok(target, `Current snapshot is missing ${name}`);
       return tool(id, "browser_act", { actions: [{ kind: "click", ref: target.ref }] });
@@ -88,12 +102,17 @@ export async function runComputerReplay(
           const result = request.messages.findLast((message) => message.role === "tool");
           assert.equal(result?.tool_call_id, "observe");
           assert.match(String(result?.content), /computer observed/);
-          // Shared OpenAI-compatible connections currently advertise text-only.
-          // Protect the explicit fallback; do not pretend this tests image understanding.
-          assert.match(
-            String(result?.content),
-            /tool image omitted: model does not support images/,
+          // Sealed Fabric returns extension content as JSON, not a model-visible image.
+          // Verify screenshot preservation without pretending this tests image understanding.
+          const envelope = JSON.parse(String(result?.content));
+          assert.equal(envelope.isError, false);
+          const image = envelope.content.find((part: { type: string }) => part.type === "image");
+          assert.equal(image?.mimeType, "image/png");
+          assert.deepEqual(
+            [...Buffer.from(image.data, "base64").subarray(0, 8)],
+            [137, 80, 78, 71, 13, 10, 26, 10],
           );
+          assert.equal(typeof result?.content, "string");
         },
         response: tool("read-csv", "read_file", { path: CONTACTS_PATH }),
       },
@@ -112,7 +131,7 @@ export async function runComputerReplay(
       "computer_observe",
       "read_file",
     ]);
-    for await (const event of new PiAgentRuntime().run(
+    for await (const event of runtime.run(
       {
         botId: context.botId!,
         threadId: "fixture-thread",
@@ -180,7 +199,10 @@ function lastToolResult(
       : Array.isArray(content)
         ? content.map((part: { text?: string }) => part.text ?? "").join("")
         : "";
-  return JSON.parse(text) as Record<string, unknown>;
+  const envelope = JSON.parse(text) as Record<string, unknown>;
+  assert.equal(envelope.isError, false, `Tool ${expectedId} failed: ${text}`);
+  assert.equal(typeof envelope.text, "string", "Fabric must preserve the tool text");
+  return JSON.parse(envelope.text as string) as Record<string, unknown>;
 }
 
 export async function waitForReplayFile(

@@ -1489,6 +1489,7 @@ describe("sendUserMessage", () => {
         create: vi.fn().mockResolvedValue({ id: "message-1", seq: 4 }),
         update: vi.fn().mockResolvedValue({ id: "message-1" }),
       },
+      premoveQueue: { findUnique: vi.fn().mockResolvedValue(null) },
       steeringMessage: { create: vi.fn() },
       task: { create: vi.fn() },
       run: {
@@ -1536,6 +1537,7 @@ describe("claimSteering", () => {
     const tx = {
       $queryRaw: vi.fn(),
       run: { findFirst: vi.fn().mockResolvedValue({ id: "run-1" }) },
+      premoveQueue: { findFirst: vi.fn().mockResolvedValue(null) },
       steeringMessage: {
         findMany: vi.fn().mockResolvedValue([
           {
@@ -1629,6 +1631,9 @@ describe("clearThread", () => {
       task: { updateMany: vi.fn() },
       computerExecutionLease: { updateMany: vi.fn() },
       computer: { updateMany: vi.fn() },
+      runtimePlacement: { deleteMany: vi.fn() },
+      runtimeSession: { deleteMany: vi.fn() },
+      premoveQueue: { deleteMany: vi.fn() },
       message: { deleteMany: vi.fn() },
       event: {
         deleteMany: vi.fn(),
@@ -1670,6 +1675,12 @@ describe("clearThread", () => {
         historyCompactionGeneration: { increment: 1 },
       },
     });
+    expect(tx.runtimeSession.deleteMany).toHaveBeenCalledWith({
+      where: { threadId: "thread-1", spaceId: "workspace-1" },
+    });
+    expect(tx.premoveQueue.deleteMany).toHaveBeenCalledWith({
+      where: { threadId: "thread-1", spaceId: "workspace-1" },
+    });
     expect(publish).toHaveBeenCalledWith("thread:thread-1", JSON.stringify({ cursor: 0 }));
   });
 
@@ -1693,6 +1704,9 @@ describe("clearThread", () => {
       task: { updateMany: vi.fn() },
       computerExecutionLease: { updateMany: vi.fn() },
       computer: { updateMany: vi.fn() },
+      runtimePlacement: { deleteMany: vi.fn() },
+      runtimeSession: { deleteMany: vi.fn() },
+      premoveQueue: { deleteMany: vi.fn() },
       message: { deleteMany: vi.fn() },
       event: {
         deleteMany: vi.fn(),

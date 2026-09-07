@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Model routing</title></head>
+  <body><div id="root"></div><script type="module">
+    import { i18n } from "@lingui/core";
+    import { createElement as h } from "react";
+    import { createRoot } from "react-dom/client";
+    import { ModelRoutingSettings } from "../../src/components/ModelRoutingSettings.tsx";
+    import "../../src/styles.css";
+
+    i18n.load("en", {}); i18n.activate("en");
+    const credentials = [{id:"primary",provider:"fixture",label:"Primary",hasKey:true,isDefault:true},{id:"secondary",provider:"fixture",label:"Secondary",hasKey:true,isDefault:false},{id:"fallback",provider:"other",label:"Fallback",hasKey:true,isDefault:false}];
+    createRoot(document.getElementById("root")).render(h("main", {className:"mx-auto max-w-xl bg-background p-6 text-foreground"}, h(ModelRoutingSettings,{credential:credentials[0],credentials,modelId:"model-a",catalog:[]})));
+  </script></body>
+</html>

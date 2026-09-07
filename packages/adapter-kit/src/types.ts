@@ -1,4 +1,9 @@
-import type { ConnectionCatalogItem, SandboxKind } from "@rakazo/contracts";
+import type {
+  ConnectionCatalogItem,
+  QueueControlCommand,
+  QueueControlResult,
+  SandboxKind,
+} from "@rakazo/contracts";
 
 export interface AdapterContext {
   operationId: string;
@@ -143,6 +148,8 @@ export type AgentToolResultContent =
 /** A provider-neutral tool result an agent runtime can forward without flattening images. */
 export interface AgentToolExecutionResult {
   kind: "agent_tool_result";
+  terminate?: boolean;
+  isError?: boolean;
   content: AgentToolResultContent[];
   details: unknown;
 }
@@ -315,6 +322,8 @@ export interface AgentSteeringMessage {
   /** Persisted history text before attachment paths are appended. */
   historyText?: string;
   images?: AgentInputImage[];
+  participantId?: string;
+  placement?: { cwd: string; worktreeId?: string };
 }
 
 export interface AgentRunRequest {
@@ -334,6 +343,8 @@ export interface AgentRunRequest {
     baseUrl?: string;
     /** Whether this custom connection accepts standard reasoning_effort. */
     reasoning?: boolean;
+    /** Shared connection input capability; never inferred by the isolated worker. */
+    acceptsImages?: boolean;
     /** Preferred thinking effort for reasoning models; clamped to the model’s supported set. */
     thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null;
     /** In-process OAuth credential from the encrypted store for this run. */
@@ -342,6 +353,51 @@ export interface AgentRunRequest {
       persist?: (credential: AgentModelOAuthCredential) => Promise<void>;
     };
   };
+  /** Backend-owned connection routing. Credentials never cross the managed worker bridge. */
+  modelRouting?: {
+    /** Stable principal/space/preference identity; never supplied by the model. */
+    key: string;
+    strategy: "ordered" | "round-robin";
+    pool: Array<{ credentialId: string; model: AgentRunRequest["model"] }>;
+    fallbacks: Array<{ credentialId: string; model: AgentRunRequest["model"] }>;
+  };
+  /** A queue wake must not manufacture an empty native prompt. */
+  queueOnly?: boolean;
+  /** Backend-authorized computer placement, never the worker host filesystem cwd. */
+  placement?: { cwd: string; worktreeId?: string };
+  authorizeSubagentPlacement?: (
+    placement: { cwd?: string; worktreeId?: string },
+    participantId: string,
+  ) => Promise<{
+    placement: { cwd: string; worktreeId?: string };
+    executeTool: NonNullable<AgentRunRequest["executeTool"]>;
+  }>;
+  claimParticipantSteering?: (
+    participantId: string,
+    seenIds: string[],
+  ) => Promise<AgentSteeringMessage[]>;
+  /** Managed execution state is separate from product history and takeover checkpoints. */
+  session?: { restore?: unknown; save(state: unknown): Promise<void> };
+  /** Revalidate the live run lease before effects and model requests. */
+  assertActive?: (boundary?: { effects: boolean }) => Promise<void | "pause">;
+  /** Backend-owned queue; callbacks must persist reservations before returning delivery. */
+  runtimeBoundary?: (
+    boundary: "before_model" | "settled" | "idle" | "paused",
+    control: {
+      participantId: string;
+      deliver(message: AgentSteeringMessage): Promise<void>;
+      /** Reviewed controls only; resolves after durable completion, never mere acceptance. */
+      command(
+        command: QueueControlCommand,
+        context: { id: string; signal: AbortSignal },
+      ): Promise<QueueControlResult>;
+      pause(): Promise<void>;
+    },
+  ) => Promise<{
+    messages?: AgentSteeringMessage[];
+    compact?: boolean;
+    state?: unknown;
+  } | void>;
   resumeFromCheckpoint?: string;
   script?: ScriptedTurn[];
   /**
@@ -372,6 +428,28 @@ export interface ScriptedTurn {
 }
 
 export type AgentRuntimeEvent =
+  | {
+      type: "execution";
+      executionId: string;
+      name: string;
+      status: "started" | "completed" | "failed" | "paused";
+      participantId: string;
+      parentExecutionId?: string;
+      code?: string;
+      input?: unknown;
+      output?: unknown;
+      details?: unknown;
+      operationAddress?: string;
+      source?: unknown;
+      nestedCalls?: unknown;
+      truncated?: boolean;
+    }
+  | {
+      type: "runtime_activity";
+      activity: "compaction" | "retry" | "queue" | "routing";
+      status: "started" | "completed" | "paused" | "failed";
+      state?: unknown;
+    }
   | { type: "text"; text: string }
   | {
       type: "progress";

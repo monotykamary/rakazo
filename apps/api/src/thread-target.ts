@@ -25,6 +25,8 @@ import {
   lockOwnedGroup,
   type Prisma,
   type PrismaClient,
+  pausePremoveQueuesInTransaction,
+  stagePremoveSteeringInTransaction,
   type ThreadEvents,
   touchGroupUpdatedAt,
 } from "@rakazo/db";
@@ -623,14 +625,24 @@ export async function sendThreadMessage(
         }
         const active = activeRuns[0];
         if (active) {
-          await tx.steeringMessage.create({
-            data: {
-              messageId: message.id,
+          if (
+            !(await stagePremoveSteeringInTransaction(tx, {
+              spaceId: actor.spaceId,
+              threadId: target.threadId,
               botId: target.botId,
-              userId: actor.userId,
-              runId: active.id,
-            },
-          });
+              messageId: message.id,
+              blocks,
+            }))
+          ) {
+            await tx.steeringMessage.create({
+              data: {
+                messageId: message.id,
+                botId: target.botId,
+                userId: actor.userId,
+                runId: active.id,
+              },
+            });
+          }
           await tx.message.update({ where: { id: message.id }, data: { runId: active.id } });
           const event = await appendEventInTransaction(tx, {
             spaceId: actor.spaceId,
@@ -742,9 +754,19 @@ export async function sendThreadMessage(
       for (const botId of targetBotIds) {
         const active = activeByBotId.get(botId);
         if (active) {
-          await tx.steeringMessage.create({
-            data: { messageId: message.id, botId, userId: actor.userId, runId: active.id },
-          });
+          if (
+            !(await stagePremoveSteeringInTransaction(tx, {
+              spaceId: actor.spaceId,
+              threadId: target.threadId,
+              botId,
+              messageId: message.id,
+              blocks,
+            }))
+          ) {
+            await tx.steeringMessage.create({
+              data: { messageId: message.id, botId, userId: actor.userId, runId: active.id },
+            });
+          }
           runs.push(active);
           continue;
         }
@@ -906,6 +928,10 @@ export async function stopThreadRuns(
     await tx.run.updateMany({
       where: { id: { in: ids }, status: { in: [...ACTIVE_RUN_STATUSES] } },
       data: { status: "cancelled", completedAt: new Date() },
+    });
+    await pausePremoveQueuesInTransaction(tx, {
+      spaceId: actor.spaceId,
+      threadId: target.threadId,
     });
     await tx.steeringMessage.deleteMany({
       where: {

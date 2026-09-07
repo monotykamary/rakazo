@@ -19,6 +19,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { ModelRoutingSettings } from "../components/ModelRoutingSettings";
 import { type MobileMe, type MobileModel, type MobileModelCredential, rpc } from "../lib/api";
 import { mobileTokens } from "../lib/appearance";
 import { useI18n } from "../lib/i18n";
@@ -776,6 +777,16 @@ export default function Models() {
                 )}
               </Text>
             ) : null}
+
+            {credential && (
+              <ModelRoutingSettings
+                key={`${credential.id}:${modelId}`}
+                credential={credential}
+                credentials={credentials}
+                modelId={modelId}
+                catalog={catalog}
+              />
+            )}
 
             {credential && !isActive ? (
               <Pressable

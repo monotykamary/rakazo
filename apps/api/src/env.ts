@@ -111,7 +111,10 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     dataDir: source.DATA_DIR ?? "./data",
     sandboxSupervisorUrl: source.SANDBOX_SUPERVISOR_URL ?? "http://127.0.0.1:7091",
     sandboxSupervisorToken:
-      sandboxProvider === "docker" ? resolveSupervisorToken(source) : undefined,
+      sandboxProvider === "docker" ||
+      ((source.AGENT_RUNTIME ?? "pi") === "pi" && source.SANDBOX_SUPERVISOR_TOKEN)
+        ? resolveSupervisorToken(source)
+        : undefined,
     screenProxySecret: resolveScreenProxySecret(source),
     sandboxProvider,
     cloudAgentProvider,

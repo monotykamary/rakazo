@@ -1,5 +1,6 @@
-import { FakeSandboxProvider } from "@rakazo/adapters";
+import { FakeSandboxProvider, PiAgentRuntime } from "@rakazo/adapters";
 import { describe, expect, it } from "vitest";
+import { createTestProcessHost } from "../../adapters/src/pi-rpc-test-host.js";
 import { computerReplayContext, runComputerReplay } from "./computer-replay.js";
 import {
   CONTACTS_CSV,
@@ -19,7 +20,13 @@ describe("computer replay with real Pi and stateful offline computer", () => {
     );
     const browser = new ContactsBrowserFixture(sandbox);
     try {
-      const result = await runComputerReplay(sandbox, browser, computer, context);
+      const result = await runComputerReplay(
+        sandbox,
+        browser,
+        computer,
+        context,
+        new PiAgentRuntime({ host: createTestProcessHost() }),
+      );
       expect(result.usedTools).toContain("computer_observe");
       expect(result.modelRequests).toBe(9);
       expect(

@@ -6,6 +6,7 @@ import {
   SecretHttpRequest,
 } from "@rakazo/contracts";
 import { z } from "zod";
+import { manageQueueTool } from "./premove-tool-schema.js";
 
 export const DELEGATION_TOOL_NAMES = new Set([
   "run_subagent",
@@ -17,6 +18,7 @@ export const DELEGATION_TOOL_NAMES = new Set([
 ]);
 
 export const builtinAgentTools: ConnectorTool[] = [
+  manageQueueTool,
   {
     name: "computer_observe",
     description:
@@ -119,6 +121,35 @@ export const builtinAgentTools: ConnectorTool[] = [
       type: "object",
       properties: { path: { type: "string" } },
       required: ["path"],
+    },
+  },
+  {
+    name: "edit_file",
+    description:
+      "Atomically edit a UTF-8 file using exact anchors against the original source. Untouched bytes are preserved. Anchors must be unique unless all is true; overlapping edits fail without writing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        edits: {
+          type: "array",
+          minItems: 1,
+          maxItems: 1000,
+          items: {
+            type: "object",
+            properties: {
+              oldText: { type: "string", minLength: 1 },
+              newText: { type: "string" },
+              all: { type: "boolean" },
+            },
+            required: ["oldText", "newText"],
+            additionalProperties: false,
+          },
+        },
+        all: { type: "boolean" },
+      },
+      required: ["path", "edits"],
+      additionalProperties: false,
     },
   },
   {
@@ -677,7 +708,7 @@ export const builtinAgentTools: ConnectorTool[] = [
   {
     name: "run_subagent",
     description:
-      "Run a short-lived helper inside this turn only. It is not a bot: no list entry, no thread, no computer of its own, and it disappears when this turn ends. Never call this because the user asked to create a bot — that is spawn_bot, and spawn_bot alone.",
+      "Run or resume a persisted helper participant inside this conversation. It shares the bot authority and computer; nested helpers share bounded root budgets. It is not a bot: no bot list entry, independent thread, or computer. Never call this because the user asked to create a bot — that is spawn_bot, and spawn_bot alone.",
     inputSchema: {
       type: "object",
       properties: {
@@ -686,6 +717,23 @@ export const builtinAgentTools: ConnectorTool[] = [
           description: "Short label shown in the thread, e.g. scout or reviewer.",
         },
         task: { type: "string", description: "The work the helper should complete." },
+        cwd: {
+          type: "string",
+          description: "Existing authorized workspace-relative project directory.",
+        },
+        worktree: {
+          type: "boolean",
+          description:
+            "Automatic creation is unavailable. Create through authorized shell, then delegate using cwd.",
+        },
+        worktreeId: {
+          type: "string",
+          description: "Optional worktree identity metadata; cwd chooses the authorized directory.",
+        },
+        participantId: {
+          type: "string",
+          description: "Previously persisted direct child to resume; omitted creates a child.",
+        },
         instructions: {
           type: "string",
           description: "Optional extra system instructions for the helper.",

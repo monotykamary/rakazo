@@ -1,78 +1,12 @@
-import type { ConnectorTool } from "@rakazo/adapter-kit";
 import { approvalEffectKey } from "@rakazo/core/node/approval-effect-key";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  approvalPausedToolResult,
-  isApprovalPausedResult,
-  resolveDuplicateEffectGate,
-} from "./approval-effect.js";
+import { describe, expect, it, vi } from "vitest";
+import { approvalPausedToolResult, resolveDuplicateEffectGate } from "./approval-effect.js";
+import { createRpcHarness } from "./pi-rpc-test-emulator.js";
 
-const fakeAgentState = vi.hoisted(() => ({
-  tools: [] as Array<{
-    name: string;
-    execute: (toolCallId: string, params: Record<string, unknown>) => Promise<unknown>;
-  }>,
-  toolCallId: "call-1",
-  lastToolResult: null as unknown,
-}));
-
-vi.mock("@earendil-works/pi-agent-core", () => ({
-  Agent: class {
-    state = { errorMessage: undefined, messages: [] };
-    private readonly tools: typeof fakeAgentState.tools;
-
-    constructor(options: { initialState: { tools: typeof fakeAgentState.tools } }) {
-      this.tools = options.initialState.tools;
-      fakeAgentState.tools = this.tools;
-    }
-
-    subscribe(_listener: unknown) {}
-
-    async prompt() {
-      const destination = this.tools.find((tool) => tool.name === "destination_write");
-      if (!destination) throw new Error("destination tool missing");
-      const args = { collection: "notes", title: "Result", body: "Done" };
-      fakeAgentState.lastToolResult = await destination.execute(fakeAgentState.toolCallId, args);
-      if (
-        fakeAgentState.lastToolResult &&
-        typeof fakeAgentState.lastToolResult === "object" &&
-        (fakeAgentState.lastToolResult as { terminate?: boolean }).terminate
-      ) {
-        return;
-      }
-    }
-
-    async waitForIdle() {}
-
-    abort() {}
-  },
-}));
-
-vi.mock("@earendil-works/pi-ai/providers/all", () => ({
-  builtinModels: () => ({
-    getModel: (_provider: string, modelId: string) =>
-      modelId === "approval-pi-model" ? { provider: "test", id: modelId } : undefined,
-    streamSimple: () => {
-      throw new Error("the fake agent must not call a provider");
-    },
-  }),
-}));
-
-vi.mock("./pi-local-provider.js", () => ({
-  registerLocalProvider: (models: unknown) => models,
-}));
-
-vi.mock("./pi-openai-compatible-provider.js", () => ({
-  OPENAI_COMPATIBLE_PROVIDER_ID: "openai-compatible",
-  registerOpenAiCompatibleCatalog: (models: unknown) => models,
-  registerOpenAiCompatibleRuntime: (models: unknown) => models,
-}));
-
-import { PiAgentRuntime } from "./pi-runtime.js";
-
-const destinationTool: ConnectorTool = {
+const args = { collection: "notes", title: "Result", body: "Done" };
+const tool = {
   name: "destination.write",
-  description: "Write a record to the connected destination",
+  description: "Write",
   inputSchema: {
     type: "object",
     properties: {
@@ -82,75 +16,49 @@ const destinationTool: ConnectorTool = {
     },
   },
 };
-
-const runContext = {
-  operationId: "approval-pi",
-  traceId: "approval-pi",
-  spaceId: "workspace",
-  userId: "user",
-  signal: new AbortController().signal,
-};
-
-const runRequest = {
-  botId: "bot",
-  threadId: "thread",
-  runId: "run",
-  prompt: "write the result",
-  instructions: "Use destination_write for connected destination records.",
-  history: [],
-  tools: [destinationTool],
-  model: { provider: "test", id: "approval-pi-model" },
-};
-
 describe("Pi approval pause", () => {
-  beforeEach(() => {
-    fakeAgentState.tools = [];
-    fakeAgentState.toolCallId = "call-1";
-    fakeAgentState.lastToolResult = null;
-  });
-
-  it("forwards a terminating approval tool result from executeTool", async () => {
+  it("persists the terminating authorized result and never asks the model for a sibling turn", async () => {
+    const harness = await createRpcHarness({ tool: { name: "destination_write", args } });
     const executeTool = vi.fn(async () => approvalPausedToolResult());
-    const runtime = new PiAgentRuntime();
-    const texts: string[] = [];
-
-    for await (const event of runtime.run({ ...runRequest, executeTool }, runContext)) {
-      if (event.type === "text") texts.push(event.text);
+    let checkpoint: unknown;
+    try {
+      const events = await harness.run({
+        tools: [tool],
+        executeTool,
+        session: {
+          save: async (state) => {
+            checkpoint = state;
+          },
+        },
+      });
+      expect(executeTool).toHaveBeenCalledOnce();
+      expect(JSON.stringify(checkpoint)).toContain('"approval":"paused"');
+      expect(events).toContainEqual(
+        expect.objectContaining({ type: "execution", status: "paused" }),
+      );
+      expect(harness.requests).toHaveLength(1);
+    } finally {
+      await harness.close();
     }
-
-    expect(executeTool).toHaveBeenCalledTimes(1);
-    expect(fakeAgentState.lastToolResult).toMatchObject({
-      kind: "agent_tool_result",
-      terminate: true,
-      details: { approval: "paused" },
-    });
-    expect(isApprovalPausedResult(fakeAgentState.lastToolResult)).toBe(true);
-    expect(texts.some((text) => text.includes("I hit a problem"))).toBe(false);
-  });
-
-  it("replays an approved effect for a new toolCallId without another pause", async () => {
-    fakeAgentState.toolCallId = "call-2";
-    const args = { collection: "notes", title: "Result", body: "Done" };
-    const executeTool = vi.fn(async (_tool, toolArgs, toolCallId) => {
-      expect(toolCallId).toBe("call-2");
+  }, 30000);
+  it("keeps durable approval identity independent of RPC correlation IDs", async () => {
+    const harness = await createRpcHarness({ tool: { name: "destination_write", args } });
+    const executeTool = vi.fn(async (_name, toolArgs, executionId) => {
+      expect(executionId).toMatch(/^run:/);
       expect(approvalEffectKey("run", "destination.write", toolArgs)).toBe(
         approvalEffectKey("run", "destination.write", args),
       );
       expect(resolveDuplicateEffectGate({ status: "approved" }, "destination.write")).toEqual({
         action: "execute",
       });
-      return { ok: true, written: true };
+      return { ok: true };
     });
-
-    const runtime = new PiAgentRuntime();
-    const texts: string[] = [];
-
-    for await (const event of runtime.run({ ...runRequest, executeTool }, runContext)) {
-      if (event.type === "text") texts.push(event.text);
+    try {
+      await harness.run({ tools: [tool], executeTool });
+      expect(executeTool).toHaveBeenCalledOnce();
+      expect(harness.requests).toHaveLength(2);
+    } finally {
+      await harness.close();
     }
-
-    expect(executeTool).toHaveBeenCalledTimes(1);
-    expect(texts.some((text) => text.includes("Waiting for approval"))).toBe(false);
-    expect(texts.some((text) => text.includes("I hit a problem"))).toBe(false);
-  });
+  }, 30000);
 });

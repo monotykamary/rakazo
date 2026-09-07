@@ -87,6 +87,10 @@ async function main() {
     if (integration) {
       const suites = [
         "packages/testkit/src/pi-offline.postgres.test.ts",
+        "packages/testkit/src/atomic-file-edit.postgres.test.ts",
+        "packages/testkit/src/executor-runtime.postgres.test.ts",
+        "packages/db/src/premove-queue.postgres.test.ts",
+        "apps/api/src/model-routing.postgres.test.ts",
         "packages/testkit/src/journeys.test.ts",
         "packages/testkit/src/authorization.test.ts",
         "packages/testkit/src/attachments.test.ts",

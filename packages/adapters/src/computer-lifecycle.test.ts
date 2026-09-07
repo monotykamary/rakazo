@@ -1294,6 +1294,9 @@ describe("computer execution leases", () => {
         findUniqueOrThrow: vi.fn().mockResolvedValue({ scope: "team", state: "running" }),
         updateMany: vi.fn(),
       },
+      runtimePlacement: { deleteMany: vi.fn() },
+      runtimeSession: { deleteMany: vi.fn() },
+      premoveQueue: { deleteMany: vi.fn() },
       message: { deleteMany: vi.fn() },
       event: {
         deleteMany: vi.fn(),
@@ -1322,6 +1325,11 @@ describe("computer execution leases", () => {
       threadId: "thread-1",
       botId: "bot-1",
     });
+    for (const table of [client.runtimePlacement, client.runtimeSession, client.premoveQueue]) {
+      expect(table.deleteMany).toHaveBeenCalledWith({
+        where: { threadId: "thread-1", spaceId: "workspace-1" },
+      });
+    }
     const next = await acquireComputerExecutionLease(prisma, {
       computerId: "computer-1",
       runId: "run-2",
