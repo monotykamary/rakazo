@@ -7,6 +7,7 @@ const runSelect = {
   id: true,
   threadId: true,
   botId: true,
+  bot: { select: { name: true } },
   status: true,
   trigger: true,
   sourceMessageId: true,
@@ -65,6 +66,7 @@ export async function inspectExecution(
   const clauses: Prisma.RunWhereInput[] = [];
   if (messageIds.length) {
     clauses.push({ sourceMessageId: { in: messageIds } });
+    clauses.push({ sourceMessage: { replyToMessageId: { in: messageIds } } });
     for (const messageId of messageIds)
       clauses.push({
         sourceMessage: {
@@ -94,6 +96,7 @@ export async function inspectExecution(
     return {
       runId: item.id,
       botId: item.botId,
+      botName: item.bot.name,
       status: item.status,
       trigger: item.trigger,
       sourceMessageId: item.sourceMessageId ?? undefined,
@@ -101,11 +104,10 @@ export async function inspectExecution(
         item.sourceMessage?.runId && authorizedIds.has(item.sourceMessage.runId)
           ? item.sourceMessage.runId
           : undefined,
-      replyToMessageId:
-        peer?.kind === "bot_message_received"
-          ? peer.returnToMessageId
-          : (item.sourceMessage?.replyToMessageId ?? undefined),
+      replyToMessageId: item.sourceMessage?.replyToMessageId ?? undefined,
       messageIntent: peer?.kind === "bot_message_received" ? peer.intent : undefined,
+      fromBotId: peer?.kind === "bot_message_received" ? peer.fromBotId : undefined,
+      fromBotName: peer?.kind === "bot_message_received" ? peer.fromBotName : undefined,
     };
   });
   return projectExecutionPage(

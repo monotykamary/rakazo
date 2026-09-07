@@ -36,6 +36,17 @@ describe("distributable kit artifacts", () => {
       ).toBe(false);
     }
   });
+  it("ships the headless-loadable TypeScript visibility entry without production dependencies", () => {
+    const entry = manifest.packages.find((item) => item.name === "pi-hide-providers")!;
+    const archive = fileURLToPath(new URL(`vendor/pi-kit/${entry.filename}`, root));
+    const packed = JSON.parse(
+      execFileSync("tar", ["-xOzf", archive, "package/package.json"], { encoding: "utf8" }),
+    );
+    expect(packed.version).toBe("0.1.18");
+    expect(packed.pi.extensions).toEqual(["./hide-providers.ts"]);
+    expect(Object.keys(packed.dependencies ?? {})).toEqual([]);
+    expect(packed.devDependencies["@earendil-works/pi-coding-agent"]).toBe("0.85.1");
+  });
   it("ships queue control exports without relying on a sibling checkout", () => {
     const entry = manifest.packages.find((item) => item.name === "pi-queue-steer-factory")!;
     const archive = fileURLToPath(new URL(`vendor/pi-kit/${entry.filename}`, root));

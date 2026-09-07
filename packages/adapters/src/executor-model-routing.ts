@@ -1,6 +1,6 @@
 import type { AgentRunRequest } from "@rakazo/adapter-kit";
-import { ModelRoutingSchema } from "@rakazo/contracts";
-import type { PrismaClient } from "@rakazo/db";
+import { assertModelVisible, isModelHidden, ModelRoutingSchema } from "@rakazo/contracts";
+import { getModelVisibility, type PrismaClient } from "@rakazo/db";
 
 type Credential = { id: string; userId: string; secretId: string; provider: string };
 export async function resolveExecutorModelRouting(input: {
@@ -21,6 +21,8 @@ export async function resolveExecutorModelRouting(input: {
   });
   if (!preference?.routing) return undefined;
   const routing = ModelRoutingSchema.parse(preference.routing);
+  const visibility = await getModelVisibility(input.prisma, input);
+  assertModelVisible(visibility, input.provider, input.modelId);
   if (routing.modelId !== input.modelId || input.credential.provider !== input.provider)
     return undefined;
   if (!routing.credentialIds.includes(input.credential.id))
@@ -38,6 +40,17 @@ export async function resolveExecutorModelRouting(input: {
       throw new Error("Routing connection authority changed");
     if (routing.credentialIds.includes(id) && row.provider !== input.provider)
       throw new Error("Routing pool provider changed");
+  }
+  const visibleFallbacks = routing.fallbacks.filter(
+    (item) =>
+      !isModelHidden(visibility, credentials.get(item.credentialId)!.provider, item.modelId),
+  );
+  const admittedIds = new Set([
+    ...routing.credentialIds,
+    ...visibleFallbacks.map((item) => item.credentialId),
+  ]);
+  for (const id of admittedIds) {
+    const row = credentials.get(id)!;
     if (
       !(await input.prisma.secret.findFirst({
         where: { id: row.secretId, userId: input.userId, spaceId: null },
@@ -64,7 +77,7 @@ export async function resolveExecutorModelRouting(input: {
   const pool = [];
   for (const id of routing.credentialIds) pool.push(await candidate(id, routing.modelId));
   const fallbacks = [];
-  for (const item of routing.fallbacks)
+  for (const item of visibleFallbacks)
     fallbacks.push(await candidate(item.credentialId, item.modelId));
   return {
     key: JSON.stringify([input.userId, input.spaceId, preference.id]),

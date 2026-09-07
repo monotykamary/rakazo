@@ -1,7 +1,7 @@
 import type { TransactionalEmail } from "@rakazo/adapter-kit";
 import { bootstrapUserSpace } from "@rakazo/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createAuth } from "./index.js";
+import { buildTrustedOrigins, createAuth } from "./index.js";
 
 // Exercise Better Auth's real routing, password hashing, verification and
 // session hooks with its official offline adapter. Only persistence is faked.
@@ -14,7 +14,19 @@ vi.mock("better-auth/adapters/prisma", async () => {
 });
 vi.mock("@rakazo/db", () => ({ bootstrapUserSpace: vi.fn(async () => ({ spaceId: "space-1" })) }));
 
-function fixture({ allowlist = "", delivery = true } = {}) {
+function fixture({
+  allowlist = "",
+  delivery = true,
+  baseURL = "http://auth.example.test",
+  webOrigin = "http://web.example.test",
+  requestOrigin,
+}: {
+  allowlist?: string;
+  delivery?: boolean;
+  baseURL?: string;
+  webOrigin?: string;
+  requestOrigin?: string;
+} = {}) {
   const data: Record<string, Record<string, unknown>[]> = {
     user: [],
     account: [],
@@ -43,8 +55,8 @@ function fixture({ allowlist = "", delivery = true } = {}) {
   });
   const auth = createAuth(prisma as never, {
     secret: "offline-auth-secret-at-least-32-characters",
-    baseURL: "http://auth.example.test",
-    webOrigin: "http://web.example.test",
+    baseURL,
+    webOrigin,
     signupsEnabled: "true",
     signupAllowlist: "",
     email: delivery
@@ -61,18 +73,23 @@ function fixture({ allowlist = "", delivery = true } = {}) {
         }
       : undefined,
   });
-  const request = (path: string, body?: unknown, token?: string) =>
-    auth.handler(
-      new Request(`http://auth.example.test/api/auth${path}`, {
+  const request = async (path: string, body?: unknown, token?: string) => {
+    // Better Auth disables origin checks under NODE_ENV=test; exercise production enforcement.
+    (await auth.$context).skipOriginCheck = false;
+    return auth.handler(
+      new Request(`${baseURL}/api/auth${path}`, {
         method: body ? "POST" : "GET",
         headers: {
           "content-type": "application/json",
-          origin: "http://web.example.test",
+          origin: requestOrigin ?? webOrigin,
+          // Better Auth checks browser origins on cookie-bearing requests.
+          ...(requestOrigin ? { cookie: "origin-probe=1" } : {}),
           ...(token ? { authorization: `Bearer ${token}` } : {}),
         },
         body: body ? JSON.stringify(body) : undefined,
       }),
     );
+  };
   const signup = (email = "approved@example.test") =>
     request("/sign-up/email", {
       email,
@@ -94,6 +111,63 @@ function fixture({ allowlist = "", delivery = true } = {}) {
 }
 
 beforeEach(() => vi.clearAllMocks());
+
+describe("loopback trusted origins", () => {
+  it.each([
+    ["http://127.0.0.1:5173", "http://localhost:5173"],
+    ["http://localhost:5173", "http://127.0.0.1:5173"],
+    ["https://localhost:45173", "https://127.0.0.1:45173"],
+  ])("accepts the exact twin of %s", async (webOrigin, requestOrigin) => {
+    const f = fixture({ delivery: false, baseURL: webOrigin, webOrigin, requestOrigin });
+    expect((await f.signup()).status).toBe(200);
+  });
+
+  it.each([
+    "https://localhost:5173",
+    "http://localhost:5174",
+    "http://[::1]:5173",
+    "http://192.168.1.2:5173",
+    "http://localhost.example.test:5173",
+    "http://127.0.0.2:5173",
+  ])("rejects unauthorized origin %s", async (requestOrigin) => {
+    const f = fixture({
+      delivery: false,
+      baseURL: "http://127.0.0.1:5173",
+      webOrigin: "http://127.0.0.1:5173",
+      requestOrigin,
+    });
+    expect((await f.signup()).status).toBe(403);
+    expect(f.data.user).toHaveLength(0);
+    expect(bootstrapUserSpace).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "http://[::1]:5173",
+    "http://127.1:5173",
+    "http://0x7f000001:5173",
+    "http://localhost.:5173",
+    "http://localhost.example.test:5173",
+    "http://192.168.1.2:5173",
+    "not a URL",
+  ])("does not expand %s", (origin) => {
+    expect(buildTrustedOrigins({ webOrigin: origin, baseURL: origin })).toEqual([origin]);
+  });
+
+  it("preserves explicit extra origins without expanding them, and twins the auth base", () => {
+    expect(
+      buildTrustedOrigins({
+        webOrigin: "https://web.example.test",
+        baseURL: "https://localhost:444",
+        extraOrigins: ["http://localhost:777", "https://web.example.test"],
+      }),
+    ).toEqual([
+      "https://web.example.test",
+      "https://localhost:444",
+      "http://localhost:777",
+      "https://127.0.0.1:444",
+    ]);
+  });
+});
 
 describe("identity trust through auth endpoints", () => {
   it("keeps first-owner bootstrap and password signup available without email for open deployments", async () => {

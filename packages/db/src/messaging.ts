@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomInt } from "node:crypto";
+import { COORDINATOR_INSTRUCTIONS } from "@rakazo/core";
 import { bootstrapUserSpace, type SignupPolicyEnv } from "./bootstrap-user.js";
 import type { PrismaClient } from "./client.js";
 import { createRepos } from "./repos.js";
@@ -116,13 +117,10 @@ export async function provisionMessagingIdentity(
         isDeploymentOwner: false,
       },
       {
-        name: "Assistant",
+        name: "Chief",
         title: "",
         description: `Personal agent for ${address} (${provider}), auto-created on first message.`,
-        instructions:
-          "You are the owner's personal agent. The owner reaches you over chat; " +
-          "keep replies concise and conversational. Your first reply doubles as onboarding: " +
-          "briefly introduce yourself and what you can help with.",
+        instructions: COORDINATOR_INSTRUCTIONS,
         notifyOnFinish: true,
       },
     );

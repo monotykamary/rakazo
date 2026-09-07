@@ -180,6 +180,7 @@ export async function createScheduleFromTool(
     botId: string;
     userId: string;
     threadId: string;
+    runId?: string;
     name: string;
     prompt: string;
     timezone?: string;
@@ -232,7 +233,8 @@ export async function createScheduleFromTool(
       threadId: input.threadId,
       botId: input.botId,
       type: "routine.created",
-      payload: { name: row.name },
+      runId: input.runId,
+      payload: { routineId: row.id, name: row.name },
     });
   } catch {
     // Match routines.create: the reminder is live even if the thread signal fails.

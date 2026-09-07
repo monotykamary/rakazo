@@ -208,26 +208,26 @@ export function updateSteps(input: UpdatePlanInput): UpdateStep[] {
     {
       id: "install",
       label: "Install dependencies",
-      command: "pnpm",
+      command: "bun",
       args: ["install", "--frozen-lockfile"],
     },
     {
       id: "generate",
       label: "Regenerate the database client",
-      command: "pnpm",
-      args: ["--filter", "@rakazo/db", "run", "generate"],
+      command: "bun",
+      args: ["run", "--filter", "@rakazo/db", "generate"],
     },
     {
       id: "build",
       label: "Build the web app",
-      command: "pnpm",
-      args: ["--filter", "@rakazo/web", "run", "build"],
+      command: "bun",
+      args: ["run", "--filter", "@rakazo/web", "build"],
     },
     {
       id: "migrate",
       label: "Apply database migrations",
-      command: "pnpm",
-      args: ["--filter", "@rakazo/db", "run", "migrate"],
+      command: "bun",
+      args: ["run", "--filter", "@rakazo/db", "migrate"],
     },
   );
   return steps;

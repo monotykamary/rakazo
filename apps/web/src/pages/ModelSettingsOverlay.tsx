@@ -30,6 +30,7 @@ import {
   useState,
 } from "react";
 import { ModelRoutingSettings } from "../components/ModelRoutingSettings";
+import { ModelVisibilitySettings } from "../components/ModelVisibilitySettings";
 import { localizedProviderHint } from "../lib/localized-provider-hint";
 import type { ModelCatalogEntry, ModelCredential } from "../lib/model-auth";
 import { rpc } from "../lib/rpc";
@@ -86,23 +87,19 @@ export function ModelSettingsOverlay({ onClose }: { onClose: () => void }) {
       rpc.me(),
     ]);
     if (refreshRevision !== refreshRevisionRef.current) return;
-    const nextProvider =
-      provider && nextCatalog.some((entry) => entry.provider === provider)
-        ? provider
-        : (nextMe.defaultProvider ?? nextCatalog[0]?.provider ?? "");
+    const nextProvider = provider
+      ? provider
+      : (nextMe.defaultProvider ?? nextCatalog[0]?.provider ?? "");
     const nextCredential = nextCredentials.find((entry) => entry.provider === nextProvider);
     const nextModel =
       nextProvider === OPENAI_COMPATIBLE_PROVIDER_ID
         ? (nextCredential?.modelId ??
           (nextMe.defaultProvider === OPENAI_COMPATIBLE_PROVIDER_ID ? nextMe.defaultModel : "") ??
           "")
-        : (nextCatalog.find((entry) => entry.provider === nextProvider && entry.id === modelId)
-            ?.id ??
-          nextCatalog.find(
-            (entry) => entry.provider === nextProvider && entry.id === nextMe.defaultModel,
-          )?.id ??
-          nextCatalog.find((entry) => entry.provider === nextProvider)?.id ??
-          "");
+        : (provider === nextProvider ? modelId : "") ||
+          (nextMe.defaultProvider === nextProvider ? nextMe.defaultModel : "") ||
+          nextCatalog.find((entry) => entry.provider === nextProvider)?.id ||
+          "";
     setCatalog(nextCatalog);
     setCredentials(nextCredentials);
     setMe(nextMe);
@@ -153,7 +150,9 @@ export function ModelSettingsOverlay({ onClose }: { onClose: () => void }) {
     );
   }, [groups, providerQuery]);
   const modelsForProvider = catalog.filter((entry) => entry.provider === provider);
-  const selected = modelsForProvider.find((entry) => entry.id === modelId) ?? modelsForProvider[0];
+  const selected =
+    modelsForProvider.find((entry) => entry.id === modelId) ??
+    (modelId && provider !== OPENAI_COMPATIBLE_PROVIDER_ID ? undefined : modelsForProvider[0]);
   selectedLabelRef.current = selected?.label;
   const isOpenAiCompatible = provider === OPENAI_COMPATIBLE_PROVIDER_ID;
   const credential = credentials.find((entry) => entry.provider === provider);
@@ -393,11 +392,17 @@ export function ModelSettingsOverlay({ onClose }: { onClose: () => void }) {
                 </p>
               )}
             </div>
+            <ModelVisibilitySettings onChanged={async () => setCatalog(await rpc.models.list())} />
           </div>
 
           <div ref={detailScrollRef} className="rk-scroll min-h-0 min-w-0 flex-1 overflow-y-auto">
             {error ? <p className="mb-4 text-sm text-destructive">{error}</p> : null}
             {notice ? <p className="mb-4 text-sm text-success">{notice}</p> : null}
+            {modelId && !selected && (
+              <p className="text-sm text-muted-foreground">
+                {modelId} · {t`Unavailable`}
+              </p>
+            )}
             {selected ? (
               <>
                 <div className="block text-[13.5px] text-muted-foreground">
@@ -537,9 +542,7 @@ export function ModelSettingsOverlay({ onClose }: { onClose: () => void }) {
                     </div>
                     <div className="mt-1 text-[13px] text-muted-foreground">
                       {credential ? (
-                        <Trans>
-                          Your key or subscription token is stored securely and is never shown here.
-                        </Trans>
+                        <Trans>Stored securely. Never shown here.</Trans>
                       ) : (
                         <Trans>Connect this provider to use it as your personal model.</Trans>
                       )}

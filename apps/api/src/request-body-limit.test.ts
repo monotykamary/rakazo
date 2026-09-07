@@ -101,6 +101,30 @@ describe("API request body limits", () => {
     expect(cancel).toHaveBeenCalledOnce();
   });
 
+  it.each(["declared", "streamed"] as const)(
+    "rejects %s oversize without waiting for cancellation",
+    async (kind) => {
+      const { app, parse } = testApp(8);
+      const cancel = vi.fn(() => new Promise<void>(() => undefined));
+      const response = await app.request(
+        new Request("http://localhost/parse", {
+          method: "POST",
+          headers: kind === "declared" ? { "content-length": "9" } : undefined,
+          body: new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array(9));
+            },
+            cancel,
+          }),
+          duplex: "half",
+        } as RequestInit & { duplex: "half" }),
+      );
+      expect(response.status).toBe(413);
+      expect(parse).not.toHaveBeenCalled();
+      expect(cancel).toHaveBeenCalledOnce();
+    },
+  );
+
   it("passes bodies at the configured boundary to the route parser", async () => {
     const { app, parse } = testApp(2);
     const response = await app.request("/parse", {

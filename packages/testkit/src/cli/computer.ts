@@ -41,18 +41,18 @@ async function main() {
     SIGNUP_ALLOWLIST: "",
   };
   try {
-    execFileSync("pnpm", ["--filter", "@rakazo/db", "generate"], {
+    execFileSync("bun", ["run", "--filter", "@rakazo/db", "generate"], {
       stdio: "inherit",
       env,
     });
-    execFileSync("pnpm", ["--filter", "@rakazo/db", "exec", "prisma", "migrate", "deploy"], {
+    execFileSync("bun", ["run", "prisma", "migrate", "deploy"], {
       stdio: "inherit",
       env,
       cwd: path.resolve("packages/db"),
     });
     await runProcess(
-      "pnpm",
-      ["exec", "vitest", "run", "packages/testkit/src/computer-use.e2e.test.ts"],
+      "bun",
+      ["run", "vitest", "run", "packages/testkit/src/computer-use.e2e.test.ts"],
       env,
     );
   } finally {

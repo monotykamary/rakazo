@@ -39,11 +39,11 @@ import {
   groupBotsForSidebar,
   inferAttachmentMimeType,
   isActive,
-  isPeerReceiptBlocks,
   isRunTerminalEvent,
   isToolActivityBlock,
   latestAnswerableAskMessageId,
   mentionChipKey,
+  projectMessageActivity,
   reorderBotTo,
   resolveComposerSendPlan,
   resolveMentionPickerKey,
@@ -93,10 +93,10 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   Paperclip,
-  Phone,
   Plus,
   Puzzle,
   Reply,
+  Search,
   Settings,
   Smile,
   Square,
@@ -129,8 +129,9 @@ import {
   ComputersUnavailableHint,
   computersAreUnavailable,
 } from "../components/ComputersUnavailableHint";
+import { MessageActivityLinks } from "../components/MessageActivityLinks";
 import { MessageHoverMetadata } from "../components/MessageHoverMetadata";
-import { GroupQueueStrip, QueueStrip } from "../components/QueueStrip";
+import { ThreadInspector, type ThreadInspectorTarget } from "../components/ThreadInspector";
 import { SkillDraftCard } from "../components/teach/SkillDraftCard";
 import { TeachCaptureOverlay } from "../components/teach/TeachCaptureOverlay";
 import { TeachComputerOverlayControl } from "../components/teach/TeachComputerOverlay";
@@ -150,7 +151,6 @@ import {
   shouldNotifyBrowser,
 } from "../lib/browser-notifications";
 import { loadComputerScreen } from "../lib/computer-screen";
-import { dictation } from "../lib/dictation";
 import { scheduleFocusPrompt } from "../lib/focus-prompt";
 import { localTimezone } from "../lib/local-timezone";
 import { copyableMessageText } from "../lib/message-text";
@@ -350,10 +350,20 @@ export function ShellPage() {
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [panel, setPanel] = useState<Panel>(null);
+  const [threadInspector, setThreadInspector] = useState<ThreadInspectorTarget | null>(null);
   const [peerConversation, setPeerConversation] = useState<{
+    botId?: string;
     peerBotId: string;
     peerBotName: string;
   } | null>(null);
+  const peerReturnFocus = useRef<HTMLElement | null>(null);
+  const closePeerConversation = useCallback(() => {
+    setPeerConversation(null);
+    requestAnimationFrame(() => {
+      if (peerReturnFocus.current?.isConnected)
+        peerReturnFocus.current.focus({ preventScroll: true });
+    });
+  }, []);
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [routinesBotId, setRoutinesBotId] = useState<string | null>(null);
   const [taughtSkills, setTaughtSkills] = useState<TaughtSkill[]>([]);
@@ -436,8 +446,6 @@ export function ShellPage() {
   const [callOpen, setCallOpen] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
-  const [dictating, setDictating] = useState(false);
-  const [dictationError, setDictationError] = useState<string | null>(null);
   const [dismissedRunErrorIds, setDismissedRunErrorIds] =
     useState<ReadonlySet<string>>(readSeenRunErrorIds);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1039,14 +1047,8 @@ export function ShellPage() {
     const unsubSpeech = speaker.subscribe((state) => {
       setSpeakingMessageId(state.status === "idle" ? null : (state.messageId ?? null));
     });
-    const unsubDictation = dictation.subscribe((state) => {
-      setDictating(state.status === "listening" || state.status === "transcribing");
-      if (state.error) setDictationError(state.error);
-      else if (state.status === "listening") setDictationError(null);
-    });
     return () => {
       unsubSpeech();
-      unsubDictation();
     };
   }, []);
 
@@ -1337,6 +1339,7 @@ export function ShellPage() {
   const openSpaceChat = useCallback(
     (spaceId: string, path: string) => {
       setMobileSidebarOpen(false);
+      setPeerConversation(null);
       const previousSpaceId = selectedSpaceId();
       // Persist the active space (including primary) so voice/RPC headers match the chat.
       const selectionStored = selectSpace(spaceId);
@@ -1575,7 +1578,7 @@ export function ShellPage() {
   const transcriptRunning = workingRuns.length > 0;
   const composerRunning = currentRuns.some((run) => isActive(run.status));
   const runError = threadRunError(activeSnapshot, dismissedRunErrorIds);
-  const displayedRunError = !sendError && !dictationError ? runError : null;
+  const displayedRunError = !sendError ? runError : null;
   const displayedRunErrorId = displayedRunError ? (activeSnapshot?.run?.id ?? null) : null;
   const handleRunErrorPresented = useCallback((runId: string) => {
     rememberSeenRunErrorId(runId);
@@ -1588,6 +1591,10 @@ export function ShellPage() {
     () => (inGroup ? { groupId: groupId ?? "" } : { botId: active?.id ?? "" }),
     [active?.id, groupId, inGroup],
   );
+  useEffect(() => {
+    setThreadInspector(null);
+    setPeerConversation(null);
+  }, [activeSnapshot?.threadId]);
   const transcriptMembers = activeSnapshot?.members ?? activeGroup?.members;
   const resolveTranscriptBot = useCallback(
     (botId: string) => {
@@ -2361,7 +2368,6 @@ export function ShellPage() {
     // one on screen; otherwise a live run would be silenced before it has even failed.
     const failedRunId = displayedRunErrorId;
     setSendError(null);
-    setDictationError(null);
     if (failedRunId) {
       rememberSeenRunErrorId(failedRunId);
       setDismissedRunErrorIds((current) => new Set(current).add(failedRunId));
@@ -2499,7 +2505,7 @@ export function ShellPage() {
         </div>
         <InputGroup data-testid="sidebar-search" className="mx-2.5 mb-3 w-auto rounded-xl bg-card">
           <InputGroupAddon>
-            <span aria-hidden="true">⌕</span>
+            <Search size={16} strokeWidth={1.8} aria-hidden="true" />
           </InputGroupAddon>
           <InputGroupInput
             value={query}
@@ -2984,203 +2990,270 @@ export function ShellPage() {
       <main
         aria-hidden={mobileSidebarOpen || undefined}
         inert={mobileSidebarOpen}
-        className="flex min-w-0 flex-1 flex-col bg-background"
+        className="relative flex min-w-0 flex-1 flex-col bg-background"
       >
-        <div className="app-drag flex items-center justify-between border-b border-sidebar-border px-3 py-[17px] md:px-[22px]">
-          <div className="flex min-w-0 items-center gap-2">
-            <button
-              type="button"
-              aria-label={t`Open navigation`}
-              onClick={() => setMobileSidebarOpen(true)}
-              className="app-no-drag grid h-8 w-8 shrink-0 place-items-center rounded-lg text-foreground/75 hover:bg-accent md:hidden"
-            >
-              <Menu size={19} strokeWidth={1.7} />
-            </button>
-            <button
-              type="button"
-              data-testid="bot-settings-trigger"
-              onClick={() => setPanel(inGroup ? "group-settings" : "settings")}
-              className="app-no-drag flex min-w-0 items-center gap-3"
-            >
-              {inGroup ? (
-                <GroupAvatar
-                  members={activeSnapshot?.members ?? activeGroup?.members ?? []}
-                  size={26}
-                />
-              ) : active ? (
-                <BotAvatar
-                  color={active.color}
-                  identity={active.id}
-                  size={26}
-                  status={active.status}
-                />
-              ) : null}
-              <span className="min-w-0">
-                <span className="block truncate text-[16px] font-medium text-foreground" dir="auto">
-                  {inGroup
-                    ? (activeGroup?.name ?? activeSnapshot?.groupName ?? t`Group`)
-                    : (active?.name ?? t`Select a bot`)}
+        <div
+          className={peerConversation ? "invisible contents" : "contents"}
+          aria-hidden={Boolean(peerConversation) || undefined}
+          inert={Boolean(peerConversation)}
+        >
+          <div className="app-drag flex items-center justify-between border-b border-sidebar-border px-3 py-[17px] md:px-[22px]">
+            <div className="flex min-w-0 items-center gap-2">
+              <button
+                type="button"
+                aria-label={t`Open navigation`}
+                onClick={() => setMobileSidebarOpen(true)}
+                className="app-no-drag grid h-8 w-8 shrink-0 place-items-center rounded-lg text-foreground/75 hover:bg-accent md:hidden"
+              >
+                <Menu size={19} strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                data-testid="bot-settings-trigger"
+                onClick={() => setPanel(inGroup ? "group-settings" : "settings")}
+                className="app-no-drag flex min-w-0 items-center gap-3"
+              >
+                {inGroup ? (
+                  <GroupAvatar
+                    members={activeSnapshot?.members ?? activeGroup?.members ?? []}
+                    size={26}
+                  />
+                ) : active ? (
+                  <BotAvatar
+                    color={active.color}
+                    identity={active.id}
+                    size={26}
+                    status={active.status}
+                  />
+                ) : null}
+                <span className="min-w-0">
+                  <span
+                    className="block truncate text-[16px] font-medium text-foreground"
+                    dir="auto"
+                  >
+                    {inGroup
+                      ? (activeGroup?.name ?? activeSnapshot?.groupName ?? t`Group`)
+                      : (active?.name ?? t`Select a bot`)}
+                  </span>
                 </span>
-              </span>
-            </button>
-          </div>
-          <div className="flex items-center gap-1">
-            {!inGroup && active ? (
-              <button
-                type="button"
-                title={voiceStatus?.ready ? t`Call` : t`Set up voice to call`}
-                aria-label={t`Call`}
-                onClick={() => {
-                  if (!voiceStatus?.ready) {
-                    setVoiceOpen(true);
-                    return;
-                  }
-                  setCallOpen(true);
-                }}
-                data-active={callOpen ? "" : undefined}
-                className="app-no-drag grid h-[30px] w-[34px] place-items-center rounded-[9px] hover:bg-accent data-active:bg-accent"
-              >
-                <Phone size={16} strokeWidth={1.6} className="text-foreground/75" />
               </button>
-            ) : null}
-            {!inGroup ? (
-              <button
-                type="button"
-                title={t`Agent computer`}
-                onClick={() => {
-                  const next = panel === "computer" ? null : "computer";
-                  setPanel(next);
-                  if (next === "computer" && active) {
-                    // Refresh run/computer so Take control isn't stuck on a stale busyBotName.
-                    void refreshThread(active.id).catch(() => undefined);
-                  }
-                }}
-                data-active={panel ? "" : undefined}
-                className="app-no-drag grid h-[30px] w-[34px] place-items-center rounded-[9px] hover:bg-accent data-active:bg-accent"
-              >
-                <Monitor size={18} strokeWidth={1.6} className="text-foreground/75" />
-              </button>
-            ) : null}
+            </div>
+            <div className="flex items-center gap-1">
+              {activeSnapshot?.threadId && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="app-no-drag"
+                        aria-label={t`Advanced`}
+                      />
+                    }
+                  >
+                    <MoreHorizontal size={18} />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onClick={() => setThreadInspector({ view: "queue" })}
+                    >{t`Queue`}</DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={
+                        !activeSnapshot.messages.some((message) => message.runId) &&
+                        !currentRuns.length
+                      }
+                      onClick={() => setThreadInspector({ view: "execution" })}
+                    >{t`Execution`}</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+              {!inGroup ? (
+                <button
+                  type="button"
+                  title={t`Agent computer`}
+                  onClick={() => {
+                    const next = panel === "computer" ? null : "computer";
+                    setPanel(next);
+                    if (next === "computer" && active) {
+                      // Refresh run/computer so Take control isn't stuck on a stale busyBotName.
+                      void refreshThread(active.id).catch(() => undefined);
+                    }
+                  }}
+                  data-active={panel ? "" : undefined}
+                  className="app-no-drag grid h-[30px] w-[34px] place-items-center rounded-[9px] hover:bg-accent data-active:bg-accent"
+                >
+                  <Monitor size={18} strokeWidth={1.6} className="text-foreground/75" />
+                </button>
+              ) : null}
+            </div>
           </div>
+          <Transcript
+            key={activeSnapshot?.threadId}
+            scrollRef={messageScroll}
+            artifactTarget={transcriptArtifactTarget}
+            messages={transcriptMessages}
+            olderCursor={activeSnapshot?.olderCursor ?? null}
+            loadingOlder={loadingOlder}
+            answerableAskMessageId={answerableAskMessageId}
+            running={transcriptRunning}
+            workingBots={workingBots}
+            onLoadOlder={loadOlder}
+            onOpenBot={openBot}
+            onAnswer={answerMessage}
+            onReply={setReplyTarget}
+            onReact={reactToMessage}
+            onJumpToMessage={jumpToReplyMessage}
+            onOpenPeerMessages={(peer) => {
+              peerReturnFocus.current =
+                document.activeElement instanceof HTMLElement ? document.activeElement : null;
+              setPanel(null);
+              setThreadInspector(null);
+              setPeerConversation(peer);
+            }}
+            onOpenExecution={(runId, botId) =>
+              setThreadInspector({ view: "execution", runId, botId })
+            }
+            onOpenRoutine={async (routineId, ownerId) => {
+              const botId = ownerId ?? active?.id;
+              if (!botId) return;
+              const originBot = activeBotId.current;
+              const originGroup = activeGroupId.current;
+              const rows = await rpc.routines.list({ botId });
+              if (activeBotId.current !== originBot || activeGroupId.current !== originGroup)
+                return;
+              const routine = rows.find((row) => row.id === routineId);
+              if (!routine) throw new Error(t`This routine no longer exists`);
+              setRoutines(rows);
+              setRoutinesBotId(botId);
+              if (inGroup || botId !== active?.id) {
+                navigate(
+                  `/app/${encodeURIComponent(botId)}?routine=${encodeURIComponent(routineId)}`,
+                );
+                return;
+              }
+              setRoutineDraft(draftFromRoutine(routine));
+              setRoutineWebhookSecret(null);
+              setEditingRoutine(routine);
+              setRoutineError(null);
+              setPanel("routine");
+            }}
+            memberName={resolveTranscriptMemberName}
+            peerBot={resolveTranscriptBot}
+            onRefresh={refreshActiveThread}
+            onBotChanged={refreshBots}
+            onAddRoutine={addSkillRoutine}
+            voiceReady={Boolean(voiceStatus?.ready)}
+            speakingMessageId={speakingMessageId}
+            onSpeak={speakMessage}
+          />
+          {recordingSkill ? (
+            <div className="px-6 pb-2 text-center text-[13px] text-destructive">
+              <Trans>Teaching in progress. Stop teaching before sending a new message.</Trans>
+            </div>
+          ) : null}
+          {activeSnapshot?.threadId && threadInspector && (
+            <ThreadInspector
+              key={`${activeSnapshot.threadId}:${threadInspector.view}:${threadInspector.runId ?? ""}`}
+              threadId={activeSnapshot.threadId}
+              target={threadInspector}
+              onClose={() => setThreadInspector(null)}
+              members={
+                inGroup
+                  ? (transcriptMembers ?? [])
+                  : active
+                    ? [{ botId: active.id, name: active.name }]
+                    : []
+              }
+              runIds={[
+                ...new Set([
+                  ...currentRuns.map((run) => run.id),
+                  ...activeSnapshot.messages.flatMap((message) =>
+                    message.runId ? [message.runId] : [],
+                  ),
+                ]),
+              ]}
+            />
+          )}
+          <Composer
+            key={inGroup ? `group:${groupId}` : `bot:${active?.id}`}
+            activeName={inGroup ? (activeGroup?.name ?? activeSnapshot?.groupName) : active?.name}
+            running={composerRunning}
+            disabled={Boolean(recordingSkill)}
+            pendingAttachments={activePendingAttachments}
+            attachmentNotice={attachmentNotice}
+            sendError={sendError}
+            runError={displayedRunError}
+            runErrorId={displayedRunErrorId}
+            onRunErrorPresented={handleRunErrorPresented}
+            onDismissError={dismissComposerError}
+            sending={sending}
+            fileInputRef={fileInputRef}
+            onAttachmentPick={onAttachmentPick}
+            onRemoveAttachment={removeAttachment}
+            onSend={sendMessage}
+            onStop={stopRun}
+            onVoice={
+              !inGroup && active
+                ? () => {
+                    if (!voiceStatus?.ready) {
+                      setVoiceOpen(true);
+                      return;
+                    }
+                    setCallOpen(true);
+                  }
+                : undefined
+            }
+            replyTarget={activeReplyTarget}
+            replyTargetName={replyTargetName}
+            onClearReply={() => setReplyTarget(null)}
+            mentionTargets={composerMentionTargets}
+            agentSkills={agentSkills}
+            onSlashOpen={refreshAgentSkills}
+            onSlashAction={(action) => {
+              if (action === "chat-settings") {
+                setPanel(inGroup ? "group-settings" : "settings");
+                return;
+              }
+              if (action === "settings-general") {
+                setAccountSettingsFocusUsage(false);
+                setAccountSettingsOpen(true);
+                return;
+              }
+              if (action === "settings-usage") {
+                setAccountSettingsFocusUsage(true);
+                setAccountSettingsOpen(true);
+                void rpc.usage
+                  .summary()
+                  .then(setUsage)
+                  .catch(() => undefined);
+              }
+            }}
+          />
         </div>
-        <Transcript
-          key={activeSnapshot?.threadId}
-          scrollRef={messageScroll}
-          artifactTarget={transcriptArtifactTarget}
-          messages={transcriptMessages}
-          olderCursor={activeSnapshot?.olderCursor ?? null}
-          loadingOlder={loadingOlder}
-          answerableAskMessageId={answerableAskMessageId}
-          running={transcriptRunning}
-          workingBots={workingBots}
-          onLoadOlder={loadOlder}
-          onOpenBot={openBot}
-          onAnswer={answerMessage}
-          onReply={setReplyTarget}
-          onReact={reactToMessage}
-          onJumpToMessage={jumpToReplyMessage}
-          onOpenPeerMessages={(peer) => {
-            setPeerConversation(peer);
-          }}
-          memberName={resolveTranscriptMemberName}
-          peerBot={resolveTranscriptBot}
-          onRefresh={refreshActiveThread}
-          onBotChanged={refreshBots}
-          onAddRoutine={addSkillRoutine}
-          voiceReady={Boolean(voiceStatus?.ready)}
-          speakingMessageId={speakingMessageId}
-          onSpeak={speakMessage}
-        />
-        {recordingSkill ? (
-          <div className="px-6 pb-2 text-center text-[13px] text-destructive">
-            <Trans>Teaching in progress. Stop teaching before sending a new message.</Trans>
+        {peerConversation && (peerConversation.botId ?? active?.id) ? (
+          <div className="absolute inset-0 z-20 bg-background">
+            <Suspense fallback={null}>
+              <PeerMessagesOverlay
+                botId={peerConversation.botId ?? active?.id ?? ""}
+                botName={
+                  bots.find((bot) => bot.id === (peerConversation.botId ?? active?.id))?.name ??
+                  t`Bot`
+                }
+                botColor={
+                  resolveTranscriptBot(peerConversation.botId ?? active?.id ?? "")?.color ??
+                  FALLBACK_BOT_COLOR
+                }
+                peerBotId={peerConversation.peerBotId}
+                peerBotName={peerConversation.peerBotName}
+                peerBotColor={
+                  resolveTranscriptBot(peerConversation.peerBotId)?.color ?? FALLBACK_BOT_COLOR
+                }
+                onOpenNavigation={() => setMobileSidebarOpen(true)}
+                onClose={closePeerConversation}
+              />
+            </Suspense>
           </div>
         ) : null}
-        {activeSnapshot?.threadId && inGroup && (
-          <GroupQueueStrip
-            key={`group-queue:${activeSnapshot.threadId}`}
-            threadId={activeSnapshot.threadId}
-            members={transcriptMembers ?? []}
-            runIds={[
-              ...new Set([
-                ...currentRuns.map((run) => run.id),
-                ...activeSnapshot.messages.flatMap((message) =>
-                  message.runId ? [message.runId] : [],
-                ),
-              ]),
-            ]}
-          />
-        )}
-        {activeSnapshot?.threadId && !inGroup && active && (
-          <QueueStrip
-            key={`${activeSnapshot.threadId}:${active.id}`}
-            threadId={activeSnapshot.threadId}
-            botId={active.id}
-            runIds={[
-              ...new Set([
-                ...currentRuns.map((run) => run.id),
-                ...activeSnapshot.messages.flatMap((message) =>
-                  message.runId ? [message.runId] : [],
-                ),
-              ]),
-            ]}
-          />
-        )}
-        <Composer
-          key={inGroup ? `group:${groupId}` : `bot:${active?.id}`}
-          activeName={inGroup ? (activeGroup?.name ?? activeSnapshot?.groupName) : active?.name}
-          running={composerRunning}
-          disabled={Boolean(recordingSkill)}
-          pendingAttachments={activePendingAttachments}
-          attachmentNotice={attachmentNotice}
-          sendError={sendError}
-          dictationError={dictationError}
-          runError={displayedRunError}
-          runErrorId={displayedRunErrorId}
-          onRunErrorPresented={handleRunErrorPresented}
-          onDismissError={dismissComposerError}
-          sending={sending}
-          fileInputRef={fileInputRef}
-          onAttachmentPick={onAttachmentPick}
-          onRemoveAttachment={removeAttachment}
-          onSend={sendMessage}
-          onStop={stopRun}
-          replyTarget={activeReplyTarget}
-          replyTargetName={replyTargetName}
-          onClearReply={() => setReplyTarget(null)}
-          mentionTargets={composerMentionTargets}
-          agentSkills={agentSkills}
-          onSlashOpen={refreshAgentSkills}
-          onSlashAction={(action) => {
-            if (action === "chat-settings") {
-              setPanel(inGroup ? "group-settings" : "settings");
-              return;
-            }
-            if (action === "settings-general") {
-              setAccountSettingsFocusUsage(false);
-              setAccountSettingsOpen(true);
-              return;
-            }
-            if (action === "settings-usage") {
-              setAccountSettingsFocusUsage(true);
-              setAccountSettingsOpen(true);
-              void rpc.usage
-                .summary()
-                .then(setUsage)
-                .catch(() => undefined);
-            }
-          }}
-          dictating={dictating}
-          transcribe={Boolean(voiceStatus?.transcribe)}
-          onDictateStart={(onFinal) => {
-            void dictation.listen({
-              mode: "hold",
-              transcribe: Boolean(voiceStatus?.transcribe),
-              onFinal,
-            });
-          }}
-          onDictateStop={() => dictation.submitHold()}
-        />
       </main>
 
       <aside
@@ -3254,12 +3327,7 @@ export function ShellPage() {
                       <Trans>Open in full window</Trans>
                     </div>
                   ) : computer?.kind === "desktop" ? (
-                    <div className="grid h-full place-items-center px-6 text-center text-sm text-muted-foreground/80">
-                      <Trans>
-                        This bot runs on this computer, not a Linux desktop. Shell and files use
-                        your home folder.
-                      </Trans>
-                    </div>
+                    <DesktopKindEmptyState className="grid h-full place-items-center px-6 text-center text-sm text-muted-foreground/80" />
                   ) : computer?.state === "running" && embeddedScreenUrl && !computerScreenError ? (
                     <iframe
                       title={t`Bot screen preview`}
@@ -3700,6 +3768,9 @@ export function ShellPage() {
           open={commandPaletteOpen}
           onOpenChange={setCommandPaletteOpen}
           bots={bots}
+          onOpenQueue={
+            activeSnapshot?.threadId ? () => setThreadInspector({ view: "queue" }) : undefined
+          }
           onSelectBot={(id) => {
             setMobileSidebarOpen(false);
             navigate(`/app/${id}`);
@@ -3807,19 +3878,7 @@ export function ShellPage() {
           />
         ) : null}
         {modelsOpen ? <ModelSettingsOverlay onClose={() => setModelsOpen(false)} /> : null}
-        {peerConversation && active ? (
-          <PeerMessagesOverlay
-            botId={active.id}
-            botName={active.name}
-            botColor={active.color}
-            peerBotId={peerConversation.peerBotId}
-            peerBotName={peerConversation.peerBotName}
-            peerBotColor={
-              resolveTranscriptBot(peerConversation.peerBotId)?.color ?? FALLBACK_BOT_COLOR
-            }
-            onClose={() => setPeerConversation(null)}
-          />
-        ) : null}
+
         {voiceOpen ? (
           <VoiceSettingsOverlay
             onClose={() => {
@@ -3965,12 +4024,7 @@ export function ShellPage() {
           ) : null}
           <div className="relative min-h-0 flex-1 bg-background">
             {computer?.kind === "desktop" ? (
-              <div className="grid h-full place-items-center px-8 text-center text-sm text-muted-foreground/80">
-                <Trans>
-                  This bot runs on this computer. There is no separate Linux desktop. Ask it to use
-                  the shell; working directories under your home folder are allowed.
-                </Trans>
-              </div>
+              <DesktopKindEmptyState className="grid h-full place-items-center px-8 text-center text-sm text-muted-foreground/80" />
             ) : computer?.state === "running" && embeddedScreenUrl && !computerScreenError ? (
               <>
                 <iframe
@@ -4028,6 +4082,8 @@ const Transcript = memo(function Transcript({
   onReact,
   onJumpToMessage,
   onOpenPeerMessages,
+  onOpenExecution,
+  onOpenRoutine,
   memberName,
   peerBot,
   onRefresh,
@@ -4051,7 +4107,9 @@ const Transcript = memo(function Transcript({
   onReply: (message: ThreadMessage) => void;
   onReact: (message: ThreadMessage) => Promise<void>;
   onJumpToMessage: (messageId: string) => void;
-  onOpenPeerMessages: (peer: { peerBotId: string; peerBotName: string }) => void;
+  onOpenPeerMessages: (peer: { botId?: string; peerBotId: string; peerBotName: string }) => void;
+  onOpenExecution: (runId: string, botId?: string) => void;
+  onOpenRoutine: (routineId: string, botId?: string) => Promise<void>;
   memberName?: (botId: string | undefined) => string | undefined;
   peerBot: (botId: string) => { color: string; status?: string } | undefined;
   onRefresh: () => Promise<void>;
@@ -4072,6 +4130,7 @@ const Transcript = memo(function Transcript({
     () => new Map(messages.map((message) => [message.id, message])),
     [messages],
   );
+  const activityProjection = useMemo(() => projectMessageActivity(messages), [messages]);
   const workingBotName = workingBots.length === 1 ? workingBots[0]?.name : undefined;
   const workingLabel =
     workingBotName != null && workingBotName !== ""
@@ -4194,9 +4253,11 @@ const Transcript = memo(function Transcript({
             {loadingOlder ? t`Loading…` : t`Load earlier messages`}
           </button>
         ) : null}
-        {messages.map((message) => {
-          if (!message.blocks.some((block) => !isToolActivityBlock(block))) return null;
-          const peerReceipt = isPeerReceiptBlocks(message.blocks);
+        {activityProjection.messages.map((message) => {
+          const activities = activityProjection.activities.get(message.id) ?? [];
+          if (!message.blocks.some((block) => !isToolActivityBlock(block)) && !activities.length)
+            return null;
+          const peerReceipt = message.blocks.length === 0;
           return (
             <div
               key={message.id}
@@ -4260,6 +4321,13 @@ const Transcript = memo(function Transcript({
                     speaking={speakingMessageId === message.id}
                     onSpeak={() => onSpeak(message)}
                   />
+                  <MessageActivityLinks
+                    activities={activities}
+                    peerBot={peerBot}
+                    onPeer={onOpenPeerMessages}
+                    onExecution={onOpenExecution}
+                    onRoutine={onOpenRoutine}
+                  />
                 </div>
               </div>
               {!peerReceipt && message.thumbsUp ? (
@@ -4313,7 +4381,6 @@ const Composer = memo(function Composer({
   pendingAttachments,
   attachmentNotice,
   sendError,
-  dictationError,
   runError,
   runErrorId,
   onRunErrorPresented,
@@ -4324,6 +4391,7 @@ const Composer = memo(function Composer({
   onRemoveAttachment,
   onSend,
   onStop,
+  onVoice,
   replyTarget,
   replyTargetName,
   onClearReply,
@@ -4331,10 +4399,6 @@ const Composer = memo(function Composer({
   agentSkills,
   onSlashOpen,
   onSlashAction,
-  dictating,
-  transcribe,
-  onDictateStart,
-  onDictateStop,
 }: {
   activeName?: string;
   running: boolean;
@@ -4342,7 +4406,6 @@ const Composer = memo(function Composer({
   pendingAttachments: PendingAttachment[];
   attachmentNotice: string | null;
   sendError: string | null;
-  dictationError: string | null;
   runError: string | null;
   runErrorId: string | null;
   onRunErrorPresented: (runId: string) => void;
@@ -4353,6 +4416,7 @@ const Composer = memo(function Composer({
   onRemoveAttachment: (attachment: PendingAttachment) => void;
   onSend: (text: string, mentions?: ComposerMention[]) => Promise<void>;
   onStop: () => Promise<void>;
+  onVoice?: () => void;
   replyTarget?: ThreadMessage | null;
   replyTargetName?: string;
   onClearReply?: () => void;
@@ -4360,10 +4424,6 @@ const Composer = memo(function Composer({
   agentSkills?: AgentSkillCatalogEntry[];
   onSlashOpen?: () => void;
   onSlashAction?: (action: SlashActionId) => void;
-  dictating: boolean;
-  transcribe: boolean;
-  onDictateStart: (onFinal: (text: string) => void) => void;
-  onDictateStop: () => void;
 }) {
   const { t } = useLingui();
   const [draft, setDraft] = useState("");
@@ -4630,14 +4690,14 @@ const Composer = memo(function Composer({
         draggingFiles ? "rounded-[14px] ring-2 ring-inset ring-ring" : ""
       }`}
     >
-      {sendError || dictationError || runError ? (
+      {sendError || runError ? (
         <div
           ref={runErrorRef}
           role="alert"
           data-testid="composer-error"
           className="mb-3 flex items-center gap-2 rounded-[14px] border border-destructive/40 bg-destructive/10 px-4 py-2 text-[13px] text-destructive"
         >
-          <span className="min-w-0 flex-1">{sendError ?? dictationError ?? runError}</span>
+          <span className="min-w-0 flex-1">{sendError ?? runError}</span>
           <button
             type="button"
             aria-label={t`Dismiss error`}
@@ -4809,32 +4869,6 @@ const Composer = memo(function Composer({
         >
           <Plus size={17} strokeWidth={1.8} />
         </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          aria-label={dictating ? t`Stop dictation` : t`Dictate`}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            onDictateStart((text) => setDraft((current) => `${current} ${text}`.trim()));
-          }}
-          onMouseUp={onDictateStop}
-          onMouseLeave={() => {
-            if (dictating) onDictateStop();
-          }}
-          onTouchStart={(event) => {
-            event.preventDefault();
-            onDictateStart((text) => setDraft((current) => `${current} ${text}`.trim()));
-          }}
-          onTouchEnd={onDictateStop}
-          className={`rounded-full ${
-            dictating
-              ? "border-success bg-success/15 text-success hover:bg-success/15 hover:text-success"
-              : "text-foreground/75"
-          }`}
-          title={transcribe ? t`Hold to talk` : t`Hold to talk (on-device dictation)`}
-        >
-          <Mic size={16} strokeWidth={1.8} />
-        </Button>
         <div className="flex min-w-0 flex-1 flex-wrap items-end gap-1.5">
           {selectedSkill ? (
             <span
@@ -4949,6 +4983,19 @@ const Composer = memo(function Composer({
             className="max-h-32 min-h-[24px] min-w-[8rem] flex-1 resize-none overflow-y-auto bg-transparent py-0.5 text-[15.5px] leading-6 text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-40"
           />
         </div>
+        {onVoice ? (
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label={t`Voice`}
+            title={t`Voice`}
+            disabled={disabled}
+            onClick={onVoice}
+            className="rounded-full text-foreground/75"
+          >
+            <Mic size={16} strokeWidth={1.8} />
+          </Button>
+        ) : null}
         {running ? (
           <>
             <Button
@@ -5229,7 +5276,7 @@ const MessageView = memo(function MessageView({
   message: ThreadMessage;
   onAnswer: (message: ThreadMessage, text: string) => Promise<void>;
   onOpenBot: (botId: string) => void;
-  onOpenPeerMessages: (peer: { peerBotId: string; peerBotName: string }) => void;
+  onOpenPeerMessages: (peer: { botId?: string; peerBotId: string; peerBotName: string }) => void;
   speakerName?: string;
   memberName?: (botId: string | undefined) => string | undefined;
   peerBot: (botId: string) => { color: string; status?: string } | undefined;
@@ -5651,6 +5698,16 @@ function screenIframeSandbox(url: string | null) {
   } catch {
     return undefined;
   }
+}
+
+function DesktopKindEmptyState({ className }: { className?: string }) {
+  return (
+    <div className={className}>
+      <Trans>
+        This bot runs on this computer, not a Linux desktop. Shell and files use your home folder.
+      </Trans>
+    </div>
+  );
 }
 
 function computerPlaceholder(

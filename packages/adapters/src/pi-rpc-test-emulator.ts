@@ -1,10 +1,13 @@
 import { createServer } from "node:http";
 import type { AgentRunRequest, AgentRuntimeEvent } from "@rakazo/adapter-kit";
+import type { AgentProcessHost } from "./pi-rpc-protocol.js";
 import { createTestProcessHost } from "./pi-rpc-test-host.js";
 import { PiAgentRuntime } from "./pi-runtime.js";
 
 export async function createRpcHarness(
   options: {
+    wrapHost?: (host: AgentProcessHost) => AgentProcessHost;
+    estimateUsage?: boolean;
     quiet?: boolean;
     error?: boolean;
     errorStatus?: number;
@@ -67,7 +70,7 @@ export async function createRpcHarness(
       chunk({}, "stop");
     }
     res.write(
-      `data: ${JSON.stringify({ id: "offline", choices: [], usage: { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28 } })}\n\n`,
+      `data: ${JSON.stringify({ id: "offline", choices: [], usage: { prompt_tokens: options.estimateUsage ? Math.ceil(JSON.stringify(input.messages).length / 4) : 20, completion_tokens: 8, total_tokens: options.estimateUsage ? Math.ceil(JSON.stringify(input.messages).length / 4) + 8 : 28 } })}\n\n`,
     );
     res.end("data: [DONE]\n\n");
   });
@@ -75,7 +78,7 @@ export async function createRpcHarness(
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Emulator failed");
   const host = createTestProcessHost();
-  const runtime = new PiAgentRuntime({ host });
+  const runtime = new PiAgentRuntime({ host: options.wrapHost?.(host) ?? host });
   const request: AgentRunRequest = {
     botId: "bot",
     threadId: "thread",

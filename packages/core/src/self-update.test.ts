@@ -144,6 +144,20 @@ describe("updateSteps", () => {
     ]);
   });
 
+  it("uses frozen Bun installation and workspace scripts for source updates", () => {
+    const steps = updateSteps({
+      remoteUrl: OFFICIAL_REPO_URL,
+      branch: DEFAULT_UPDATE_BRANCH,
+      targetCommit: "2".repeat(40),
+    });
+    expect(steps.slice(2).map(({ command, args }) => ({ command, args }))).toEqual([
+      { command: "bun", args: ["install", "--frozen-lockfile"] },
+      { command: "bun", args: ["run", "--filter", "@rakazo/db", "generate"] },
+      { command: "bun", args: ["run", "--filter", "@rakazo/web", "build"] },
+      { command: "bun", args: ["run", "--filter", "@rakazo/db", "migrate"] },
+    ]);
+  });
+
   it("passes every value as its own argument so nothing reaches a shell", () => {
     const steps = updateSteps({
       remoteUrl: "git@github.com:me/rakazo.git",

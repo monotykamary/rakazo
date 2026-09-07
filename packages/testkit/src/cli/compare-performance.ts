@@ -8,7 +8,7 @@ import {
 
 const [beforePath, afterPath] = process.argv.slice(2).filter((value) => value !== "--");
 if (!beforePath || !afterPath) {
-  throw new Error("Usage: pnpm perf:compare <before.json> <after.json>");
+  throw new Error("Usage: bun run perf:compare <before.json> <after.json>");
 }
 
 const before = parsePerformanceReport(JSON.parse(await readFile(beforePath, "utf8")), beforePath);

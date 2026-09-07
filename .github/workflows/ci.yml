@@ -19,13 +19,14 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
 
   check:
     name: Typecheck
@@ -34,16 +35,17 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm db:generate
+      - run: bun install --frozen-lockfile
+      - run: bun run db:generate
         env:
           DATABASE_URL: postgres://rakazo:rakazo@127.0.0.1:5433/rakazo
-      - run: pnpm check
+      - run: bun run check
 
   build:
     name: Production builds
@@ -53,19 +55,20 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+      - run: bun install --frozen-lockfile
+      - run: bun run build
         env:
           DATABASE_URL: postgres://rakazo:rakazo@127.0.0.1:5433/rakazo
           BETTER_AUTH_SECRET: ci-build-auth-secret-at-least-32-characters
           ENCRYPTION_KEY: ci-build-encryption-key-at-least-32-characters
       - name: Electron smoke
-        run: xvfb-run --auto-servernum pnpm --filter @rakazo/desktop exec playwright test --config e2e/playwright.config.ts
+        run: xvfb-run --auto-servernum bun run --cwd apps/desktop playwright test --config e2e/playwright.config.ts
       - name: Upload desktop setup screenshots
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -81,16 +84,17 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm db:generate
+      - run: bun install --frozen-lockfile
+      - run: bun run db:generate
         env:
           DATABASE_URL: postgres://rakazo:rakazo@127.0.0.1:5433/rakazo
-      - run: pnpm test
+      - run: bun run test
 
   test-integration:
     name: Postgres journeys
@@ -100,13 +104,14 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test:integration
+      - run: bun install --frozen-lockfile
+      - run: bun run test:integration
 
   test-e2e:
     name: Web E2E
@@ -155,7 +160,7 @@ jobs:
               packages/chat-ui \
               packages/contracts \
               packages/core \
-              pnpm-lock.yaml
+              bun.lock
           )
 
           publish=false
@@ -225,26 +230,27 @@ jobs:
             exit 1
           fi
 
-      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         if: steps.ota.outputs.publish == 'true'
+        with:
+          bun-version: 1.4.2
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         if: steps.ota.outputs.publish == 'true'
         with:
           node-version: 24
-          cache: pnpm
       - name: Set up Expo
         if: steps.ota.outputs.publish == 'true'
         uses: expo/expo-github-action@eab7a230208c952974db8c3245cfd78402c7b385 # v9
         with:
           eas-version: latest
-          packager: pnpm
+          packager: bun
           token: ${{ secrets.EXPO_TOKEN }}
       - name: Install dependencies
         if: steps.ota.outputs.publish == 'true'
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
       - name: Verify mobile project
         if: steps.ota.outputs.publish == 'true'
-        run: pnpm --filter @rakazo/mobile check
+        run: bun run --filter @rakazo/mobile check
       - name: Publish production update
         if: steps.ota.outputs.publish == 'true'
         working-directory: apps/mobile

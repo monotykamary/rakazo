@@ -9,50 +9,22 @@ import { ExecutionInspector } from "./ExecutionInspector";
 
 const queueClient = rpc.queue;
 type Images = QueueSnapshot["rows"][number]["images"];
-export function GroupQueueStrip({
-  threadId,
-  members,
-  runIds,
-}: {
-  threadId: string;
-  members: { botId: string; name: string }[];
-  runIds: string[];
-}) {
-  const [selected, setSelected] = useState(members[0]?.botId ?? "");
-  const botId = members.some((member) => member.botId === selected) ? selected : members[0]?.botId;
-  if (!botId) return null;
-  return (
-    <div>
-      <select
-        aria-label={t`Queue for bot`}
-        className="mx-4 rounded border border-border bg-background p-2 text-sm"
-        value={botId}
-        onChange={(event) => setSelected(event.target.value)}
-      >
-        {members.map((member) => (
-          <option key={member.botId} value={member.botId}>
-            {member.name}
-          </option>
-        ))}
-      </select>
-      <QueueStrip key={`${threadId}:${botId}`} threadId={threadId} botId={botId} runIds={runIds} />
-    </div>
-  );
-}
 export function QueueStrip({
   threadId,
   botId,
   runIds = [],
+  initialOpen = false,
 }: {
   threadId: string;
   botId: string;
   runIds?: string[];
+  initialOpen?: boolean;
 }) {
   const queue = useQueue(queueClient, threadId, botId);
   const { snapshot, error, busy: queueBusy, mutate } = queue;
   const [attaching, setAttaching] = useState(false);
   const busy = queueBusy || attaching;
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initialOpen);
   const [inspect, setInspect] = useState(false);
   const [text, setText] = useState("");
   const [images, setImages] = useState<Images>([]);
@@ -388,7 +360,13 @@ export function QueueStrip({
             <DialogTitle>{t`Execution`}</DialogTitle>
           </DialogHeader>
           {inspect && (
-            <ExecutionInspector key={`${threadId}:${botId}`} runIds={runIds} queue={queue} />
+            <ExecutionInspector
+              key={`${threadId}:${botId}`}
+              threadId={threadId}
+              botId={botId}
+              runIds={runIds}
+              queue={queue}
+            />
           )}
         </DialogContent>
       </Dialog>

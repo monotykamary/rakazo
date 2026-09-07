@@ -60,7 +60,9 @@ export class ModelRoutingBroker {
   private readonly pool: ResolvedTarget[];
   private readonly fallbacks: ResolvedTarget[];
   private readonly service: MultiProviderService;
+  private readonly assertModelAllowed: AgentRunRequest["assertModelAllowed"];
   constructor(request: AgentRunRequest, cache = routingCache, resolve = resolveTarget) {
+    this.assertModelAllowed = request.assertModelAllowed;
     const routing = request.modelRouting;
     const targets = routing?.pool ?? [{ credentialId: "primary", model: request.model }];
     if (!targets.length || targets.length > 20 || (routing?.fallbacks.length ?? 0) > 20)
@@ -124,6 +126,13 @@ export class ModelRoutingBroker {
         if (!next) throw new Error("No configured model connection is currently available");
         target = next;
         fallback = true;
+      }
+      // Permission changes are not provider outages: never retry or fall back around them.
+      try {
+        await this.assertModelAllowed?.(target.model.provider, target.model.id);
+      } catch (error) {
+        lease?.release({ status: "cancelled" });
+        throw error;
       }
       const attempt = {
         credentialId: target.credentialId,

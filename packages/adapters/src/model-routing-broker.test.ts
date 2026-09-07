@@ -1,5 +1,6 @@
 import type { AssistantMessage, AssistantMessageEvent, Context } from "@earendil-works/pi-ai";
 import type { AgentRunRequest } from "@rakazo/adapter-kit";
+import { ModelHiddenError } from "@rakazo/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { ModelRoutingBroker, ModelRoutingCache } from "./model-routing-broker.js";
 
@@ -109,6 +110,24 @@ function fixture(
 }
 
 describe("backend multiprovider routing", () => {
+  it("never reroutes around a hidden primary or hidden fallback target", async () => {
+    const f = fixture({ primary: "rate-limit", secondary: "rate-limit" });
+    const input = request();
+    input.assertModelAllowed = async () => {
+      throw new ModelHiddenError();
+    };
+    await expect(f.run(input)).rejects.toThrow("hidden");
+    expect(f.attempts).toHaveLength(0);
+    const checked: string[] = [];
+    input.assertModelAllowed = async (provider, modelId) => {
+      checked.push(`${provider}/${modelId}`);
+      if (provider === "provider-b") throw new ModelHiddenError();
+    };
+    await expect(f.run(input)).rejects.toThrow("hidden");
+    expect(checked).toEqual(["provider-a/model-a", "provider-a/model-a", "provider-b/model-b"]);
+    expect(f.attempts.map((attempt) => attempt.credentialId)).toEqual(["primary", "secondary"]);
+  });
+
   it("uses the first ordered connection without trying other targets on success", async () => {
     const f = fixture();
     expect((await f.run()).at(-1)?.type).toBe("done");

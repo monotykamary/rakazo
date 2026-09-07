@@ -34,4 +34,4 @@ The stored credential binding fails closed if the key or provider changes. Cance
 
 `CLOUD_AGENT_PROVIDER=emulator` is an in-process provider for development and web E2E. It is not durable across separate processes.
 
-The Cursor HTTP emulator also tests the real adapter without network calls. The same conformance suite covers both providers, and `pnpm test:integration` exercises the database lifecycle against the Cursor emulator: lost responses, stale run metadata, queue outages, ownership boundaries, cleared chats, worker restart, overlapping polls, and cancellation races.
+The Cursor HTTP emulator also tests the real adapter without network calls. The same conformance suite covers both providers, and `bun run test:integration` exercises the database lifecycle against the Cursor emulator: lost responses, stale run metadata, queue outages, ownership boundaries, cleared chats, worker restart, overlapping polls, and cancellation races.

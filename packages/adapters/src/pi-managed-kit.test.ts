@@ -132,6 +132,23 @@ async function harness(
 }
 
 describe("managed Pi kit", () => {
+  it("loads the sixth visibility extension without exposing worker-local preference writes", async () => {
+    const { kit, runtime, paid } = await harness([]);
+    const extension = kit.resourceLoader
+      .getExtensions()
+      .extensions.find((entry) => entry.commands.has("hide-models"));
+    expect(extension?.path).toMatch(/hide-providers\.ts$/);
+    expect(extension?.handlers.has("session_start")).toBe(true);
+    const requested = runtime.session.model;
+    await runtime.session.prompt("/hide-models add test");
+    expect(runtime.session.model).toEqual(requested);
+    expect(paid).not.toHaveBeenCalled();
+    await expect(
+      extension!.commands
+        .get("hide-models")!
+        .handler("reset", runtime.session.extensionRunner.createContext() as never),
+    ).rejects.toThrow("Rakazo model settings");
+  }, 60000);
   it("captures all core operations in real Fabric and delegates only through authorized proxies", async () => {
     const read = vi.fn(async () => textResult(JSON.stringify({ content: "authorized source" })));
     const write = vi.fn(async () => textResult(JSON.stringify({ ok: true })));
@@ -190,6 +207,45 @@ describe("managed Pi kit", () => {
     ).toHaveLength(1);
     expect(paid).not.toHaveBeenCalled();
   }, 60000);
+
+  it.each([false, true])(
+    "keeps real SDK cancellation visible and retryable (handoff: %s)",
+    async (requireSuccess) => {
+      const manager = SessionManager.inMemory("/work");
+      manager.appendMessage({
+        role: "user",
+        content: "Original goal " + "detail ".repeat(16000),
+        timestamp: 1,
+      });
+      manager.appendMessage({
+        role: "user",
+        content: "Recent task " + "recent ".repeat(1000),
+        timestamp: 2,
+      });
+      const { kit, runtime, paid } = await harness([], { manager });
+      const before = manager.getEntries();
+      const hooks = kit.resourceLoader
+        .getExtensions()
+        .extensions.find((extension) => extension.path.includes("rakazo-managed"))!
+        .handlers.get("session_before_compact")!;
+      const abort = async () => {
+        runtime.session.abortCompaction();
+      };
+      hooks.push(abort);
+      await expect(kit.compact(undefined, { requireSuccess })).rejects.toThrow(
+        "Compaction cancelled",
+      );
+      expect(kit.snapshot()).toMatchObject({ pendingCompact: { requireSuccess } });
+      expect(kit.snapshot()).not.toHaveProperty("compactedSource");
+      expect(manager.getEntries()).toEqual(before);
+      hooks.splice(hooks.indexOf(abort), 1);
+      await kit.compact(undefined, { requireSuccess });
+      expect(manager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
+      expect(kit.snapshot()).not.toHaveProperty("pendingCompact");
+      expect(paid).not.toHaveBeenCalled();
+    },
+    60000,
+  );
 
   it("performs TTL cold-return compaction with actual Fabric and preserves exact source", async () => {
     const manager = SessionManager.inMemory("/work");

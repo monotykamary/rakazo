@@ -53,7 +53,7 @@ services:
   supervisor:
     image: ${RAKAZO_IMAGE:-ghcr.io/elie222/rakazo/app}:${RAKAZO_IMAGE_TAG:-edge}
     restart: unless-stopped
-    command: ["pnpm", "--filter", "@rakazo/sandbox-supervisor", "start"]
+    command: ["bun", "run", "--filter", "@rakazo/sandbox-supervisor", "start"]
     init: true
     user: root
     security_opt:
@@ -106,7 +106,7 @@ services:
     command:
       - bash
       - -lc
-      - pnpm --filter @rakazo/db exec prisma migrate deploy && pnpm --filter @rakazo/api start
+      - bun run --cwd packages/db prisma migrate deploy && bun run --filter @rakazo/api start
     init: true
     security_opt:
       - no-new-privileges:true
@@ -165,7 +165,7 @@ services:
   worker:
     image: ${RAKAZO_IMAGE:-ghcr.io/elie222/rakazo/app}:${RAKAZO_IMAGE_TAG:-edge}
     restart: unless-stopped
-    command: ["pnpm", "--filter", "@rakazo/worker", "start"]
+    command: ["bun", "run", "--filter", "@rakazo/worker", "start"]
     init: true
     security_opt:
       - no-new-privileges:true
@@ -213,7 +213,7 @@ services:
   web:
     image: ${RAKAZO_IMAGE:-ghcr.io/elie222/rakazo/app}:${RAKAZO_IMAGE_TAG:-edge}
     restart: unless-stopped
-    command: ["pnpm", "--filter", "@rakazo/web", "preview", "--host", "0.0.0.0", "--port", "5173"]
+    command: ["bun", "run", "--filter", "@rakazo/web", "preview", "--host", "0.0.0.0", "--port", "5173"]
     init: true
     security_opt:
       - no-new-privileges:true

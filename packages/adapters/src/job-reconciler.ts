@@ -236,7 +236,7 @@ export function createJobReconciler(
         const outcomes = await deps.prisma.run.findMany({
           where: {
             trigger: "bot_message",
-            status: { in: ["completed", "failed"] },
+            status: { in: ["completed", "failed", "cancelled"] },
             botOutcomeReturnedAt: null,
           },
           orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
@@ -256,14 +256,16 @@ export function createJobReconciler(
         await Promise.all(
           outcomes.map(async (run) => {
             const transcript =
-              run.status === "failed"
+              run.status !== "completed"
                 ? { text: "", progressOnly: false }
                 : await botRunOutcomeText(deps.prisma, run.id);
             const text =
-              run.status === "failed"
-                ? `Could not complete the delegated request: ${run.error ?? "unknown error"}`
-                : transcript.text ||
-                  "The delegated bot completed its turn without a written summary.";
+              run.status === "cancelled"
+                ? "The delegated request was cancelled."
+                : run.status === "failed"
+                  ? `Could not complete the delegated request: ${run.error ?? "unknown error"}`
+                  : transcript.text ||
+                    "The delegated bot completed its turn without a written summary.";
             // Same stable delivery key as the executor path (auto-outcome:<runId>), so a
             // concurrent or earlier return is replayed instead of double-posted. Progress-only
             // transcripts (all mid-turn user-progress messages) return as status.

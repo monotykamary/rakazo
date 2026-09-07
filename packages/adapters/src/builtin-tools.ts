@@ -2,8 +2,10 @@ import type { ConnectorTool } from "@rakazo/adapter-kit";
 import {
   BotSecretDestination,
   BotSecretName,
+  ModelSelectionSchema,
   SecretAskPurpose,
   SecretHttpRequest,
+  WorkToolName,
 } from "@rakazo/contracts";
 import { z } from "zod";
 import { manageQueueTool } from "./premove-tool-schema.js";
@@ -11,6 +13,7 @@ import { manageQueueTool } from "./premove-tool-schema.js";
 export const DELEGATION_TOOL_NAMES = new Set([
   "run_subagent",
   "spawn_bot",
+  "dispatch_work",
   "archive_bot",
   "delete_bot",
   "handoff_to_bot",
@@ -760,9 +763,47 @@ export const builtinAgentTools: ConnectorTool[] = [
     },
   },
   {
+    name: "dispatch_work",
+    description:
+      "Queue a complete one-off project task in a hidden temporary worker and return its durable receipt immediately. Work survives this conversation ending and backend restart. Results and failures return here automatically. Use separate project/worktree paths for independent work; overlapping writes are queued. This does not create a reusable bot or grant new computer access.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task: {
+          type: "string",
+          description: "Concrete outcome, scope, anti-jobs, checks and failure report.",
+        },
+        name: { type: "string", description: "Short activity label, not a roster bot." },
+        instructions: { type: "string" },
+        project_path: {
+          type: "string",
+          description: "Existing authorized workspace-relative project directory.",
+        },
+        worktree_path: {
+          type: "string",
+          description:
+            "Optional existing authorized worktree directory; the worker writes here instead.",
+        },
+        model: {
+          ...z.toJSONSchema(ModelSelectionSchema),
+          description:
+            "Optional exact connection model pin. Defaults to this run's model; hidden or unavailable pins never fall back.",
+        },
+        tools: {
+          type: "array",
+          items: { type: "string", enum: WorkToolName.options },
+          description:
+            "Smallest file-tool subset needed. Shell is unavailable until project-scoped process isolation is supported. No GUI, connectors or further delegation.",
+        },
+      },
+      required: ["task", "project_path"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "spawn_bot",
     description:
-      "Create a full, regular bot — the same kind the user creates from the + button. It gets its own thread, computer, and memory, and appears as a peer in the bot list. Do not also call run_subagent. Creating the bot is the whole action. Only set prompt if the user asked that new bot to start work immediately.",
+      "Create a full, regular bot — the same kind the user creates from the + button. It gets its own thread, computer, and memory, and appears as a peer in the bot list. Do not also call run_subagent. Give it one concrete job, a useful voice and explicit anti-jobs in instructions. Only set prompt when the user wants it to start work: the task is durably queued and its result or failure returns to you asynchronously. Do not wait for it or create a lasting bot for a one-off helper task.",
     inputSchema: {
       type: "object",
       properties: {

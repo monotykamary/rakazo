@@ -80,6 +80,12 @@ import {
   ModelRoutingSetInputSchema,
 } from "./model-routing.js";
 import {
+  ModelSelectionScopeSchema,
+  ModelSelectionStatusSchema,
+  WorkerModelSelectionInputSchema,
+} from "./model-selection.js";
+import { ModelVisibilitySchema } from "./model-visibility.js";
+import {
   QueueMutationSchema,
   QueueReplySchema,
   QueueScopeSchema,
@@ -87,6 +93,7 @@ import {
 } from "./queue.js";
 import { RunsListOutputSchema } from "./runs.js";
 import { SearchQueryOutputSchema } from "./search.js";
+import { WorkReceiptSchema } from "./work.js";
 
 const botId = z.object({ botId: Id });
 const groupId = z.object({ groupId: Id });
@@ -178,6 +185,13 @@ export const appContract = {
     apply: oc.input(ServerUpdateRequestSchema).output(ServerUpdateRunSchema),
   },
   models: {
+    getVisibility: oc.output(ModelVisibilitySchema),
+    setVisibility: oc.input(ModelVisibilitySchema).output(ModelVisibilitySchema),
+    listForVisibility: oc.output(z.array(ModelCatalogEntrySchema)),
+    getSelection: oc.input(ModelSelectionScopeSchema).output(ModelSelectionStatusSchema),
+    setWorkerSelection: oc
+      .input(WorkerModelSelectionInputSchema)
+      .output(ModelSelectionStatusSchema),
     getRouting: oc.input(ModelRoutingGetInputSchema).output(ModelRoutingSchema.nullable()),
     setRouting: oc.input(ModelRoutingSetInputSchema).output(ModelRoutingSchema.nullable()),
     list: oc.output(z.array(ModelCatalogEntrySchema)),
@@ -269,17 +283,22 @@ export const appContract = {
     get: oc.input(threadTarget).output(ThreadSnapshotSchema),
     messages: oc
       .input(
-        threadTarget.safeExtend({
-          before: z.number().int().nonnegative().optional(),
-          includePeerRuns: z.boolean().optional(),
-          includePeerReceipts: z.boolean().optional(),
-          around: z
-            .object({
-              messageId: Id.optional(),
-              seq: z.number().int().nonnegative().optional(),
-            })
-            .optional(),
-        }),
+        threadTarget
+          .safeExtend({
+            before: z.number().int().nonnegative().optional(),
+            includePeerRuns: z.boolean().optional(),
+            includePeerReceipts: z.boolean().optional(),
+            peerBotId: Id.optional(),
+            around: z
+              .object({
+                messageId: Id.optional(),
+                seq: z.number().int().nonnegative().optional(),
+              })
+              .optional(),
+          })
+          .refine((input) => !input.peerBotId || (Boolean(input.botId) && !input.around), {
+            message: "Peer history requires a bot and cursor pagination",
+          }),
       )
       .output(ThreadMessagePageSchema),
     subscribe: oc
@@ -569,6 +588,9 @@ export const appContract = {
         .output(z.object({ ok: z.literal(true) })),
       disconnect: oc.input(z.object({ serverId: Id })).output(z.object({ ok: z.literal(true) })),
     },
+  },
+  work: {
+    list: oc.input(z.object({ botId: Id })).output(z.array(WorkReceiptSchema)),
   },
   onboarding: {
     /** Seed the first-run greeting into the bot's thread (focus card is separate). */

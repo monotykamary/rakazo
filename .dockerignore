@@ -3,6 +3,9 @@
 .vercel
 .turbo
 .cache
+.artifacts
+.context
+.tmp
 .DS_Store
 .env
 .env.*

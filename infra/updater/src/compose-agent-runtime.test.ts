@@ -41,7 +41,7 @@ describe("managed agent image composition", () => {
     expect(dockerfile).toMatch(/^FROM node:24-bookworm-slim@sha256:[a-f0-9]{64}$/m);
     const copy = dockerfile.indexOf("COPY vendor/pi-kit vendor/pi-kit");
     expect(copy).toBeGreaterThan(-1);
-    expect(copy).toBeLessThan(dockerfile.indexOf("RUN corepack enable"));
+    expect(copy).toBeLessThan(dockerfile.indexOf("RUN bun install --frozen-lockfile"));
     const core = JSON.parse(readFileSync(path.join(root, "packages/core/package.json"), "utf8"));
     const archive = core.dependencies["pi-queue-steer-factory"];
     expect(archive).toMatch(/^file:.*vendor\/pi-kit\//);
@@ -52,7 +52,7 @@ describe("managed agent image composition", () => {
 
   it("exposes one build command for both required local images", () => {
     const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
-    expect(pkg.scripts["sandbox:build"]).toContain("pnpm sandbox:agent:build");
+    expect(pkg.scripts["sandbox:build"]).toContain("bun run sandbox:agent:build");
     expect(pkg.scripts["sandbox:agent:build"]).toContain("rakazo/agent:local");
     expect(pkg.scripts["pi:kit:check"]).toContain("scripts/check-pi-kit.ts");
   });

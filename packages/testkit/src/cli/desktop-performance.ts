@@ -187,12 +187,12 @@ function performanceEnvironment(databaseUrl: string): NodeJS.ProcessEnv {
 }
 
 function buildProductionArtifacts(env: NodeJS.ProcessEnv) {
-  run("pnpm", ["--filter", "@rakazo/desktop", "pack:dir"], env);
+  run("bun", ["run", "--filter", "@rakazo/desktop", "pack:dir"], env);
 }
 
 function migrateDatabase(env: NodeJS.ProcessEnv) {
-  run("pnpm", ["--filter", "@rakazo/db", "generate"], env);
-  run("pnpm", ["--filter", "@rakazo/db", "exec", "prisma", "migrate", "deploy"], env);
+  run("bun", ["run", "--filter", "@rakazo/db", "generate"], env);
+  run("bun", ["run", "--cwd", "packages/db", "prisma", "migrate", "deploy"], env);
 }
 
 function run(command: string, args: string[], env: NodeJS.ProcessEnv) {
@@ -201,11 +201,11 @@ function run(command: string, args: string[], env: NodeJS.ProcessEnv) {
 
 function startPreview(env: NodeJS.ProcessEnv) {
   return spawn(
-    "pnpm",
+    "bun",
     [
-      "--filter",
-      "@rakazo/web",
-      "exec",
+      "run",
+      "--cwd",
+      "apps/web",
       "vite",
       "preview",
       "--host",
@@ -323,7 +323,7 @@ async function seedBenchmarkThread(prisma: PrismaClient) {
             "- Measure before changing the hot path",
             "- Verify the result with deterministic tests",
             "",
-            "`pnpm check && pnpm test`",
+            "`bun run check && bun run test`",
           ].join("\n");
     await createThreadMessage(prisma, { threadId, role, blocks: [{ kind: "text", text }] });
   }

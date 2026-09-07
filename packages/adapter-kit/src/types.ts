@@ -1,5 +1,6 @@
 import type {
   ConnectionCatalogItem,
+  ModelSelection,
   QueueControlCommand,
   QueueControlResult,
   SandboxKind,
@@ -353,6 +354,8 @@ export interface AgentRunRequest {
       persist?: (credential: AgentModelOAuthCredential) => Promise<void>;
     };
   };
+  /** Recheck canonical owner model permission before inference; never sent to the worker. */
+  assertModelAllowed?: (provider: string, modelId: string) => Promise<void>;
   /** Backend-owned connection routing. Credentials never cross the managed worker bridge. */
   modelRouting?: {
     /** Stable principal/space/preference identity; never supplied by the model. */
@@ -372,6 +375,11 @@ export interface AgentRunRequest {
     placement: { cwd: string; worktreeId?: string };
     executeTool: NonNullable<AgentRunRequest["executeTool"]>;
   }>;
+  /** Resolve a persisted participant pin using current backend credentials; never forward secrets to Pi. */
+  resolveParticipantModel?: (
+    participantId: string,
+    selection?: ModelSelection,
+  ) => Promise<AgentRunRequest["model"] | undefined>;
   claimParticipantSteering?: (
     participantId: string,
     seenIds: string[],

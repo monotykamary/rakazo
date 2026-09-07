@@ -32,7 +32,7 @@ body:
       label: Steps to reproduce
       description: Numbered steps from a clean local setup when possible.
       placeholder: |
-        1. `pnpm dev`
+        1. `bun run dev`
         2. Create a bot and send "hello"
         3. Open the computer pane
     validations:

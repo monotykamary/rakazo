@@ -40,7 +40,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
     appName: "Rakazo",
     secret: env.secret,
     baseURL: env.baseURL,
-    trustedOrigins: [env.webOrigin, env.baseURL, ...(env.extraOrigins ?? [])],
+    trustedOrigins: buildTrustedOrigins(env),
     database: prismaAdapter(prisma, { provider: "postgresql" }),
     emailAndPassword: {
       enabled: true,
@@ -252,6 +252,23 @@ function escapeHtml(value: string): string {
 }
 
 export type Auth = ReturnType<typeof createAuth>;
+
+/** Trust only same-scheme/port localhost and IPv4 loopback twins. */
+export function buildTrustedOrigins(env: Pick<AuthEnv, "webOrigin" | "baseURL" | "extraOrigins">) {
+  const origins = new Set([env.webOrigin, env.baseURL, ...(env.extraOrigins ?? [])]);
+  for (const origin of [env.webOrigin, env.baseURL]) {
+    // Check the raw authority too: URL normalizes shorthand/hex IPv4 into 127.0.0.1.
+    if (!/^https?:\/\/(localhost|127\.0\.0\.1)(?::[0-9]+)?(?:\/|$)/.test(origin)) continue;
+    try {
+      const twin = new URL(origin);
+      twin.hostname = twin.hostname === "localhost" ? "127.0.0.1" : "localhost";
+      origins.add(twin.origin);
+    } catch {
+      // Invalid configuration must not add any trusted origins.
+    }
+  }
+  return [...origins];
+}
 
 export const blockedAuthPaths = [
   "/organization/create",

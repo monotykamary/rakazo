@@ -41,15 +41,15 @@ async function main() {
       DATA_DIR: dataDir,
     };
     if (postgres) {
-      execSync("pnpm --filter @rakazo/db generate", { stdio: "inherit", env });
-      execSync("pnpm --filter @rakazo/db exec prisma migrate deploy", {
+      execSync("bun run --filter @rakazo/db generate", { stdio: "inherit", env });
+      execSync("bun run prisma migrate deploy", {
         stdio: "inherit",
         env,
         cwd: path.resolve("packages/db"),
       });
     }
     execSync(
-      "pnpm exec vitest run --no-file-parallelism packages/testkit/src/providers.canary.test.ts packages/testkit/src/release-watch.canary.test.ts",
+      "bun run vitest run --no-file-parallelism packages/testkit/src/providers.canary.test.ts packages/testkit/src/release-watch.canary.test.ts",
       { stdio: "inherit", env },
     );
   } finally {

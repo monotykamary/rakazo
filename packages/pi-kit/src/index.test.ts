@@ -22,8 +22,8 @@ afterEach(() => {
 });
 
 describe("managed Pi kit", () => {
-  it("pins all five extensions and the runtime", () => {
-    expect(PI_KIT_PACKAGES).toHaveLength(5);
+  it("pins all six extensions and the runtime", () => {
+    expect(PI_KIT_PACKAGES).toHaveLength(6);
     for (const { version } of PI_KIT_PACKAGES) expect(version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(PI_RUNTIME_VERSION).toBe("0.85.1");
   });

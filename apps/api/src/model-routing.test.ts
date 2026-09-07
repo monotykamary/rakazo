@@ -24,6 +24,11 @@ function fixture() {
     { id: "fallback", provider: "provider-b", preferences: [] },
   ];
   const tx = {
+    user: {
+      findUnique: vi.fn(async () => ({
+        modelVisibility: { hide: [] as Array<{ provider: string; model?: string }> },
+      })),
+    },
     userModelCredential: {
       findMany: vi.fn(async (args: { where: { id: { in: string[] } } }) =>
         credentials.filter((row) => args.where.id.in.includes(row.id)),
@@ -88,6 +93,51 @@ describe("model routing settings", () => {
     );
     expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    });
+  });
+  it.each([{ provider: "provider-a", model: "model-a" }, { provider: "provider-b" }])(
+    "rejects hidden primary and fallback routing targets without changing saved preferences: %j",
+    async (rule) => {
+      const f = fixture();
+      f.tx.user.findUnique.mockResolvedValue({ modelVisibility: { hide: [rule] } });
+      await expect(
+        setModelRouting(f.prisma, actor, { credentialId: "primary", routing }, catalog),
+      ).rejects.toMatchObject({ code: "BAD_REQUEST", message: expect.stringContaining("hidden") });
+      expect(f.tx.spaceModelPreference.upsert).not.toHaveBeenCalled();
+      expect(
+        await setModelRouting(f.prisma, actor, { credentialId: "primary", routing: null }, catalog),
+      ).toBeNull();
+    },
+  );
+  it("cannot bypass hidden routing validation with an explicitly configured custom connection", async () => {
+    const f = fixture();
+    f.tx.userModelCredential.findMany.mockResolvedValue([
+      { id: "primary", provider: "openai-compatible", preferences: [{ modelId: "custom-model" }] },
+    ] as never);
+    f.tx.user.findUnique.mockResolvedValue({
+      modelVisibility: { hide: [{ provider: "openai-compatible", model: "custom-model" }] },
+    });
+    const client = createRouterClient(
+      createRouter({
+        prisma: f.prisma,
+        secrets: {},
+        sandbox: {},
+        home: {},
+        events: {},
+        jobs: {},
+      } as unknown as RouterDeps),
+      { context: { actor } },
+    );
+    await expect(
+      client.models.setRouting({
+        credentialId: "primary",
+        routing: { ...routing, credentialIds: ["primary"], modelId: "custom-model", fallbacks: [] },
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: expect.stringContaining("hidden") });
+    expect(f.tx.spaceModelPreference.upsert).not.toHaveBeenCalled();
+    expect(f.tx.user.findUnique).toHaveBeenCalledWith({
+      where: { id: actor.userId },
+      select: { modelVisibility: true },
     });
   });
   it("reads only the actor's scoped preference", async () => {

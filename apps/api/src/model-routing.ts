@@ -1,12 +1,14 @@
 import { ORPCError } from "@orpc/server";
 import {
   type Actor,
+  assertModelVisible,
   type ModelCatalogEntry,
+  ModelHiddenError,
   type ModelRouting,
   ModelRoutingSchema,
   OPENAI_COMPATIBLE_PROVIDER_ID,
 } from "@rakazo/contracts";
-import { Prisma, type PrismaClient } from "@rakazo/db";
+import { getModelVisibility, Prisma, type PrismaClient } from "@rakazo/db";
 import { withSerializableRetry } from "./serializable-retry.js";
 
 export async function getModelRouting(
@@ -85,9 +87,16 @@ export async function setModelRouting(
           })),
           ...routing.fallbacks,
         ];
+        const visibility = await getModelVisibility(tx, actor);
         const identities = new Set<string>();
         for (const target of targets) {
           const credential = credentials.find((entry) => entry.id === target.credentialId)!;
+          try {
+            assertModelVisible(visibility, credential.provider, target.modelId);
+          } catch (error) {
+            if (!(error instanceof ModelHiddenError)) throw error;
+            throw new ORPCError("BAD_REQUEST", { message: error.message });
+          }
           const identity = JSON.stringify([target.credentialId, target.modelId]);
           if (identities.has(identity))
             throw new ORPCError("BAD_REQUEST", { message: "Duplicate model routing target." });

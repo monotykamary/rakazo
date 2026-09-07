@@ -288,6 +288,8 @@ function builtinParameters(tool: ConnectorTool) {
       worktree: Type.Optional(Type.Boolean()),
       worktreeId: Type.Optional(Type.String()),
       participantId: Type.Optional(Type.String()),
+      model: Type.Optional(Type.String()),
+      thinking: Type.Optional(Type.String()),
     });
   }
   if (tool.name === "spawn_bot") {

@@ -4,7 +4,7 @@ Copy one of the prompts below into a coding agent.
 
 ## Published images (no checkout)
 
-Prefer this when the user wants a running web UI with Docker only (no Node/pnpm clone).
+Prefer this when the user wants a running web UI with Docker only (no Node/Bun clone).
 
 ```text
 Set up Rakazo from published GHCR images and leave the web UI running.
@@ -63,7 +63,7 @@ Verification:
 When finished, report the directory path, effective Docker/Compose versions, configured options without secrets, app URL, health result, and how to stop without deleting volumes (`docker compose … down` without `-v`).
 ```
 
-## Local source checkout (pnpm)
+## Local source checkout (Bun)
 
 Use this for development, Docker sandboxes on the host, or Electron.
 
@@ -96,8 +96,8 @@ Generate the required application secrets with openssl; do not ask me to invent 
 
 Preflight:
 
-- Verify Git, Node.js, pnpm, Docker, and Docker Compose.
-- Use a Node.js version supported by `engines.node` and the pnpm version declared in `packageManager` in the root `package.json`. Prefer Corepack; if unavailable, use `npx --yes pnpm@<declared-version>` instead of globally installing a different version. Use that same executable for every later `pnpm` command, including verification and restart commands. Show the effective versions.
+- Verify Git, Node.js, Bun, Docker, and Docker Compose.
+- Use a Node.js version supported by `engines.node` and the Bun version declared in `packageManager` in the root `package.json`. Install that exact Bun release using its official installer if needed. Bun manages packages; keep Node as the runtime for Pi and development tools, without `--bun`. Show the effective versions.
 - Verify the Docker daemon is running.
 - Check whether `127.0.0.1` ports 5433, 3100, 5173, and 7091 are available. Resolve conflicts without touching unrelated workloads.
 
@@ -111,16 +111,16 @@ Setup:
 
    `docker compose --env-file .env -f infra/compose/docker-compose.yml up postgres -d`
 
-6. With the repository-declared pnpm version, run:
+6. With the repository-declared Bun version, run:
 
-   `pnpm install --frozen-lockfile`
-   `pnpm db:generate`
-   `pnpm db:migrate`
-   `pnpm sandbox:build`
+   `bun install --frozen-lockfile`
+   `bun run db:generate`
+   `bun run db:migrate`
+   `bun run sandbox:build`
 
    The first sandbox build may take several minutes because it installs a graphical Linux desktop and Chromium. If a command fails, diagnose the cause; do not bypass the lockfile or approve arbitrary dependency build scripts just to make progress.
 
-7. Start `pnpm dev` in a persistent terminal. Wait until the API, worker, web app, and sandbox supervisor are ready. Keep the process running for me.
+7. Start `bun run dev` in a persistent terminal. Wait until the API, worker, web app, and sandbox supervisor are ready. Keep the process running for me.
 
 Verification:
 
@@ -130,16 +130,16 @@ Verification:
 - If a model is connected, send a harmless test message and confirm the bot replies. If model setup was deferred, explicitly report that the stack is healthy but a first message will fail until a provider is configured; do not call the setup fully usable without that caveat.
 - Open the Agent computer pane and confirm the Docker computer reaches `running` and renders its desktop.
 - Open Integrations. If neither managed catalog was configured, confirm the view still offers Treg, HTTPS MCP, and OpenAPI sources. If one was configured, verify its app catalog loads without exposing any key or client secret.
-- Run `pnpm test` and `pnpm check`. Report failures with the relevant output; do not claim success if either fails.
-- If I requested Electron, leave the web stack running and then launch `pnpm --filter @rakazo/desktop dev`. Verify the shell loads the same app. Let me make the Docker-versus-This-Mac choice because This Mac grants bots access under my OS account.
+- Run `bun run test` and `bun run check`. Report failures with the relevant output; do not claim success if either fails.
+- If I requested Electron, leave the web stack running and then launch `bun run --filter @rakazo/desktop dev`. Verify the shell loads the same app. Let me make the Docker-versus-This-Mac choice because This Mac grants bots access under my OS account.
 
 When finished, report:
 
 - The absolute repository path and checked-out commit.
-- Effective Node, pnpm, Docker, and Docker Compose versions.
+- Effective Node, Bun, Docker, and Docker Compose versions.
 - Which model-auth path and optional integrations are configured, without revealing secrets.
 - App URL, health result, UI/message/computer verification, and test/type-check results.
 - Every workaround or remaining limitation.
 - How to restart the stack.
-- How to stop it without deleting data. Do not use `pnpm compose:down` for a normal stop because that script includes `-v` and removes Compose volumes; use a non-destructive stop/down command without `-v` and explain it.
+- How to stop it without deleting data. Do not use `bun run compose:down` for a normal stop because that script includes `-v` and removes Compose volumes; use a non-destructive stop/down command without `-v` and explain it.
 ```

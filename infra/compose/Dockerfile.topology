@@ -1,16 +1,18 @@
+FROM oven/bun:1.4.2-slim@sha256:cb3bbbb08e13a4a2ff400f24c7a2a1d5efa83f6ef8544d52d95a519631e2fc61 AS bun
+
 FROM node:24-bookworm@sha256:be23f54a88d34e8824c741b19b91064094f92c1c97b194144bfc8b50d67258e2
 
-RUN corepack enable
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 WORKDIR /app
 # Normalize modes: a restrictive host umask (e.g. 077 on hardened hosts) would otherwise
 # leave the copied tree unreadable to USER node at runtime.
 COPY --chmod=755 . .
-RUN pnpm install --frozen-lockfile
-RUN pnpm --filter @rakazo/db generate
-RUN RAKAZO_ALLOW_DEV_SECRETS=1 pnpm --filter @rakazo/web build
+RUN bun install --frozen-lockfile
+RUN bun run --filter @rakazo/db generate
+RUN RAKAZO_ALLOW_DEV_SECRETS=1 bun run --filter @rakazo/web build
 RUN install -d -m 750 -o node -g node /data /app/apps/web/node_modules/.vite-temp
 
 ENV NODE_ENV=production
 EXPOSE 3100 7091
 USER node
-CMD ["pnpm", "--filter", "@rakazo/api", "start"]
+CMD ["bun", "run", "--filter", "@rakazo/api", "start"]

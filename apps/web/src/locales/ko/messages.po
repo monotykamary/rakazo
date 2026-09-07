@@ -3751,8 +3751,14 @@ msgid "Your email address"
 msgstr "이메일 주소"
 
 #: src/pages/ModelSettingsOverlay.tsx:540
-msgid "Your key or subscription token is stored securely and is never shown here."
-msgstr "API 키 또는 구독 토큰은 서버에 안전하게 저장되며 이 화면에 다시 표시되지 않습니다."
+msgid "Stored securely. Never shown here."
+msgstr "안전하게 저장됩니다. 이 화면에 표시되지 않습니다."
+
+msgid "Create new Group"
+msgstr "새 그룹 만들기"
+
+msgid "Create new Space"
+msgstr "새 스페이스 만들기"
 
 #: src/pages/Auth.tsx:136
 msgid "Your name"

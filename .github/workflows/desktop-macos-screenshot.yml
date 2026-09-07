@@ -29,16 +29,17 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @rakazo/desktop build
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter @rakazo/desktop build
       - name: Capture native macOS setup window
         run: >-
-          pnpm --filter @rakazo/desktop exec playwright test
+          bun run --cwd apps/desktop playwright test
           --config e2e/playwright.config.ts setup.spec.ts
           --grep "first run asks whether to use a local or existing instance"
       - name: Upload native macOS setup screenshot

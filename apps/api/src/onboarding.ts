@@ -1,6 +1,10 @@
 import type { ComposioProvider } from "@rakazo/adapters";
 import type { Actor, MessageBlock } from "@rakazo/contracts";
-import { featuredConnectorProvidersMatch } from "@rakazo/core";
+import {
+  COORDINATOR_INSTRUCTIONS,
+  COORDINATOR_OPENING,
+  featuredConnectorProvidersMatch,
+} from "@rakazo/core";
 import {
   appendEventInTransaction,
   createThreadMessageInTransaction,
@@ -151,7 +155,13 @@ export async function startOnboarding(
   // Greeting only. The focus card is posted later via promptFocus so non-first
   // bots can wait ~10s for free typing, or skip if the user already engaged.
   await post(deps, target, [
-    { kind: "text", text: `Hey ${firstName}. Fresh start on my side, so I’ll keep this short.` },
+    {
+      kind: "text",
+      text:
+        bot.instructions === COORDINATOR_INSTRUCTIONS
+          ? COORDINATOR_OPENING
+          : `Hey ${firstName}. Fresh start on my side, so I’ll keep this short.`,
+    },
   ]);
 }
 
@@ -169,6 +179,7 @@ export async function promptFocus(
   botId: string,
 ): Promise<void> {
   const { bot, thread } = await requireBotThread(deps, actor, botId);
+  if (bot.instructions === COORDINATOR_INSTRUCTIONS) return;
   const target = { spaceId: actor.spaceId, botId: bot.id, threadId: thread.id };
   const blocks: MessageBlock[] = [
     {

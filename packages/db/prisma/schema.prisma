@@ -16,6 +16,7 @@ model User {
   createdAt                   DateTime                     @default(now())
   updatedAt                   DateTime                     @updatedAt
   avatarStyle                 String                       @default("robot")
+  modelVisibility             Json                         @default("{\"hide\":[]}")
   sessions                    Session[]
   accounts                    Account[]
   members                     Member[]
@@ -333,6 +334,7 @@ model Bot {
   archivedAt        DateTime?
   parentBotId       String?
   spawnKey          String?
+  temporary         Boolean           @default(false)
   memoryScope       String?
   parent            Bot?              @relation("BotChildren", fields: [parentBotId], references: [id], onDelete: SetNull)
   children          Bot[]             @relation("BotChildren")
@@ -357,11 +359,11 @@ model Bot {
   agentHome         AgentHome?
   browserProfile    BrowserProfile?
   artifacts         Artifact[]
-  usageRecords      UsageRecord[]
   tasks             Task[]
   runs              Run[]
   steeringMessages  SteeringMessage[]
   runtimeSessions RuntimeSession[]
+  runtimeModelPreferences RuntimeModelPreference[]
   runtimePlacements RuntimePlacement[]
   premoveQueues PremoveQueue[]
   mcpServers        BotMcpServer[]
@@ -467,6 +469,7 @@ model Thread {
   runs                        Run[]
   routines                    Routine[]
   runtimeSessions             RuntimeSession[]
+  runtimeModelPreferences     RuntimeModelPreference[]
   runtimePlacements           RuntimePlacement[]
   premoveQueues               PremoveQueue[]
 
@@ -576,6 +579,7 @@ model Run {
   usageRecords         UsageRecord[]
   steeringMessages     SteeringMessage[]
   externalMessage      ExternalMessage?
+  dispatchedWork       DispatchedWork?
 
   @@unique([spaceId, clientNonce])
   @@index([status, leaseExpiresAt])
@@ -588,6 +592,33 @@ model Run {
   @@index([threadId, status, createdAt])
   @@index([routineId])
   @@map("runs")
+}
+
+// Placement and parent routing for existing durable Task/Run work, not another job queue.
+model DispatchedWork {
+  id String @id @default(cuid())
+  spaceId String
+  userId String
+  parentBotId String
+  parentThreadId String
+  parentRunId String
+  workerBotId String @unique
+  taskId String @unique
+  runId String @unique
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
+  computerId String
+  homeKey String
+  projectPath String
+  worktreePath String?
+  tools String[]
+  requestKey String
+  leaseFence Int?
+  createdAt DateTime @default(now())
+
+  @@unique([spaceId, requestKey])
+  @@index([computerId, createdAt, id])
+  @@index([spaceId, parentBotId, createdAt])
+  @@map("dispatched_work")
 }
 
 model RuntimeSession {
@@ -603,6 +634,20 @@ model RuntimeSession {
 
   @@id([spaceId, threadId, botId])
   @@map("runtime_sessions")
+}
+
+model RuntimeModelPreference {
+  spaceId String
+  threadId String
+  thread Thread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  botId String
+  bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)
+  participantId String
+  selection Json
+  updatedAt DateTime @updatedAt
+
+  @@id([spaceId, threadId, botId, participantId])
+  @@map("runtime_model_preferences")
 }
 
 model RuntimePlacement {
@@ -994,8 +1039,9 @@ model UsageRecord {
   id           String   @id @default(cuid())
   spaceId      String
   space        Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  /// Historical attribution survives bot deletion; BotDeletion.id retains its name.
+  /// Deliberately no bot relation: neither cascade nor SetNull preserves spend attribution.
   botId        String?
-  bot          Bot?     @relation(fields: [botId], references: [id], onDelete: Cascade)
   userId       String
   runId        String?
   run          Run?     @relation(fields: [runId], references: [id], onDelete: SetNull)

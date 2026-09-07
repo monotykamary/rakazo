@@ -1,6 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
+import { realpathSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
+import { createRequire } from "node:module";
 import net from "node:net";
 import path from "node:path";
 import tls from "node:tls";
@@ -202,6 +204,21 @@ export default defineConfig(({ mode }) => {
       host: "127.0.0.1",
       port: webPort,
       strictPort: true,
+      fs: {
+        strict: true,
+        allow: [
+          path.resolve(import.meta.dirname, "../.."),
+          // Bun may link dependency assets outside the workspace into its cache.
+          path.join(
+            path.dirname(
+              realpathSync(
+                createRequire(import.meta.url).resolve("@fontsource-variable/geist/wght.css"),
+              ),
+            ),
+            "files",
+          ),
+        ],
+      },
       proxy: {
         "/api": { target: api, changeOrigin: true },
         "/rpc": { target: api, changeOrigin: true },

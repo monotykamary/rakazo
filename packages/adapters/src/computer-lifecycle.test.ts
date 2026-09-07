@@ -1109,7 +1109,7 @@ describe("computer provisioning", () => {
 });
 
 describe("computer execution leases", () => {
-  it("does not serialize dedicated computers", async () => {
+  it("tracks per-bot liveness on dedicated computers too", async () => {
     const prisma = leasePrisma({ scope: "dedicated" });
 
     await expect(
@@ -1118,9 +1118,12 @@ describe("computer execution leases", () => {
         runId: "run-1",
         botId: "bot-1",
       }),
-    ).resolves.toBeNull();
-    expect(prisma.updateManyAndReturn).not.toHaveBeenCalled();
-    expect(prisma.create).not.toHaveBeenCalled();
+    ).resolves.toEqual({ computerId: "computer-1", runId: "run-1", botId: "bot-1", fence: 1 });
+    expect(prisma.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ computerId: "computer-1", botId: "bot-1" }),
+      }),
+    );
   });
 
   it("fences one Team bot's screen and expires only the matching lease", async () => {

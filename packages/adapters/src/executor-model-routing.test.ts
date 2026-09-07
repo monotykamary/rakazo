@@ -8,6 +8,11 @@ function fixture() {
     { id: "connection-two", userId: "user", secretId: "secret-two", provider: "openai-compatible" },
   ];
   const prisma = {
+    user: {
+      findUnique: vi.fn(async () => ({
+        modelVisibility: { hide: [] as Array<{ provider: string; model?: string }> },
+      })),
+    },
     spaceModelPreference: {
       findFirst: vi.fn(async () => ({
         id: "preference",
@@ -57,6 +62,27 @@ describe("executor routing authority", () => {
     expect(f.prisma.userModelCredential.findMany).toHaveBeenCalledWith({
       where: { userId: "user", id: { in: ["connection-one", "connection-two"] } },
     });
+  });
+  it("excludes hidden configured fallbacks without changing or rerouting the primary", async () => {
+    const f = fixture();
+    f.prisma.user.findUnique.mockResolvedValue({
+      modelVisibility: { hide: [{ provider: f.input.provider, model: "backup" }] },
+    });
+    const routing = await resolveExecutorModelRouting(f.input);
+    expect(routing?.fallbacks).toEqual([]);
+    expect(routing?.pool.map((target) => target.model.id)).toEqual(["model", "model"]);
+    expect(f.prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { id: "user" },
+      select: { modelVisibility: true },
+    });
+  });
+  it("fails for a hidden primary rather than choosing an allowed fallback", async () => {
+    const f = fixture();
+    f.prisma.user.findUnique.mockResolvedValue({
+      modelVisibility: { hide: [{ provider: f.input.provider, model: "model" }] },
+    });
+    await expect(resolveExecutorModelRouting(f.input)).rejects.toThrow("hidden");
+    expect(f.resolve).not.toHaveBeenCalled();
   });
   it("does not override explicit bot choices", async () => {
     const f = fixture();

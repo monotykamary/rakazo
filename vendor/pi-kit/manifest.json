@@ -35,6 +35,13 @@
       "filename": "pi-multiprovider-0.2.10-7f54b802745f.tgz",
       "sha256": "7f54b802745f41d4858608f4f7c7fa3f17f379233440a9f854b31da53cbd6a7f",
       "baseCommit": "a598e0198d03e36b0c0d7c73f4b082115bb373d9"
+    },
+    {
+      "name": "pi-hide-providers",
+      "version": "0.1.18",
+      "filename": "pi-hide-providers-0.1.18-d26f6fc7825e.tgz",
+      "sha256": "d26f6fc7825e60708cf5579e9bc2654310132c2281a0c9845fd06247da81dc29",
+      "baseCommit": "9c055d0916f661a198287f60d501180c7595d67c"
     }
   ]
 }

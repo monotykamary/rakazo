@@ -17,10 +17,10 @@ body:
       label: Which step fails?
       options:
         - Docker Compose / Postgres
-        - pnpm install
-        - pnpm db:generate or db:migrate
-        - pnpm sandbox:build
-        - pnpm dev (API, worker, web, or supervisor)
+        - bun install
+        - bun run db:generate or db:migrate
+        - bun run sandbox:build
+        - bun run dev (API, worker, web, or supervisor)
         - Health check / first login
         - Other
     validations:
@@ -30,7 +30,7 @@ body:
     id: command
     attributes:
       label: Command you ran
-      placeholder: pnpm sandbox:build
+      placeholder: bun run sandbox:build
     validations:
       required: true
 

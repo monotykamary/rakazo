@@ -388,7 +388,7 @@ describe("createJobReconciler", () => {
         orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
         where: {
           trigger: "bot_message",
-          status: { in: ["completed", "failed"] },
+          status: { in: ["completed", "failed", "cancelled"] },
           botOutcomeReturnedAt: null,
         },
       }),

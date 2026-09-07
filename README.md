@@ -83,8 +83,8 @@ the `https://` address.
 
 ## Local development (source checkout)
 
-You need Node.js 22.22.2 or newer in the 22.x line, Node.js 24.x, or Node.js 26+;
-pnpm 9; and Docker. Node.js 23.x and 25.x are not supported.
+You need Node.js 24.x or 26+, Bun 1.4.2, and Docker. Bun manages packages;
+Node still runs Pi and the development tools. See [workspace installation](docs/workspace-install.md).
 
 ```bash
 git clone https://github.com/elie222/rakazo.git
@@ -108,11 +108,11 @@ a written agreement for hosted resale.
 
 ```bash
 docker compose --env-file .env -f infra/compose/docker-compose.yml up postgres -d
-pnpm install
-pnpm db:generate
-pnpm db:migrate
-pnpm sandbox:build
-pnpm dev
+bun install --frozen-lockfile
+bun run db:generate
+bun run db:migrate
+bun run sandbox:build
+bun run dev
 ```
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173), create an account, connect a model, and create
@@ -128,7 +128,7 @@ The Electron and Expo apps are clients of the same Rakazo API used by the web ap
 With the development stack running, launch Electron with:
 
 ```bash
-pnpm --filter @rakazo/desktop dev
+bun run --filter @rakazo/desktop dev
 ```
 
 On first run the desktop app asks whether to run Rakazo on this computer or connect to an existing
@@ -136,7 +136,7 @@ server. **This computer** installs and starts the published images with Docker C
 files as `infra/compose/install-images.sh`) under the app's data directory, so Docker Desktop,
 OrbStack, or Docker Engine must be installed; the app links to them when it is not. Installed
 builds pin the image tag to their own version; unpackaged builds pull `edge`. Developers running
-`pnpm dev` should pick **Existing instance** with `http://127.0.0.1:5173` instead. Public servers
+`bun run dev` should pick **Existing instance** with `http://127.0.0.1:5173` instead. Public servers
 must use HTTPS; HTTP is accepted only for loopback and private LAN addresses (not link-local). The
 app verifies Rakazo's health endpoint before saving, and later launches go straight to that
 instance. The stack keeps running after the app quits; **Stop Local Stack** in the application
@@ -169,11 +169,11 @@ docs/       architecture, operations, and release guides
 Common checks:
 
 ```bash
-pnpm lint
-pnpm check
-pnpm test
-pnpm test:integration
-pnpm test:e2e
+bun run lint
+bun run check
+bun run test
+bun run test:integration
+bun run test:e2e
 ```
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the development workflow and test matrix.

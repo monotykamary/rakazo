@@ -4,7 +4,7 @@ Rakazo keeps a continuous conversation per bot. Isolated Pi coding-agent RPC wor
 
 ## Architecture
 
-- `packages/pi-kit` pins Pi and content-addressed Fabric, Fovea, queue-steer, retry, and multiprovider archives. Startup validates installed identities. Runtime never installs extensions or resolves sibling checkouts.
+- `packages/pi-kit` pins Pi and content-addressed Fabric, Fovea, queue-steer, retry, multiprovider, and hide-providers archives. Startup validates installed identities. Runtime never installs extensions or resolves sibling checkouts.
 - The supervisor launches an unprivileged, networkless worker with a read-only image, bounded scratch space, and one private bridge socket. Computer files and credentials are not mounted into that worker.
 - Backend model and tool brokers preserve connection ownership, computer placement, approval latches, and run leases. Fabric core overrides never fall back to host tools. Managed provider authority stays sealed across reloads.
 - Fovea indexes bounded, authorized computer snapshots. Explicit roots retain isolated observation state; project configuration and plugins are not loaded from those snapshots.
@@ -28,14 +28,22 @@ After an eligible idle period, Fabric deterministically compacts before the next
 
 Retry activity and cancellation are retained. Final broker failures stop worker retries: an exhausted request must not be replayed by another retry owner. Same-provider credential pools use multiprovider; different models/providers require explicit fallback targets. Fallback never replays after output starts. Scheduler health is bounded process-local state; restarting a backend resets that health, not the saved routing policy. Credentials remain backend-only.
 
+## Model visibility
+
+Advanced model settings share one account-scoped preference across web, Electron, and mobile: `models.getVisibility()` and `models.setVisibility({ hide: [{ provider, model? }] })`. Omitting `model` hides a whole provider. `models.listForVisibility()` returns the existing public catalog for hide/unhide controls; ordinary `models.list()` excludes hidden entries. Rules use exact, case-sensitive canonical identities, with at most 100 rules, 100-character providers, and 300-character model IDs. Wildcards are rejected rather than passing network input to upstream's backtracking glob matcher.
+
+Hiding is reversible preference, not credential revocation. It neither deletes connections nor rewrites saved model pins. A pin that becomes hidden remains the requested model and reports an actionable unhide/change failure. Backend selection, worker delegation, and request/fallback validation use the owning user's preference; there is no global API registry patch or project-config override. Changes apply before the next model request, not retroactively to an in-flight response.
+
+The pinned `pi-hide-providers` 0.1.18 TypeScript extension loads through Pi's SDK in each isolated worker. Its config context is restricted to fresh host-owned scratch, and the host replaces `/hide-models` with a settings-only error before binding so worker-local add/remove/reset commands cannot claim to change account preferences. That empty local config is intentional: workers see `rakazo-broker`, not real provider identities. Canonical backend checks—not the extension's notification-only `model_select` handler—enforce account visibility. Unmanaged upstream behavior is tested separately against its packaged predicate and actual headless lookup/list hooks.
+
 ## Distribution and checks
 
-Use Node 24 LTS (or a supported newer even-numbered release) and the repository's pinned pnpm version.
+Use Node 24 LTS (or a supported newer even-numbered release) and the repository's pinned Bun version (package manager only; Pi still runs on Node).
 
-- `pnpm pi:kit:check`: validate installed identities and archive integrity/public exports.
-- `pnpm sandbox:build`: build both the computer and isolated agent images for local development.
+- `bun run pi:kit:check`: validate installed identities and archive integrity/public exports.
+- `bun run sandbox:build`: build both the computer and isolated agent images for local development.
 - Compose builds or selects the matching agent image automatically. Production updates include the supervisor. Existing deployments must recreate the updater when adopting this topology so its service list includes the supervisor.
-- `pnpm pi:kit:vendor`: developer-only archive refresh after building and testing the sibling packages; update the lockfile and pinned identities together.
+- `bun run pi:kit:vendor`: developer-only archive refresh after building and testing the sibling packages; update the lockfile and pinned identities together. Use `bun run pi:kit:vendor --only pi-hide-providers` to refresh only that archive and preserve all other hashes.
 
 ## Acceptance ledger
 
@@ -45,6 +53,7 @@ Use Node 24 LTS (or a supported newer even-numbered release) and the repository'
 | Shared queue state and write-ahead acknowledgment | Offline tests and real PostgreSQL concurrency/recovery probes passed |
 | Managed Fabric, all eight core overrides, Fovea snapshots, exact recall, and deterministic idle compaction | Installed-kit conformance probes passed |
 | Same-provider rotation and explicit fallback | Scheduler tests and real offline SDK/HTTP probes passed |
+| Account model visibility | Exact-rule safety, authenticated owner/catalog isolation, hidden pin/worker/fallback rejection, and extracted upstream headless/conformance probes passed; clean-install six-package resolution, artifact checks, and actual managed-kit headless loading passed |
 | Shared queue/Flow/routing UI | App type checks, controller tests, browser control probes, and CI screenshot-test registration passed |
 | Clean installation and migrations | Standalone kit resolution and clean PostgreSQL migration deployment passed |
 | Atomic secret-preserving edits and delegation reservations | Raw-byte, concurrent-process, approval-boundary, reservation-race, and actual-executor PostgreSQL probes passed |

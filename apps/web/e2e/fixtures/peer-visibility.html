@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Peer and visibility</title></head>
+<body><div id="root"></div><script type="module">
+import { i18n } from "@lingui/core";
+import { I18nProvider } from "@lingui/react";
+import { createElement as h, useState } from "react";
+import { createRoot } from "react-dom/client";
+import { ModelVisibilitySettings } from "../../src/components/ModelVisibilitySettings.tsx";
+import { WorkerModelSettings } from "../../src/components/WorkerModelSettings.tsx";
+import { PeerMessagesOverlay } from "../../src/pages/PeerMessagesOverlay.tsx";
+import { BotSettings } from "../../src/pages/shell/bot-panel.tsx";
+import "../../src/styles.css";
+
+i18n.load("en", {}); i18n.activate("en");
+function Fixture() {
+  const [peer, setPeer] = useState(false);
+  const [botSettings, setBotSettings] = useState(false);
+  return h("main", {className:"mx-auto max-w-xl p-6 bg-background text-foreground"},
+    h("button", {type:"button",onClick:() => setPeer(true)}, "Open peer"),
+    h("button", {type:"button",onClick:() => setBotSettings(true)}, "Open bot settings"),
+    botSettings && h(BotSettings, {bot:{id:"bot",name:"Chief",title:"",description:"",color:"currentColor",status:"idle",computerMode:"off",memoryScope:"isolated",autoSpeak:false,modelProvider:"local",modelId:"hidden-model",thinkingLevel:"high"},memoryProviderConfigured:false,onSkillsChange:()=>undefined,onExport:async()=>undefined,onClear:()=>undefined,onSave:async(patch)=>{window.savedBotPatch=patch;}}),
+    h(ModelVisibilitySettings, {onChanged:() => undefined}),
+    h(WorkerModelSettings, {botId:"bot",threadId:"thread",participantId:"worker"}),
+    peer && h(PeerMessagesOverlay, {botId:"bot",botName:"Chief",botColor:"currentColor",peerBotId:"peer",peerBotName:"Research",peerBotColor:"currentColor",onClose:() => setPeer(false)}));
+}
+createRoot(document.getElementById("root")).render(h(I18nProvider, {i18n}, h(Fixture)));
+</script></body></html>

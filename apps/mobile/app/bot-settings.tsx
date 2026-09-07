@@ -3,7 +3,9 @@ import {
   BOT_DESCRIPTION_MAX_LENGTH,
   BOT_NAME_MAX_LENGTH,
   BOT_TITLE_MAX_LENGTH,
+  type Bot,
   type ComputerMode,
+  type ModelSelection,
   normalizeCreateBotProfile,
 } from "@rakazo/contracts";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
@@ -11,13 +13,15 @@ import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { BotAvatar } from "../components/bot-avatar";
 import { ComputerModePicker } from "../components/computer-mode-picker";
+import { ModelSelectionControl } from "../components/ModelSelectionControl";
 import { type MobileBot, rpc } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { useMobileTokens } from "../lib/native";
 
-type BotSettingsRecord = MobileBot & {
-  description?: string;
-};
+type BotSettingsRecord = MobileBot &
+  Pick<Bot, "modelProvider" | "modelId" | "thinkingLevel"> & {
+    description?: string;
+  };
 
 export default function BotSettingsScreen() {
   const tokens = useMobileTokens();
@@ -98,6 +102,28 @@ export default function BotSettingsScreen() {
             <BotAvatar color={color} identity={bot.id} size={64} status={bot.status} />
           </View>
         ) : null}
+        {bot && (
+          <ModelSelectionControl
+            botId={bot.id}
+            initial={
+              bot.modelProvider && bot.modelId
+                ? {
+                    provider: bot.modelProvider,
+                    modelId: bot.modelId,
+                    thinkingLevel: bot.thinkingLevel ?? null,
+                  }
+                : null
+            }
+            onSaved={(selection: ModelSelection | null) =>
+              setBot({
+                ...bot,
+                modelProvider: selection?.provider ?? null,
+                modelId: selection?.modelId ?? null,
+                thinkingLevel: selection?.thinkingLevel ?? null,
+              })
+            }
+          />
+        )}
         <Text style={{ color: tokens.mutedForeground, fontSize: 14 }}>{t("Name")}</Text>
         <TextInput
           value={name}

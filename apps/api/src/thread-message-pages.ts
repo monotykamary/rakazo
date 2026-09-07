@@ -4,6 +4,47 @@ import type { Prisma, PrismaClient } from "@rakazo/db";
 
 type MessageDb = PrismaClient | Prisma.TransactionClient;
 
+export async function loadPeerMessagePage(
+  prisma: MessageDb,
+  {
+    threadId,
+    peerBotId,
+    before,
+    pageSize,
+  }: {
+    threadId: string;
+    peerBotId: string;
+    before?: number;
+    pageSize: number;
+  },
+): Promise<ThreadMessagePage> {
+  const rows = await prisma.message.findMany({
+    where: {
+      threadId,
+      ...(before === undefined ? {} : { seq: { lt: before } }),
+      OR: [
+        { blocks: { array_contains: [{ kind: "bot_message_sent", toBotId: peerBotId }] } },
+        { blocks: { array_contains: [{ kind: "bot_message_received", fromBotId: peerBotId }] } },
+      ],
+    },
+    orderBy: { seq: "desc" },
+    take: pageSize + 1,
+  });
+  const page = rows.slice(0, pageSize).reverse();
+  return {
+    threadId,
+    messages: page.map((row) => ({
+      ...toThreadMessage(row),
+      blocks: (row.blocks as MessageBlock[]).filter(
+        (block) =>
+          (block.kind === "bot_message_sent" && block.toBotId === peerBotId) ||
+          (block.kind === "bot_message_received" && block.fromBotId === peerBotId),
+      ),
+    })),
+    olderCursor: rows.length > pageSize ? (page[0]?.seq ?? null) : null,
+  };
+}
+
 export async function loadMessagePage(
   prisma: MessageDb,
   threadId: string,

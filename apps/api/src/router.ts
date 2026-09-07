@@ -47,7 +47,9 @@ import {
   McpOAuthBroker,
   type MemoryProviderResolver,
   mapScratchpadItem,
+  matchesDeploymentModel,
   modelCredentialDto,
+  modelsForRequest,
   type PiOAuthLogins,
   planLiveConnectionSync,
   prepareApiInstall,
@@ -67,6 +69,7 @@ import {
   scriptedCatalogEntry,
   serializeModelSecret,
   takeoverLeaseMs,
+  thinkingLevelFor,
   toComputerRef,
   touchRunningComputer,
   verifyMcpInstall,
@@ -75,9 +78,11 @@ import type { Auth } from "@rakazo/auth";
 import {
   type Actor,
   appContract,
+  assertModelVisible,
   type ComputerStatus,
   type McpServer,
   type Me,
+  ModelHiddenError,
   OPENAI_COMPATIBLE_PROVIDER_ID,
   type SpaceNavigation,
 } from "@rakazo/contracts";
@@ -106,6 +111,7 @@ import {
   InvalidSpaceNameError,
   IsolationError,
   issueMessagingLinkCode,
+  listDispatchedWork,
   lockOwnedGroup,
   newestModelCredentialOrder,
   newestVoiceCredentialOrder,
@@ -137,6 +143,12 @@ import {
   updateMemoryProviderDefaultScope,
 } from "./memory-provider-config.js";
 import { getModelRouting, setModelRouting } from "./model-routing.js";
+import { getModelSelection, setWorkerModelSelection } from "./model-selection.js";
+import {
+  getOwnerModelVisibility,
+  setOwnerModelVisibility,
+  visibleModelCatalog,
+} from "./model-visibility.js";
 import {
   chooseFocus,
   dismissFocus,
@@ -160,6 +172,7 @@ import {
   isPeerRun,
   loadAllMessages,
   loadMessagePage,
+  loadPeerMessagePage,
   shouldForwardPeerThreadEvent,
 } from "./thread-message-pages.js";
 import {
@@ -598,13 +611,98 @@ export function createRouter(deps: RouterDeps) {
       }),
     },
     models: {
+      getVisibility: authed.models.getVisibility.handler(({ context }) =>
+        getOwnerModelVisibility(deps.prisma, context.actor),
+      ),
+      setVisibility: authed.models.setVisibility.handler(({ context, input }) =>
+        setOwnerModelVisibility(deps.prisma, context.actor, input),
+      ),
+      listForVisibility: authed.models.listForVisibility.handler(async () => [
+        ...listPiCatalog(),
+        scriptedCatalogEntry,
+      ]),
+      getSelection: authed.models.getSelection.handler(({ context, input }) =>
+        getModelSelection(
+          deps.prisma,
+          context.actor,
+          input,
+          deps.env.deploymentModelKey
+            ? { provider: deps.env.defaultProvider, model: deps.env.defaultModel }
+            : null,
+        ),
+      ),
+      setWorkerSelection: authed.models.setWorkerSelection.handler(({ context, input }) =>
+        setWorkerModelSelection(
+          deps.prisma,
+          context.actor,
+          input,
+          async (selection) => {
+            const credential = await findModelCredential(
+              deps.prisma,
+              context.actor,
+              selection.provider,
+            );
+            const deployment = deps.env.deploymentModelKey
+              ? { provider: deps.env.defaultProvider, model: deps.env.defaultModel }
+              : null;
+            if (
+              !credential &&
+              !matchesDeploymentModel(selection.provider, selection.modelId, deployment)
+            )
+              throw new ORPCError("BAD_REQUEST", { message: "Connect this model provider first" });
+            const secret = credential
+              ? await deps.prisma.secret.findFirst({
+                  where: { id: credential.secretId, userId: context.actor.userId, spaceId: null },
+                  select: { ciphertext: true },
+                })
+              : null;
+            if (credential && !secret)
+              throw new ORPCError("BAD_REQUEST", { message: "Model connection unavailable" });
+            try {
+              const connection =
+                credential && secret
+                  ? modelCredentialDto(
+                      credential,
+                      deps.secrets.load(secret.ciphertext, credential.secretId),
+                    )
+                  : undefined;
+              const model = modelsForRequest(
+                {
+                  model: {
+                    provider: selection.provider,
+                    id: selection.modelId,
+                    baseUrl: connection?.baseUrl,
+                    reasoning: connection?.reasoning,
+                  },
+                },
+                selection.provider,
+              ).getModel(selection.provider, selection.modelId);
+              if (
+                !model ||
+                (selection.thinkingLevel !== null &&
+                  thinkingLevelFor(model, selection.thinkingLevel) !== selection.thinkingLevel)
+              )
+                throw new Error("Unsupported selection");
+            } catch {
+              throw new ORPCError("BAD_REQUEST", {
+                message: "Model or reasoning level is unavailable for this connection",
+              });
+            }
+          },
+          deps.env.deploymentModelKey
+            ? { provider: deps.env.defaultProvider, model: deps.env.defaultModel }
+            : null,
+        ),
+      ),
       getRouting: authed.models.getRouting.handler(({ context, input }) =>
         getModelRouting(deps.prisma, context.actor, input.credentialId),
       ),
       setRouting: authed.models.setRouting.handler(({ context, input }) =>
         setModelRouting(deps.prisma, context.actor, input, listPiCatalog()),
       ),
-      list: authed.models.list.handler(async () => [...listPiCatalog(), scriptedCatalogEntry]),
+      list: authed.models.list.handler(({ context }) =>
+        visibleModelCatalog(deps.prisma, context.actor, [...listPiCatalog(), scriptedCatalogEntry]),
+      ),
       credentials: authed.models.credentials.handler(async ({ context }) => {
         const rows = await deps.prisma.userModelCredential.findMany({
           where: { userId: context.actor.userId },
@@ -821,20 +919,43 @@ export function createRouter(deps: RouterDeps) {
           });
           if (!section) throw new IsolationError();
         }
+        if (
+          input.modelProvider &&
+          input.modelId &&
+          (input.modelProvider !== existing.modelProvider || input.modelId !== existing.modelId)
+        ) {
+          try {
+            assertModelVisible(
+              await getOwnerModelVisibility(deps.prisma, context.actor),
+              input.modelProvider,
+              input.modelId,
+            );
+          } catch (error) {
+            if (!(error instanceof ModelHiddenError)) throw error;
+            throw new ORPCError("BAD_REQUEST", { message: error.message });
+          }
+        }
         if (input.modelProvider && input.modelId) {
           const credential = await findModelCredential(
             deps.prisma,
             context.actor,
             input.modelProvider,
           );
-          if (!credential) {
+          const deploymentPin = matchesDeploymentModel(
+            input.modelProvider,
+            input.modelId,
+            deps.env.deploymentModelKey
+              ? { provider: deps.env.defaultProvider, model: deps.env.defaultModel }
+              : null,
+          );
+          if (!credential && !deploymentPin) {
             throw new ORPCError("BAD_REQUEST", { message: "Connect that model provider first" });
           }
           const knownModels = [...listPiCatalog(), scriptedCatalogEntry];
           const inCatalog = knownModels.some(
             (item) => item.provider === input.modelProvider && item.id === input.modelId,
           );
-          if (!inCatalog && credential.defaultModel !== input.modelId) {
+          if (!inCatalog && !deploymentPin && credential?.defaultModel !== input.modelId) {
             throw new ORPCError("BAD_REQUEST", { message: "Unknown model for that provider" });
           }
         }
@@ -1184,6 +1305,14 @@ export function createRouter(deps: RouterDeps) {
       }),
       messages: authed.threads.messages.handler(async ({ context, input }) => {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        if (input.peerBotId) {
+          return loadPeerMessagePage(deps.prisma, {
+            threadId: target.threadId,
+            peerBotId: input.peerBotId,
+            before: input.before,
+            pageSize: THREAD_MESSAGE_PAGE_SIZE,
+          });
+        }
         return loadMessagePage(
           deps.prisma,
           target.threadId,
@@ -2064,7 +2193,7 @@ export function createRouter(deps: RouterDeps) {
             threadId: bot.thread.id,
             botId: bot.id,
             type: "routine.created",
-            payload: { name: row.name },
+            payload: { routineId: row.id, name: row.name },
           });
         }
         if (row.active && row.nextRunAt) {
@@ -2169,7 +2298,7 @@ export function createRouter(deps: RouterDeps) {
             threadId: bot.thread.id,
             botId: bot.id,
             type: "routine.updated",
-            payload: { routineId: row.id, active: row.active },
+            payload: { routineId: row.id, name: row.name, active: row.active },
           });
         }
         const scheduleNeedsSync =
@@ -2926,6 +3055,11 @@ export function createRouter(deps: RouterDeps) {
           return { ok: true as const };
         }),
       },
+    },
+    work: {
+      list: authed.work.list.handler(({ context, input }) =>
+        listDispatchedWork(deps.prisma, context.actor, input.botId),
+      ),
     },
     onboarding: {
       start: authed.onboarding.start.handler(async ({ context, input }) => {

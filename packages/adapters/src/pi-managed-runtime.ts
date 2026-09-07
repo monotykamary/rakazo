@@ -6,9 +6,15 @@ import type {
   AgentRuntimeEvent,
   AgentSteeringMessage,
 } from "@rakazo/adapter-kit";
-import { QueueControlCommandSchema, type QueueControlResult } from "@rakazo/contracts";
+import {
+  ModelSelectionSchema,
+  ModelSelectionStatusSchema,
+  QueueControlCommandSchema,
+  type QueueControlResult,
+} from "@rakazo/contracts";
 import { DELEGATION_TOOL_NAMES } from "./builtin-tools.js";
 import { boundedExecutionEvidence } from "./pi-execution-evidence.js";
+import { applyManagedModelSelection } from "./pi-model-handoff.js";
 import { ModelBridge } from "./pi-rpc-model-bridge.js";
 import { type AgentProcessHost, type JsonRecord, record } from "./pi-rpc-protocol.js";
 import { RunAuthority, ToolBridge } from "./pi-rpc-tool-bridge.js";
@@ -163,6 +169,8 @@ export class ManagedPiRuntime implements AgentRuntime {
       agentId: string,
       delivery?: AgentSteeringMessage,
     ): Promise<unknown> => {
+      if (!request.tools.some((tool) => tool.name === "run_subagent"))
+        throw new Error("Delegation is outside this participant's tool scope");
       if (args.worktree === true)
         return {
           error:
@@ -185,6 +193,28 @@ export class ManagedPiRuntime implements AgentRuntime {
               worktreeId: args.worktreeId as string | undefined,
             }
           : (previous?.placement as AgentRunRequest["placement"]);
+      const explicitSelection = args.model !== undefined || args.thinking !== undefined;
+      if (explicitSelection && !request.resolveParticipantModel)
+        throw new Error("Worker model selection requires backend authorization");
+      let childModel =
+        request.resolveParticipantModel && args.model === undefined
+          ? await authority.serialize(() => request.resolveParticipantModel!(childId))
+          : undefined;
+      if (explicitSelection) {
+        const current = childModel ?? request.model;
+        const model =
+          typeof args.model === "string" ? args.model : `${current.provider}/${current.id}`;
+        const separator = model.indexOf("/");
+        if (separator < 1) throw new Error("Worker model must use provider/model identity");
+        const selected = ModelSelectionSchema.parse({
+          provider: model.slice(0, separator),
+          modelId: model.slice(separator + 1),
+          thinkingLevel: args.thinking ?? current.thinkingLevel ?? null,
+        });
+        childModel = await authority.serialize(() =>
+          request.resolveParticipantModel!(childId, selected),
+        );
+      }
       let placement = request.placement;
       let executeTool = request.executeTool;
       if (requestedPlacement) {
@@ -238,6 +268,8 @@ export class ManagedPiRuntime implements AgentRuntime {
           {
             ...request,
             runId: childId,
+            model: childModel ?? request.model,
+            modelRouting: childModel ? undefined : request.modelRouting,
             prompt: task,
             sourceMessageId: delivery?.messageId ?? delivery?.id ?? request.sourceMessageId,
             currentTurnImages: delivery?.images,
@@ -706,7 +738,25 @@ export class ManagedPiRuntime implements AgentRuntime {
       );
       if (ready.version !== 1 || ready.runtimeVersion !== "0.85.1" || ready.nativeTools !== false)
         throw new Error("Unsafe or incompatible Pi worker");
-      await rpc.request("get_state", {}, signal);
+      const previousSelection = ModelSelectionStatusSchema.safeParse(
+        request.session?.restore ? record(request.session.restore).modelSelection : undefined,
+      );
+      await request.assertModelAllowed?.(request.model.provider, request.model.id);
+      await applyManagedModelSelection({
+        requested: {
+          provider: request.model.provider,
+          modelId: request.model.id,
+          thinkingLevel: request.model.thinkingLevel ?? null,
+        },
+        thinkingLevel: thinkingLevelFor(broker.model, request.model.thinkingLevel),
+        previous: previousSelection.success ? previousSelection.data.effective : null,
+        established: Boolean(request.session?.restore || history.length),
+        modelId: broker.model.id,
+        rpc: (command, data) => rpc!.request(command, data, signal),
+        checkpoint: async (status) => {
+          await bridge!.request("model_selection", status, signal);
+        },
+      });
       bootstrapped = true;
       await boundary("idle");
       if (request.queueOnly && !rootPrompted) {

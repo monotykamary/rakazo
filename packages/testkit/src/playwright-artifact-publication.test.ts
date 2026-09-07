@@ -251,9 +251,9 @@ else:
         const changedPaths = path.join(root, "changed-paths.txt");
         write(changedPaths, "apps/web/src/example.tsx\n");
         const comment = execFileSync(
-          "pnpm",
+          "bun",
           [
-            "exec",
+            "run",
             "tsx",
             "packages/testkit/src/cli/build-playwright-pr-screenshot-comment.ts",
             path.join(checkout, ".tmp/playwright-dashboard/screenshots/review.json"),

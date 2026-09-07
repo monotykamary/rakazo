@@ -118,6 +118,7 @@ export async function createApp(
     prisma?: PrismaClient;
     realtime?: RealtimeFanout;
     sandbox?: SandboxProvider;
+    runtime?: AgentRuntime;
     composio?: ComposioProvider;
     pipedream?: ManagedConnectorProvider;
     messaging?: MessagingSurface;
@@ -130,6 +131,7 @@ export async function createApp(
     prisma: prismaOverride,
     realtime: realtimeOverride,
     sandbox: sandboxOverride,
+    runtime: runtimeOverride,
     composio: composioOverride,
     pipedream: pipedreamOverride,
     messaging: messagingOverride,
@@ -260,7 +262,8 @@ export async function createApp(
   void stack.composio?.warmDirectory().catch(() => undefined);
   void pipedream?.warmDirectory?.().catch(() => undefined);
   const runtime =
-    env.agentRuntime === "scripted"
+    runtimeOverride ??
+    (env.agentRuntime === "scripted"
       ? new ScriptedAgentRuntime()
       : new PiAgentRuntime({
           host: env.sandboxSupervisorToken
@@ -269,7 +272,7 @@ export async function createApp(
                 token: env.sandboxSupervisorToken,
               })
             : undefined,
-        });
+        }));
   const notifications = new ExpoPushProvider(env.dataDir);
   const auth = createAuth(prisma, {
     secret: env.authSecret,

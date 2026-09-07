@@ -2,6 +2,7 @@ import * as z from "zod";
 import { BotSecretDestination } from "./bot-secrets.js";
 import { Id } from "./ids.js";
 import { McpTransportSchema } from "./mcp.js";
+import { WorkLinkSchema } from "./work.js";
 
 export const ProductEventType = z.enum([
   "thread.message.created",
@@ -92,6 +93,12 @@ export type SecretAskPurpose = z.infer<typeof SecretAskPurpose>;
 
 export const MessageBlock = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("text"), text: z.string() }),
+  z.object({
+    kind: z.literal("routine_change"),
+    routineId: Id,
+    name: z.string().min(1),
+    action: z.enum(["created", "updated"]),
+  }),
   z.object({
     kind: z.literal("card"),
     lines: z.array(z.object({ k: z.string(), v: z.string() })),
@@ -253,6 +260,7 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     toBotId: Id,
     toBotName: z.string(),
     text: z.string(),
+    work: WorkLinkSchema.optional(),
     intent: BotMessageIntent.optional(),
   }),
   z.object({
@@ -262,7 +270,7 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     fromBotName: z.string(),
     text: z.string(),
     intent: BotMessageIntent.optional(),
-    /** Sender-thread echo this delivery answers, when applicable. */
+    /** Paired outbound receipt in the sender’s thread, not this delivery’s reply target. */
     returnToMessageId: Id.optional(),
     /** Links in a bot-started chain; absent when a person started it. */
     hop: z.number().int().nonnegative().optional(),

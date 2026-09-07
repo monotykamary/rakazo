@@ -195,7 +195,10 @@ describe("schedule tool persistence", () => {
       }),
     );
     expect(append).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "routine.created", payload: { name: "Morning joke" } }),
+      expect.objectContaining({
+        type: "routine.created",
+        payload: { routineId: "routine-1", name: "Morning joke" },
+      }),
     );
     expect(enqueue).toHaveBeenCalledOnce();
   });

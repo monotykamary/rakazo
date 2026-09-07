@@ -7,7 +7,7 @@ or production data is used.
 Run a baseline from a local Conductor workspace with Docker available:
 
 ```sh
-pnpm perf:desktop -- --label=before
+bun run perf:desktop --label=before
 ```
 
 The command uses `CONDUCTOR_PORT` and the next allocated port for its web and API servers. Reports
@@ -15,28 +15,28 @@ are written to `.context/performance/<label>.json` and `.md`, which remain local
 Override the number of cold and warm launch samples when iterating:
 
 ```sh
-pnpm perf:desktop -- --label=quick --samples=2
+bun run perf:desktop --label=quick --samples=2
 ```
 
 To compare packaged assets with remote asset loading under a deterministic network delay:
 
 ```bash
-pnpm perf:desktop -- --label=remote-80ms --asset-delay=80 --remote-renderer
-pnpm perf:desktop -- --label=bundled-80ms --asset-delay=80 --skip-build
+bun run perf:desktop --label=remote-80ms --asset-delay=80 --remote-renderer
+bun run perf:desktop --label=bundled-80ms --asset-delay=80 --skip-build
 ```
 
 On macOS, compare destroy/recreate against the retained warm window with:
 
 ```bash
-pnpm perf:desktop -- --label=reopen-destroyed --disable-warm-window
-pnpm perf:desktop -- --label=reopen-retained --skip-build
+bun run perf:desktop --label=reopen-destroyed --disable-warm-window
+bun run perf:desktop --label=reopen-retained --skip-build
 ```
 
 After changing one performance-sensitive behavior, record another report and compare them:
 
 ```sh
-pnpm perf:desktop -- --label=after
-pnpm perf:compare .context/performance/before.json .context/performance/after.json
+bun run perf:desktop --label=after
+bun run perf:compare .context/performance/before.json .context/performance/after.json
 ```
 
 ## Definitions

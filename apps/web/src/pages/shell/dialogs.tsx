@@ -248,6 +248,7 @@ export function DeleteBotDialog({
           <label className="flex cursor-pointer gap-3 rounded-lg border border-border p-3">
             <input
               type="radio"
+              className="mt-0.5 size-4 shrink-0 accent-primary"
               name="delete-memory"
               checked={!deleteMemories}
               onChange={() => setDeleteMemories(false)}
@@ -264,6 +265,7 @@ export function DeleteBotDialog({
           <label className="flex cursor-pointer gap-3 rounded-lg border border-border p-3">
             <input
               type="radio"
+              className="mt-0.5 size-4 shrink-0 accent-primary"
               name="delete-memory"
               checked={deleteMemories}
               onChange={() => setDeleteMemories(true)}

@@ -77,8 +77,8 @@ async function main() {
     process.env.SIGNUP_ALLOWLIST = "";
     process.env.CI = "1";
 
-    execSync("pnpm --filter @rakazo/db generate", { stdio: "inherit", env: process.env });
-    execSync("pnpm --filter @rakazo/db exec prisma migrate deploy", {
+    execSync("bun run --filter @rakazo/db generate", { stdio: "inherit", env: process.env });
+    execSync("bun run prisma migrate deploy", {
       stdio: "inherit",
       env: process.env,
       cwd: path.resolve("packages/db"),
@@ -89,6 +89,7 @@ async function main() {
         "packages/testkit/src/pi-offline.postgres.test.ts",
         "packages/testkit/src/atomic-file-edit.postgres.test.ts",
         "packages/testkit/src/executor-runtime.postgres.test.ts",
+        "packages/testkit/src/dispatched-work.postgres.test.ts",
         "packages/db/src/premove-queue.postgres.test.ts",
         "apps/api/src/model-routing.postgres.test.ts",
         "packages/testkit/src/computer-approval.postgres.test.ts",
@@ -135,7 +136,7 @@ async function main() {
         const suiteUrl = new URL(databaseUrl);
         suiteUrl.pathname = `/${database}`;
         try {
-          await runProcess("pnpm", ["exec", "vitest", "run", suite], {
+          await runProcess("bun", ["run", "vitest", "run", suite], {
             ...process.env,
             DATABASE_URL: suiteUrl.toString(),
             REALTIME_DATABASE_URL: suiteUrl.toString(),
@@ -210,11 +211,11 @@ async function main() {
     try {
       try {
         await runProcess(
-          "pnpm",
+          "bun",
           [
-            "--filter",
-            "@rakazo/web",
-            "exec",
+            "run",
+            "--cwd",
+            "apps/web",
             "playwright",
             "test",
             ...(e2eSpec ? [e2eSpec] : []),

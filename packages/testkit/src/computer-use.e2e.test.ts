@@ -26,7 +26,7 @@ describeLive("real model and sandbox computer journey", () => {
       "OPENROUTER_API_KEY",
       "COMPUTER_E2E_MODEL",
     ]) {
-      if (!process.env[key]) throw new Error(`${key} is required for pnpm test:computer`);
+      if (!process.env[key]) throw new Error(`${key} is required for bun run test:computer`);
     }
     dataDir = mkdtempSync(path.join(tmpdir(), "rakazo-computer-e2e-"));
     const { createApp } = await import("../../../apps/api/src/app.ts");

@@ -15,6 +15,15 @@ import {
   spawnBot,
 } from "./child-bots.js";
 
+const sourceRun = {
+  id: "run-1",
+  botId: "parent-1",
+  spaceId: "workspace-1",
+  userId: "user-1",
+  threadId: "parent-thread",
+  sourceMessageId: null,
+};
+
 const context = {
   operationId: "test",
   traceId: "test",
@@ -41,6 +50,9 @@ describe("spawned bot creation", () => {
       id: "child-1",
       name: "Scout",
       title: "Venue researcher",
+      userId: "user-1",
+      parentBotId: "parent-1",
+      archivedAt: null,
       thread: { id: "thread-1" },
     });
     const enqueue = vi.fn().mockResolvedValue(undefined);
@@ -51,7 +63,15 @@ describe("spawned bot creation", () => {
         findUnique,
       },
       deploymentSettings: { findUnique: vi.fn().mockResolvedValue(null) },
-      run: { findUnique: vi.fn().mockResolvedValue({ id: "child-run-1" }) },
+      run: {
+        findFirst: vi.fn().mockResolvedValue(sourceRun),
+        findUnique: vi.fn().mockResolvedValue({
+          id: "child-run-1",
+          botId: "child-1",
+          userId: "user-1",
+          taskId: "task-1",
+        }),
+      },
       $transaction: vi.fn().mockRejectedValue(new Error("unique spawn key")),
     } as unknown as PrismaClient;
 
@@ -59,6 +79,7 @@ describe("spawned bot creation", () => {
       {
         prisma,
         jobs: { enqueue } as unknown as JobPublisher,
+        events: { notify: vi.fn() },
       },
       {
         spawnedBy: {
@@ -91,6 +112,7 @@ describe("spawned bot creation", () => {
       name: "Scout",
       title: "Venue researcher",
       threadId: "thread-1",
+      task: { runId: "child-run-1", taskId: "task-1" },
     });
     expect(enqueue).toHaveBeenCalledOnce();
   });
@@ -108,8 +130,11 @@ describe("spawned bot creation", () => {
 
     const result = await spawnBot(
       {
-        prisma: {} as PrismaClient,
+        prisma: {
+          run: { findFirst: vi.fn().mockResolvedValue(sourceRun) },
+        } as unknown as PrismaClient,
         jobs: { enqueue: vi.fn() } as unknown as JobPublisher,
+        events: { notify: vi.fn() },
       },
       {
         spawnedBy: {

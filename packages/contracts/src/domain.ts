@@ -1,5 +1,9 @@
 import * as z from "zod";
 import { ThreadMessageSchema } from "./events.js";
+import { ThinkingLevelSchema } from "./model-selection.js";
+
+export { type ThinkingLevel, ThinkingLevelSchema } from "./model-selection.js";
+
 import { Id, MemoryScope, RunStatus, SandboxKind } from "./ids.js";
 import { McpHeadersSchema, McpRemoteEndpointSchema, McpTransportSchema } from "./mcp.js";
 
@@ -11,17 +15,6 @@ export type MemoryScopeValue = z.infer<typeof MemoryScopeSchema>;
 
 export const AvatarStyleSchema = z.enum(["robot", "organic"]);
 export type AvatarStyle = z.infer<typeof AvatarStyleSchema>;
-
-export const ThinkingLevelSchema = z.enum([
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-]);
-export type ThinkingLevel = z.infer<typeof ThinkingLevelSchema>;
 
 export const AGENT_SECRET_NAME_PATTERN = /^[A-Z_][A-Z0-9_]{0,63}$/;
 
@@ -1008,7 +1001,7 @@ export type ServerUpdateMode = z.infer<typeof ServerUpdateModeSchema>;
  * What Settings should render for a deployment owner.
  * `sidecar`: Check / Update / Rollback through the updater sidecar.
  * `compose`: Compose install without a reachable sidecar; show host pull/up commands.
- * `source`: git checkout / `pnpm dev`; show terminal commands, never a fake Apply.
+ * `source`: git checkout / `bun run dev`; show terminal commands, never a fake Apply.
  */
 export const ServerUpdateInstallKindSchema = z.enum(["sidecar", "compose", "source"]);
 export type ServerUpdateInstallKind = z.infer<typeof ServerUpdateInstallKindSchema>;

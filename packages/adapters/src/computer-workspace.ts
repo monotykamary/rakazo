@@ -111,7 +111,9 @@ export async function checkpointRunComputerWorkspace(
   computer: ComputerRef,
   context: AdapterContext,
 ): Promise<string | undefined> {
-  if (computerRecord.scope !== "team" || computer.kind === "docker") {
+  // Dedicated computers can also host temporary project workers. Their liveness
+  // leases must protect them from a peer's browser-quiescing workspace export.
+  if (computer.kind === "docker") {
     return checkpointAndRecordComputerWorkspace(deps, computerRecord, computer, context);
   }
   const now = new Date();

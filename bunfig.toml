@@ -1,0 +1,7 @@
+[install]
+# Keep native mobile and desktop dependencies isolated, like the previous layout.
+linker = "isolated"
+
+[run]
+# Package management changes; Node remains the runtime for Pi, tsx and Vitest.
+bun = false

@@ -359,10 +359,10 @@ export const COMPOSE_LOCAL_BUILD_UPGRADE_COMMANDS = [
 /** @deprecated Prefer {@link COMPOSE_PULL_UPGRADE_COMMANDS}; kept for call-site clarity in tests. */
 export const COMPOSE_MANUAL_UPGRADE_COMMANDS = COMPOSE_PULL_UPGRADE_COMMANDS;
 
-/** Exact host commands from docs/self-host.md for source / `pnpm dev` installs. */
+/** Exact host commands from docs/self-host.md for source / `bun run dev` installs. */
 export const SOURCE_MANUAL_UPGRADE_COMMANDS = [
   "git pull",
-  "pnpm --filter @rakazo/db migrate",
+  "bun run --filter @rakazo/db migrate",
   "# Restart the API and worker processes",
 ] as const;
 

@@ -24,6 +24,30 @@ import {
 } from "./thread-events.js";
 
 describe("thread event reduction", () => {
+  it("retains and deduplicates live routine activity against persisted message identity", () => {
+    const change = event({
+      type: "routine.updated",
+      seq: 8,
+      payload: {
+        routineId: "routine",
+        name: "Daily report",
+        messageId: "routine-message",
+        messageSeq: 3,
+      },
+    });
+    expect(isThreadSnapshotEvent(change)).toBe(true);
+    const once = reduceThreadSnapshot(snapshot([]), change);
+    const twice = reduceThreadSnapshot(once, change);
+    expect(twice?.messages).toHaveLength(1);
+    expect(twice?.messages[0]).toMatchObject({
+      id: "routine-message",
+      seq: 3,
+      role: "system",
+      blocks: [
+        { kind: "routine_change", routineId: "routine", name: "Daily report", action: "updated" },
+      ],
+    });
+  });
   it("shows a committed direct send as queued before its snapshot refresh returns", () => {
     const initial = snapshot([message("user-1", [{ kind: "text", text: "Continue" }], 4)]);
 

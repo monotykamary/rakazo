@@ -74,7 +74,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/compose/Dockerfile
-    command: ["bash", "-lc", "pnpm --filter @rakazo/db exec prisma migrate deploy && pnpm --filter @rakazo/api start"]
+    command: ["bash", "-lc", "bun run --cwd packages/db prisma migrate deploy && bun run --filter @rakazo/api start"]
     env_file:
       - ../../.env
     environment:
@@ -109,7 +109,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/compose/Dockerfile
-    command: ["pnpm", "--filter", "@rakazo/worker", "start"]
+    command: ["bun", "run", "--filter", "@rakazo/worker", "start"]
     env_file:
       - ../../.env
     environment:
@@ -143,7 +143,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/compose/Dockerfile
-    command: ["pnpm", "--filter", "@rakazo/web", "preview", "--host", "0.0.0.0", "--port", "5173"]
+    command: ["bun", "run", "--filter", "@rakazo/web", "preview", "--host", "0.0.0.0", "--port", "5173"]
     environment:
       API_PROXY_TARGET: http://api:3100
       SCREEN_PROXY_SECRET: ${SCREEN_PROXY_SECRET:?Set SCREEN_PROXY_SECRET in .env}

@@ -54,6 +54,11 @@ export function projectMessages(
     const payload = asRecord(event.payload);
     const createdAt =
       typeof event.createdAt === "string" ? event.createdAt : event.createdAt.toISOString();
+    const routine = routineChangeMessage(event);
+    if (routine) {
+      messages.push(routine);
+      continue;
+    }
     if (event.type === "thread.message.created") {
       clearLive(event);
       const role = (payload.role as ThreadMessage["role"]) ?? "bot";
@@ -157,6 +162,53 @@ export function projectMessages(
     }
   }
   return messages;
+}
+
+export function routineChangeBlock(event: {
+  type: string;
+  payload?: unknown;
+}): Extract<MessageBlock, { kind: "routine_change" }> | null {
+  if (event.type !== "routine.created" && event.type !== "routine.updated") return null;
+  const payload = asRecord(event.payload);
+  if (
+    typeof payload.routineId !== "string" ||
+    !payload.routineId.trim() ||
+    typeof payload.name !== "string" ||
+    !payload.name.trim()
+  )
+    return null;
+  return {
+    kind: "routine_change",
+    routineId: payload.routineId,
+    name: payload.name,
+    action: event.type === "routine.created" ? "created" : "updated",
+  };
+}
+
+export function routineChangeMessage(event: {
+  type: string;
+  payload?: unknown;
+  id: string;
+  threadId: string;
+  seq: number;
+  createdAt: Date | string;
+  botId?: string | null;
+  runId?: string | null;
+}): ThreadMessage | null {
+  const block = routineChangeBlock(event);
+  if (!block) return null;
+  const payload = asRecord(event.payload);
+  return {
+    id: typeof payload.messageId === "string" ? payload.messageId : event.id,
+    threadId: event.threadId,
+    seq: typeof payload.messageSeq === "number" ? payload.messageSeq : event.seq,
+    role: "system",
+    blocks: [block],
+    botId: event.botId ?? undefined,
+    runId: event.runId ?? undefined,
+    createdAt:
+      typeof event.createdAt === "string" ? event.createdAt : event.createdAt.toISOString(),
+  };
 }
 
 export function progressMessageId(event: { runId?: string | null; id?: string }): string {

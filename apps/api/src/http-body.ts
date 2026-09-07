@@ -32,7 +32,7 @@ export async function readBoundedBody(request: Request, maxBytes: number): Promi
   }
 }
 
-function cancelBody(body: { cancel(): Promise<void> } | null): void {
+export function cancelBody(body: { cancel(): Promise<void> } | null): void {
   try {
     void body?.cancel().catch(() => undefined);
   } catch {

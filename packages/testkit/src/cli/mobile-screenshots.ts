@@ -1,7 +1,9 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { serve } from "@hono/node-server";
 import {
   ComposioEmulator,
@@ -27,13 +29,19 @@ type App = { request: (input: string, init?: RequestInit) => Response | Promise<
 
 async function main() {
   process.chdir(ROOT);
+  // Recording is never part of the default screenshot run. Use a disposable emulator only.
+  const notificationDemo = process.env.RAKAZO_NOTIFICATION_DEMO === "1";
+  const serial = process.env.ANDROID_SERIAL ?? "";
+  if (notificationDemo && !/^emulator-\d+$/.test(serial)) {
+    throw new Error("Notification demos require ANDROID_SERIAL for a dedicated emulator");
+  }
   configureEnvironment();
   await rm(REPORT_DIR, { recursive: true, force: true });
   await rm(DATA_DIR, { recursive: true, force: true });
   await mkdir(REPORT_DIR, { recursive: true });
   await mkdir(DATA_DIR, { recursive: true });
 
-  execFileSync("pnpm", ["--filter", "@rakazo/db", "exec", "prisma", "migrate", "deploy"], {
+  execFileSync("bun", ["run", "prisma", "migrate", "deploy"], {
     cwd: path.join(ROOT, "packages", "db"),
     env: process.env,
     stdio: "inherit",
@@ -71,6 +79,7 @@ async function main() {
     port: API_PORT,
   });
 
+  let deviceControl: Server | undefined;
   try {
     await waitForHealth(`${HOST_API_URL}/health`, 15_000);
     await runProcess(
@@ -101,11 +110,49 @@ async function main() {
       ],
       process.env,
     );
+    if (notificationDemo) {
+      const control = await startDeviceControlServer(serial);
+      deviceControl = control.server;
+      await runProcess(
+        "maestro",
+        [
+          "--device",
+          serial,
+          "test",
+          "--no-ansi",
+          "--flatten-debug-output",
+          "--debug-output",
+          path.join(REPORT_DIR, "debug", "notification-demo"),
+          "--test-output-dir",
+          path.join(REPORT_DIR, "notification-demo"),
+          "--format",
+          "HTML",
+          "--output",
+          path.join(REPORT_DIR, "notification-demo.html"),
+          "-e",
+          `RAKAZO_SCREENSHOT_EMAIL=${EMAIL}`,
+          "-e",
+          `RAKAZO_SCREENSHOT_PASSWORD=${PASSWORD}`,
+          "-e",
+          `RAKAZO_SCREENSHOT_BOT_ID=${fixture.botId}`,
+          "-e",
+          `RAKAZO_NOTIFICATION_VIDEO=${path.join(REPORT_DIR, "notification-demo")}`,
+          "-e",
+          `RAKAZO_EXPAND_NOTIFICATIONS_URL=${control.url}`,
+          path.join(ROOT, "apps", "mobile", ".maestro", "notification-demo.yaml"),
+        ],
+        process.env,
+      );
+    }
     await writeFile(
       path.join(REPORT_DIR, "summary.json"),
       `${JSON.stringify({ ok: true }, null, 2)}\n`,
     );
   } finally {
+    if (deviceControl) {
+      deviceControl.closeAllConnections();
+      await new Promise<void>((resolve) => deviceControl!.close(() => resolve()));
+    }
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
       server.closeAllConnections();
@@ -113,6 +160,50 @@ async function main() {
     await handles.stop().catch(() => undefined);
     await rm(DATA_DIR, { recursive: true, force: true });
   }
+}
+
+/** Host-only, per-run capability; never accept a command or device from a request. */
+export async function startDeviceControlServer(
+  serial: string,
+): Promise<{ server: Server; url: string }> {
+  if (!/^emulator-\d+$/.test(serial)) throw new Error("A dedicated emulator serial is required");
+  const route = `/expand-notifications/${randomUUID()}`;
+  let busy = false;
+  let command: ReturnType<typeof execFile> | undefined;
+  const server = createServer((req, res) => {
+    res.setHeader("cache-control", "no-store");
+    if (req.method !== "GET" || req.url !== route || req.headers.origin) {
+      res.writeHead(404).end();
+      return;
+    }
+    if (busy) {
+      res.writeHead(429).end();
+      return;
+    }
+    busy = true;
+    command = execFile(
+      "adb",
+      ["-s", serial, "shell", "cmd", "statusbar", "expand-notifications"],
+      { timeout: 5_000, maxBuffer: 64 * 1024 },
+      (error) => {
+        busy = false;
+        command = undefined;
+        if (res.destroyed) return;
+        res.writeHead(error ? 500 : 200, { "content-type": "text/plain; charset=utf-8" });
+        res.end(error ? "Could not expand notifications" : "ok");
+      },
+    );
+  });
+  server.once("close", () => {
+    if (busy) command?.kill();
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Device control did not bind");
+  return { server, url: `http://127.0.0.1:${address.port}${route}` };
 }
 
 function configureEnvironment() {
@@ -287,7 +378,9 @@ async function waitForHealth(url: string, timeoutMs: number) {
   throw new Error(`Mobile screenshot API did not become ready: ${lastError}`);
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

@@ -43,11 +43,13 @@ export function CommandPalette({
   onOpenChange,
   bots,
   onSelectBot,
+  onOpenQueue,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   bots: Bot[];
   onSelectBot: (botId: string) => void;
+  onOpenQueue?: () => void;
 }) {
   const [search, setSearch] = useState("");
   const [modKey, setModKey] = useState("⌘");
@@ -106,6 +108,18 @@ export function CommandPalette({
           <CommandEmpty>
             <Trans>No bots</Trans>
           </CommandEmpty>
+          {onOpenQueue &&
+            (!search.trim() || t`Queue`.toLowerCase().includes(search.trim().toLowerCase())) && (
+              <CommandGroup>
+                <CommandItem
+                  value="queue"
+                  onSelect={() => {
+                    onOpenQueue();
+                    onOpenChange(false);
+                  }}
+                >{t`Queue`}</CommandItem>
+              </CommandGroup>
+            )}
           <CommandGroup>
             {filteredBots.map((bot, index) => {
               const subtitle = botSubtitle(bot);

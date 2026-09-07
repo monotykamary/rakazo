@@ -333,6 +333,13 @@ test("sign-in, spawn, and stop work in the shell", async ({ page }, testInfo) =>
     if (message.type() === "error") browserErrors.push(message.text());
   });
   page.on("requestfailed", (request) => {
+    // Auth cancels this optional request on mode changes and unmount; retain all other failures.
+    if (
+      request.method() === "GET" &&
+      new URL(request.url()).pathname === "/api/auth/capabilities" &&
+      request.failure()?.errorText === "net::ERR_ABORTED"
+    )
+      return;
     failedRequests.push(
       `${request.method()} ${request.url()} ${request.failure()?.errorText ?? ""}`,
     );
@@ -371,6 +378,10 @@ test("sign-in, spawn, and stop work in the shell", async ({ page }, testInfo) =>
   await expect(composer).toHaveAttribute("placeholder", "Message Chief");
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
   await composer.fill("Use the newer report and keep the answer short.");
+  await page.keyboard.press("Tab");
+  await expect(
+    page.getByTestId("composer-bar").getByRole("button", { name: "Voice", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeFocused();
   await page.keyboard.press("Enter");

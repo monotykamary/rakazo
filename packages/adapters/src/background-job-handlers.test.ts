@@ -101,6 +101,7 @@ describe("createBackgroundJobHandlers", () => {
 
   it("resolves the deployment model when no user credential is configured", async () => {
     const prisma = {
+      user: { findUnique: vi.fn(async () => ({ modelVisibility: { hide: [] } })) },
       spaceModelPreference: { findFirst: vi.fn(async () => null) },
       userModelCredential: { findFirst: vi.fn(async () => null) },
       deploymentSettings: { findUnique: vi.fn(async () => null) },
@@ -120,10 +121,15 @@ describe("createBackgroundJobHandlers", () => {
       thinkingLevel: null,
       oauth: undefined,
     });
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      select: { modelVisibility: true },
+    });
   });
 
   it("preserves a configured local model when resolving background compaction", async () => {
     const prisma = {
+      user: { findUnique: vi.fn(async () => ({ modelVisibility: { hide: [] } })) },
       spaceModelPreference: { findFirst: vi.fn(async () => null) },
       userModelCredential: { findFirst: vi.fn(async () => null) },
       deploymentSettings: {
@@ -146,6 +152,10 @@ describe("createBackgroundJobHandlers", () => {
       baseUrl: undefined,
       thinkingLevel: null,
       oauth: undefined,
+    });
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      select: { modelVisibility: true },
     });
   });
 });

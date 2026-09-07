@@ -10,6 +10,7 @@ import {
   isApprovalAskBlock,
   isSecretAskBlock,
   messagingChannelId,
+  routineChangeBlock,
   sanitizeJsonValue,
 } from "@rakazo/core";
 import { getLogger } from "@rakazo/logging";
@@ -1169,7 +1170,23 @@ export async function appendEventInTransaction(
   });
   await assertRunCanWriteHistory(tx, input.runId);
   // Unpaired UTF-16 surrogates (e.g. a split emoji high half) are invalid JSON for Postgres.
-  const payload = sanitizeJsonValue(input.payload);
+  let payload = sanitizeJsonValue(input.payload);
+  const routine = routineChangeBlock({ type: input.type, payload });
+  if (routine) {
+    const message = await createThreadMessageInTransaction(tx, {
+      threadId: input.threadId,
+      role: "system",
+      blocks: [routine],
+      botId: input.botId,
+      runId: input.runId,
+      markUnread: false,
+    });
+    payload = {
+      ...(payload as Record<string, unknown>),
+      messageId: message.id,
+      messageSeq: message.seq,
+    };
+  }
   return tx.event.create({
     data: {
       spaceId: input.spaceId,

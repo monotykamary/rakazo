@@ -7,6 +7,7 @@ import type {
   Me,
   ModelCatalogEntry,
   ModelCredential,
+  ModelVisibility,
   ThinkingLevel,
   VoiceInfo,
 } from "@rakazo/contracts";
@@ -15,7 +16,9 @@ import {
   BOT_DESCRIPTION_MAX_LENGTH,
   BOT_NAME_MAX_LENGTH,
   BOT_TITLE_MAX_LENGTH,
+  isModelHidden,
 } from "@rakazo/contracts";
+import { connectedModelOptions, modelOptionKey, parseModelOptionKey } from "@rakazo/core";
 import {
   BotAvatar,
   Button,
@@ -233,6 +236,7 @@ export function BotSettings({
   const [thinkingLevel, setThinkingLevel] = useState(bot.thinkingLevel ?? "");
   const [credentials, setCredentials] = useState<ModelCredential[]>([]);
   const [catalog, setCatalog] = useState<ModelCatalogEntry[]>([]);
+  const [visibility, setVisibility] = useState<ModelVisibility>({ hide: [] });
   const [me, setMe] = useState<Me | null>(null);
   const [modelMetaReady, setModelMetaReady] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -242,10 +246,16 @@ export function BotSettings({
       .voices({})
       .then(setVoices)
       .catch(() => setVoices([]));
-    void Promise.all([rpc.models.credentials(), rpc.models.list(), rpc.me()])
-      .then(([nextCredentials, nextCatalog, nextMe]) => {
+    void Promise.all([
+      rpc.models.credentials(),
+      rpc.models.list(),
+      rpc.me(),
+      rpc.models.getVisibility(),
+    ])
+      .then(([nextCredentials, nextCatalog, nextMe, nextVisibility]) => {
         setCredentials(nextCredentials);
         setCatalog(nextCatalog);
+        setVisibility(nextVisibility);
         setMe(nextMe);
         // Only mark ready on success — a failed catalog load must not clear
         // an existing thinkingLevel override on save.
@@ -254,44 +264,9 @@ export function BotSettings({
       .catch(() => undefined);
   }, []);
 
-  const connectedOptions: Array<{
-    key: string;
-    provider: string;
-    modelId: string;
-    label: string;
-  }> = [];
-  const seenOptions = new Set<string>();
-  for (const credential of credentials) {
-    const providerModels = catalog.filter(
-      (entry) => entry.provider === credential.provider && !entry.placeholder,
-    );
-    const credentialInCatalog = Boolean(
-      credential.modelId && providerModels.some((entry) => entry.id === credential.modelId),
-    );
-    // Catalog providers expand to every model for that connection. Free-form
-    // credentials (model id not in the catalog) stay a single connected pair.
-    const options =
-      credential.modelId && !credentialInCatalog
-        ? [
-            {
-              key: modelOptionKey(credential.provider, credential.modelId),
-              provider: credential.provider,
-              modelId: credential.modelId,
-              label: `${credential.label} · ${credential.modelId}`,
-            },
-          ]
-        : providerModels.map((entry) => ({
-            key: modelOptionKey(entry.provider, entry.id),
-            provider: entry.provider,
-            modelId: entry.id,
-            label: `${entry.providerName ?? entry.provider} · ${entry.label}`,
-          }));
-    for (const option of options) {
-      if (seenOptions.has(option.key)) continue;
-      seenOptions.add(option.key);
-      connectedOptions.push(option);
-    }
-  }
+  const connectedOptions = connectedModelOptions(credentials, catalog).filter(
+    (option) => !isModelHidden(visibility, option.provider, option.modelId),
+  );
 
   const effectiveProvider = modelKey
     ? parseModelOptionKey(modelKey)?.provider
@@ -410,8 +385,8 @@ export function BotSettings({
                 : ""}
             </NativeSelectOption>
             {modelKey && !connectedOptions.some((option) => option.key === modelKey) ? (
-              <NativeSelectOption value={modelKey}>
-                {parseModelOptionKey(modelKey)?.modelId ?? modelKey}
+              <NativeSelectOption value={modelKey} disabled>
+                {parseModelOptionKey(modelKey)?.modelId ?? modelKey} · {t`Unavailable`}
               </NativeSelectOption>
             ) : null}
             {connectedOptions.map((option) => (
@@ -526,9 +501,12 @@ export function BotSettings({
               // preserve the stored override if models.list failed or is still loading.
               ...(modelMetaReady
                 ? {
-                    thinkingLevel: thinkingOptions.length
-                      ? ((thinkingLevel || null) as ThinkingLevel | null)
-                      : null,
+                    thinkingLevel:
+                      thinkingOptions.length ||
+                      (selected?.provider === bot.modelProvider &&
+                        selected?.modelId === bot.modelId)
+                        ? ((thinkingLevel || null) as ThinkingLevel | null)
+                        : null,
                   }
                 : {}),
             })
@@ -554,10 +532,6 @@ export function BotSettings({
   );
 }
 
-function modelOptionKey(provider: string, modelId: string) {
-  return `${provider}::${modelId}`;
-}
-
 function thinkingLevelLabel(level: ThinkingLevel) {
   if (level === "xhigh") return t`Extra high`;
   if (level === "low") return t`Low`;
@@ -566,12 +540,6 @@ function thinkingLevelLabel(level: ThinkingLevel) {
   if (level === "minimal") return t`Minimal`;
   if (level === "max") return t`Max`;
   return `${level.slice(0, 1).toUpperCase()}${level.slice(1)}`;
-}
-
-function parseModelOptionKey(key: string) {
-  const separator = key.indexOf("::");
-  if (separator <= 0) return null;
-  return { provider: key.slice(0, separator), modelId: key.slice(separator + 2) };
 }
 
 function catalogLabel(

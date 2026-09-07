@@ -1,3 +1,4 @@
+import { type BackgroundJobHandlers, runContinueJob } from "@rakazo/adapter-kit";
 import type { PrismaClient } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -7,6 +8,8 @@ import {
   returnBotMessageOutcome,
 } from "./bot-messages.js";
 import type { ExecutorDeps } from "./executor.js";
+import { createJobReconciler } from "./job-reconciler.js";
+import { InMemoryJobQueue } from "./wakeup.js";
 
 const run = {
   id: "run-1",
@@ -557,14 +560,14 @@ describe("automatic outcome return", () => {
     );
     expect(harness.tx.run.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ status: { in: ["completed", "failed"] } }),
+        where: expect.objectContaining({ status: { in: ["completed", "failed", "cancelled"] } }),
       }),
     );
     expect(harness.enqueue).toHaveBeenCalledOnce();
     expect(harness.deps.prisma.run.updateMany).toHaveBeenCalledWith({
       where: {
         id: run.id,
-        status: { in: ["completed", "failed"] },
+        status: { in: ["completed", "failed", "cancelled"] },
         botOutcomeReturnedAt: null,
       },
       data: { botOutcomeReturnedAt: expect.any(Date) },
@@ -650,5 +653,124 @@ describe("automatic outcome return", () => {
     expect(returned).toBe(true);
     expect(harness.enqueue).not.toHaveBeenCalled();
     expect(harness.deps.prisma.run.updateMany).toHaveBeenCalled();
+  });
+});
+
+describe("durable dispatch across publisher shutdown", () => {
+  it("recovers a missed wake in a new queue host and keeps control work responsive", async () => {
+    vi.useFakeTimers();
+    const stoppedPublisher = new InMemoryJobQueue();
+    await stoppedPublisher.close();
+    const restarted = new InMemoryJobQueue();
+    let finishProject!: () => void;
+    const projectGate = new Promise<void>((resolve) => {
+      finishProject = resolve;
+    });
+    try {
+      const h = deps();
+      h.deps.jobs = stoppedPublisher;
+      const queued = new Map<string, { id: string; taskId: string; updatedAt: Date }>();
+      const receipt = new Map<string, { runId: string | null }>();
+      h.tx.run.create.mockImplementation(async () => {
+        const row = {
+          id: `project-run-${queued.size + 1}`,
+          taskId: "task-1",
+          updatedAt: new Date(0),
+        };
+        queued.set(row.id, row);
+        return row;
+      });
+      h.tx.message.create.mockImplementation(async ({ data }) => {
+        if (data.clientNonce) receipt.set(data.clientNonce, { runId: null });
+        return { id: "inbound", seq: 1 };
+      });
+      h.tx.message.update.mockImplementation(async ({ data }) => {
+        for (const value of receipt.values()) if (!value.runId) value.runId = data.runId;
+        return {};
+      });
+      h.tx.message.findUnique.mockImplementation(async (args) => {
+        const where = args.where as { threadId_clientNonce?: { clientNonce: string } };
+        return (
+          where.threadId_clientNonce
+            ? (receipt.get(where.threadId_clientNonce.clientNonce) ?? null)
+            : null
+        ) as never;
+      });
+      h.tx.run.findUnique.mockImplementation(
+        async ({ where }) => (queued.get(where.id) ?? { status: "running" }) as never,
+      );
+      const sent = await messageBot(h.deps, run, sender, {
+        bot_id: "bot-target",
+        message: "Build the project and run its checks.",
+        deliveryKey: "project-request",
+      });
+      expect(sent).toMatchObject({
+        ok: true,
+        taskId: "task-1",
+        runId: "project-run-1",
+        threadId: "thread-target",
+      });
+      // No live publisher or coordinator process is needed to retain acceptance.
+      expect(queued.size).toBe(1);
+      h.tx.run.findFirst.mockResolvedValue(null);
+      const replayed = await messageBot(h.deps, run, sender, {
+        bot_id: "bot-target",
+        message: "Build the project and run its checks.",
+        deliveryKey: "project-request",
+      });
+      expect(replayed).toMatchObject({
+        ok: true,
+        replayed: true,
+        taskId: "task-1",
+        runId: "project-run-1",
+      });
+      expect(queued.size).toBe(1);
+
+      const completed: string[] = [];
+      const started: string[] = [];
+      await restarted.start({
+        "run.continue": async ({ runId }) => {
+          started.push(runId);
+          if (runId.startsWith("project")) await projectGate;
+          completed.push(runId);
+        },
+      } as BackgroundJobHandlers);
+      Object.assign(h.deps.prisma, {
+        routine: { findMany: vi.fn().mockResolvedValue([]) },
+        computer: { findMany: vi.fn().mockResolvedValue([]) },
+        messagingOutbound: { findFirst: vi.fn().mockResolvedValue(null) },
+      });
+      Object.assign(h.deps.prisma.run, {
+        findMany: vi.fn(async ({ where }) => (where.trigger ? [] : [...queued.values()])),
+      });
+      await createJobReconciler({ prisma: h.deps.prisma, jobs: restarted }).reconcileOnce();
+      await restarted.enqueue(runContinueJob("project-run-2"));
+      await restarted.enqueue(runContinueJob("control-conversation"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(started).toEqual(["project-run-1", "project-run-2", "control-conversation"]);
+      expect(completed).toEqual(["control-conversation"]);
+      finishProject();
+      await restarted.close();
+      expect(completed).toEqual(["control-conversation", "project-run-1", "project-run-2"]);
+    } finally {
+      finishProject();
+      await restarted.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it("queries and rechecks recipient owner and space before committing work", async () => {
+    const h = deps();
+    await messageBot(h.deps, run, sender, { bot_id: "bot-target", message: "Build this project." });
+    expect(h.deps.prisma.bot.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: run.userId, spaceId: run.spaceId, archivedAt: null, temporary: false },
+      }),
+    );
+    expect(h.tx.bot.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "bot-target", userId: run.userId, spaceId: run.spaceId, archivedAt: null },
+      }),
+    );
   });
 });

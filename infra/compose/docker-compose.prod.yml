@@ -27,7 +27,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/compose/Dockerfile
-    command: ["pnpm", "--filter", "@rakazo/sandbox-supervisor", "start"]
+    command: ["bun", "run", "--filter", "@rakazo/sandbox-supervisor", "start"]
     restart: unless-stopped
     init: true
     user: root
@@ -71,7 +71,7 @@ services:
     command:
       - bash
       - -lc
-      - pnpm --filter @rakazo/db exec prisma migrate deploy && pnpm --filter @rakazo/api start
+      - bun run --cwd packages/db prisma migrate deploy && bun run --filter @rakazo/api start
     init: true
     security_opt:
       - no-new-privileges:true
@@ -130,7 +130,7 @@ services:
       args:
         GIT_SHA: ${GIT_SHA:-}
     restart: unless-stopped
-    command: ["pnpm", "--filter", "@rakazo/worker", "start"]
+    command: ["bun", "run", "--filter", "@rakazo/worker", "start"]
     init: true
     security_opt:
       - no-new-privileges:true
@@ -179,7 +179,7 @@ services:
       args:
         GIT_SHA: ${GIT_SHA:-}
     restart: unless-stopped
-    command: ["pnpm", "--filter", "@rakazo/web", "preview", "--host", "0.0.0.0", "--port", "5173"]
+    command: ["bun", "run", "--filter", "@rakazo/web", "preview", "--host", "0.0.0.0", "--port", "5173"]
     init: true
     security_opt:
       - no-new-privileges:true

@@ -89,6 +89,8 @@ function fixture({
     ),
   };
   const prisma = {
+    user: { findUnique: vi.fn(async () => ({ modelVisibility: { hide: [] } })) },
+    dispatchedWork: { count: vi.fn(async () => 0) },
     run: {
       findUnique: vi.fn(async () => run),
       findUniqueOrThrow: vi.fn(async () => run),

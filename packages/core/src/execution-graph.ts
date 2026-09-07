@@ -9,9 +9,12 @@ import {
 export interface ExecutionRunEvidence {
   runId: string;
   botId: string;
+  botName?: string;
   status: string;
   trigger: string;
   sourceMessageId?: string;
+  fromBotId?: string;
+  fromBotName?: string;
   sourceRunId?: string;
   replyToMessageId?: string;
   messageIntent?: string;
@@ -61,6 +64,7 @@ export function projectExecutionGraph(
       kind: "run",
       runId: run.runId,
       botId: run.botId,
+      name: run.botName,
       status: run.status,
       evidence,
     });
@@ -69,10 +73,24 @@ export function projectExecutionGraph(
         id: `message:${run.sourceMessageId}`,
         kind: "message",
         messageId: run.sourceMessageId,
+        runId: run.sourceRunId,
         evidence: [{ kind: "message", id: run.sourceMessageId }],
       });
       link(source, runNode, run.trigger === "follow_up" ? "continues" : "starts", evidence);
-      if (run.sourceRunId && run.sourceRunId !== run.runId) {
+      if (run.fromBotId) {
+        const sourceEvidence: ExecutionFlowNode["evidence"] = [
+          { kind: "message", id: run.sourceMessageId },
+        ];
+        const sender = put({
+          id: `bot:${run.fromBotId}`,
+          kind: "participant",
+          botId: run.fromBotId,
+          name: run.fromBotName,
+          evidence: sourceEvidence,
+        });
+        link(sender, source, "messages", sourceEvidence);
+      }
+      if (run.sourceRunId) {
         const parent = put({
           id: `run:${run.sourceRunId}`,
           kind: "run",
@@ -210,11 +228,11 @@ export function projectExecutionGraph(
             "messages",
             evidence,
           );
-          if (block.kind === "bot_message_received" && block.returnToMessageId) {
+          if (block.kind === "bot_message_received" && string(data.replyToMessageId)) {
             const original = put({
-              id: `message:${block.returnToMessageId}`,
+              id: `message:${string(data.replyToMessageId)}`,
               kind: "message",
-              messageId: block.returnToMessageId,
+              messageId: string(data.replyToMessageId),
               evidence,
             });
             link(message, original, block.intent === "result" ? "results" : "replies", evidence);

@@ -13,13 +13,14 @@ import {
   cancelRunsInTransaction,
   computerScopeKey,
   createRepos,
-  createThreadMessageInTransaction,
   expireComputerExecutionLeases,
   type Prisma,
   type PrismaClient,
+  type ThreadEvents,
   withTransactionRetry,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import { messageBot } from "./bot-messages.js";
 import { toComputerRef } from "./computer-support.js";
 import { checkpointAndRecordComputerWorkspace } from "./computer-workspace.js";
 import { resolveAgentHomePath } from "./home.js";
@@ -38,14 +39,10 @@ export async function spawnBot(
   deps: {
     prisma: PrismaClient;
     jobs: JobPublisher;
+    events: Pick<ThreadEvents, "notify">;
   },
   input: {
-    spawnedBy: {
-      id: string;
-      name: string;
-      spaceId: string;
-      userId: string;
-    };
+    spawnedBy: { id: string; name: string; spaceId: string; userId: string };
     runId: string;
     spawnKey: string;
     name: string;
@@ -57,6 +54,16 @@ export async function spawnBot(
 ) {
   const name = input.name.trim();
   if (!name) return { error: "Bot name is required." };
+  const source = await deps.prisma.run.findFirst({
+    where: {
+      id: input.runId,
+      spaceId: input.spawnedBy.spaceId,
+      userId: input.spawnedBy.userId,
+      botId: input.spawnedBy.id,
+      status: "running",
+    },
+  });
+  if (!source) return { error: "Source run is no longer active." };
 
   const actor: Actor = {
     userId: input.spawnedBy.userId,
@@ -84,16 +91,18 @@ export async function spawnBot(
     });
   } catch (error) {
     const existing = await deps.prisma.bot.findUnique({
-      where: {
-        spaceId_spawnKey: {
-          spaceId: input.spawnedBy.spaceId,
-          spawnKey: input.spawnKey,
-        },
-      },
+      where: { spaceId_spawnKey: { spaceId: actor.spaceId, spawnKey: input.spawnKey } },
       include: { thread: true },
     });
     if (!existing) throw error;
-    if (!existing.thread) throw new Error(`Spawned bot ${existing.id} is missing its thread`);
+    if (
+      existing.userId !== actor.userId ||
+      existing.parentBotId !== input.spawnedBy.id ||
+      existing.archivedAt
+    ) {
+      return { error: "The previous bot creation is no longer available in this scope." };
+    }
+    if (!existing.thread) throw new Error("Spawned bot is missing its thread");
     duplicate = true;
     created = {
       id: existing.id,
@@ -103,20 +112,34 @@ export async function spawnBot(
     };
   }
 
+  let task: { runId?: string; taskId?: string } | undefined;
   const prompt = (input.prompt ?? "").trim();
   if (prompt) {
-    const run = await ensureSpawnRun(deps.prisma, {
-      spaceId: input.spawnedBy.spaceId,
-      userId: input.spawnedBy.userId,
-      botId: created.id,
-      threadId: created.threadId,
-      sourceRunId: input.runId,
-      spawnKey: input.spawnKey,
-      prompt,
+    // Preserve old spawn receipts during a rolling upgrade. New work uses the
+    // same durable dispatch and automatic outcomes as every delegated request.
+    const legacy = await deps.prisma.run.findUnique({
+      where: {
+        spaceId_clientNonce: { spaceId: actor.spaceId, clientNonce: `spawn:${input.spawnKey}` },
+      },
     });
-    await deps.jobs
-      .enqueue(runContinueJob(run.id))
-      .catch((error) => getLogger().error("spawned bot enqueue", error));
+    if (legacy) {
+      if (legacy.botId !== created.id || legacy.userId !== actor.userId) {
+        return { error: "The previous task belongs to a different bot." };
+      }
+      task = { runId: legacy.id, taskId: legacy.taskId };
+      await deps.jobs
+        .enqueue(runContinueJob(legacy.id))
+        .catch((error) => getLogger().error("spawned bot enqueue", error));
+    } else {
+      const sent = await messageBot(deps, source, input.spawnedBy, {
+        bot_id: created.id,
+        message: prompt,
+        intent: "request",
+        deliveryKey: `spawn:${input.spawnKey}`,
+      });
+      if (!sent.ok) return { error: sent.error, botId: created.id };
+      task = { runId: sent.runId, taskId: sent.taskId };
+    }
   }
 
   return {
@@ -126,67 +149,8 @@ export async function spawnBot(
     name: created.name,
     title: created.title,
     threadId: created.threadId,
+    ...(task ? { task } : {}),
   };
-}
-
-async function ensureSpawnRun(
-  prisma: PrismaClient,
-  input: {
-    spaceId: string;
-    userId: string;
-    botId: string;
-    threadId: string;
-    sourceRunId: string;
-    spawnKey: string;
-    prompt: string;
-  },
-) {
-  const clientNonce = `spawn:${input.spawnKey}`;
-  const where = {
-    spaceId_clientNonce: {
-      spaceId: input.spaceId,
-      clientNonce,
-    },
-  } as const;
-  const existing = await prisma.run.findUnique({ where });
-  if (existing) return existing;
-
-  try {
-    return await prisma.$transaction(async (tx) => {
-      await createThreadMessageInTransaction(tx, {
-        threadId: input.threadId,
-        role: "user",
-        blocks: [{ kind: "text", text: input.prompt }],
-        runId: input.sourceRunId,
-      });
-      const task = await tx.task.create({
-        data: {
-          spaceId: input.spaceId,
-          botId: input.botId,
-          threadId: input.threadId,
-          userId: input.userId,
-          prompt: input.prompt,
-          status: "queued",
-        },
-      });
-      return tx.run.create({
-        data: {
-          spaceId: input.spaceId,
-          botId: input.botId,
-          threadId: input.threadId,
-          taskId: task.id,
-          userId: input.userId,
-          status: "queued",
-          trigger: "spawn",
-          clientNonce,
-        },
-      });
-    });
-  } catch (error) {
-    const winner = await prisma.run.findUnique({ where });
-    if (winner) return winner;
-    throw error;
-  }
 }
 
 type BotLifecycleDeps = {

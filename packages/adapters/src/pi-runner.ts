@@ -16,6 +16,7 @@ import {
   type AgentSessionRuntime,
   createAgentSessionFromServices,
   createAgentSessionRuntime,
+  estimateTokens,
   type FileEntry,
   ModelRuntime,
   runRpcMode,
@@ -23,6 +24,7 @@ import {
   SettingsManager,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { type ModelSelectionStatus, ModelSelectionStatusSchema } from "@rakazo/contracts";
 import { resolvePiKit } from "@rakazo/pi-kit";
 import { boundedExecutionEvidence } from "./pi-execution-evidence.js";
 import { createManagedKit, type ManagedKit } from "./pi-managed-kit.js";
@@ -35,6 +37,7 @@ const CORE_TOOLS = ["read", "write", "edit", "bash", "powershell", "grep", "find
 
 /** Stock RPC is process stdio; the separate private duplex is injected by the isolated entrypoint. */
 export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<never> {
+  const writeRpc = process.stdout.write.bind(process.stdout);
   let runtime: AgentSessionRuntime | undefined;
   let initialized = false;
   let managedKit: ManagedKit | undefined;
@@ -46,6 +49,11 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
   let kitState: unknown;
   let placement: { cwd: string; worktreeId?: string } | undefined;
   let sourceMessageIds: string[] = [];
+  let modelSelection: ModelSelectionStatus | undefined;
+  let committedModel: Model<Api> | undefined;
+  let committedThinking: string | undefined;
+  let requestedModel: Model<Api> | undefined;
+  let modelControlBusy = false;
   const streams = new Map<string, AssistantMessageEventStream>();
   const kit = resolvePiKit();
   let ready!: () => void;
@@ -63,6 +71,10 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
       entries: extra ? [...entries, extra] : entries,
       leafId: extra && "id" in extra ? extra.id : manager.getLeafId(),
       sourceMessageIds,
+      modelSelection,
+      modelConfiguration: committedModel
+        ? { model: committedModel, thinkingLevel: committedThinking }
+        : undefined,
       placement,
       kitState: { queue: kitState, managed: managedKit?.snapshot() },
     });
@@ -140,6 +152,33 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
       await managedKit?.pause();
       await checkpoint();
       return { paused: true };
+    }
+    if (message.operation === "model_selection") {
+      if (!runtime || runtime.session.isStreaming || modelControlBusy)
+        throw new Error("Model selection requires an idle participant");
+      const next = ModelSelectionStatusSchema.parse(message.data);
+      const previous = {
+        model: committedModel,
+        thinking: committedThinking,
+        selection: modelSelection,
+      };
+      if (next.status === "applied") {
+        committedModel = runtime.session.model;
+        committedThinking = runtime.session.thinkingLevel;
+      } else if (next.status === "failed" && committedModel) {
+        await runtime.session.setModel(committedModel);
+        runtime.session.setThinkingLevel(committedThinking as never);
+      }
+      modelSelection = next;
+      try {
+        await checkpoint();
+      } catch (error) {
+        committedModel = previous.model;
+        committedThinking = previous.thinking;
+        modelSelection = previous.selection;
+        throw error;
+      }
+      return { saved: true };
     }
     if (message.operation === "deliver") {
       if (!runtime || paused) throw new Error("Participant unavailable for queue delivery");
@@ -238,8 +277,16 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
     placement = data.placement
       ? (record(data.placement) as { cwd: string; worktreeId?: string })
       : undefined;
-    const model = record(data.model) as unknown as Model<Api>;
+    requestedModel = record(data.model) as unknown as Model<Api>;
     const restore = data.restore === undefined ? undefined : record(data.restore);
+    const savedConfiguration = record(restore?.modelConfiguration ?? {});
+    const model = savedConfiguration.model
+      ? (record(savedConfiguration.model) as unknown as Model<Api>)
+      : requestedModel;
+    committedModel = model;
+    committedThinking = String(savedConfiguration.thinkingLevel ?? data.thinkingLevel);
+    const savedSelection = ModelSelectionStatusSchema.safeParse(restore?.modelSelection);
+    modelSelection = savedSelection.success ? savedSelection.data : undefined;
     if (
       restore &&
       (restore.version !== 1 ||
@@ -300,7 +347,7 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
       baseUrl: "http://broker.invalid",
       api: "openai-completions",
       apiKey: "broker",
-      models: [model],
+      models: model.id === requestedModel.id ? [requestedModel] : [model, requestedModel],
       streamSimple: brokerStream,
     });
     // Both normal turns and SDK compaction must use the private broker, not network adapters.
@@ -403,7 +450,7 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
             sessionManager,
             sessionStartEvent,
             model,
-            thinkingLevel: data.thinkingLevel as never,
+            thinkingLevel: committedThinking as never,
             tools: managedKit!.activeTools,
             noTools: "builtin",
             customTools: managedKit!.tools,
@@ -489,6 +536,72 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
       close: async () => undefined,
     };
     for await (const frame of readJsonFrames(port)) {
+      if (["compact", "set_model", "set_thinking_level"].includes(String(frame.type))) {
+        try {
+          if (!runtime || !managedKit || paused || runtime.session.isStreaming || modelControlBusy)
+            throw new Error("Model control requires an idle participant");
+          modelControlBusy = true;
+          if (frame.type === "compact") {
+            const previousModel = runtime.session.model;
+            const previousThinking = runtime.session.thinkingLevel;
+            try {
+              // Fabric budgets against ctx.model. Stage only authorized target metadata;
+              // no normal inference is accepted until the handoff is committed.
+              if (requestedModel) await runtime.session.setModel(requestedModel);
+              await managedKit.compact(undefined, { requireSuccess: true });
+              // The SDK can label a huge unsplittable first turn "session too small".
+              // A no-op is safe only if its actual live window fits the target reserve.
+              const target = runtime.session.model;
+              const reserve = Math.max(
+                target?.maxTokens ?? 0,
+                runtime.session.settingsManager.getCompactionSettings().reserveTokens,
+              );
+              const tokens = Math.max(
+                runtime.session.getContextUsage()?.tokens ?? 0,
+                runtime.session.messages.reduce(
+                  (total, message) => total + estimateTokens(message),
+                  0,
+                ),
+              );
+              if (!target || tokens > target.contextWindow - reserve)
+                throw new Error("Compaction did not fit the selected model window");
+            } finally {
+              if (previousModel) await runtime.session.setModel(previousModel);
+              runtime.session.setThinkingLevel(previousThinking);
+            }
+          } else if (frame.type === "set_model") {
+            if (
+              !requestedModel ||
+              frame.provider !== "rakazo-broker" ||
+              frame.modelId !== requestedModel.id
+            )
+              throw new Error("Model is outside the authorized selection");
+            await runtime.session.setModel(requestedModel);
+          } else {
+            const level = String(frame.level);
+            if (!["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(level))
+              throw new Error("Invalid thinking level");
+            runtime.session.setThinkingLevel(level as never);
+          }
+          writeRpc(
+            JSON.stringify({ id: frame.id, type: "response", command: frame.type, success: true }) +
+              "\n",
+          );
+        } catch {
+          writeRpc(
+            JSON.stringify({
+              id: frame.id,
+              type: "response",
+              command: frame.type,
+              success: false,
+              error: "Managed model control failed",
+            }) + "\n",
+          );
+        } finally {
+          modelControlBusy = false;
+        }
+        continue;
+      }
       if (!["get_state", "prompt", "abort"].includes(String(frame.type)))
         throw new Error("Forbidden managed Pi command");
       if (

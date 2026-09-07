@@ -18,6 +18,7 @@ import {
   isSecretAskBlock,
   latestAnswerableAskMessageId,
   mentionChipKey,
+  projectMessageActivity,
   resolveComposerSendPlan,
   SLASH_ACTIONS,
   type SlashActionId,
@@ -55,11 +56,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppConnectCard } from "../components/AppConnectCard";
 import { AskActions } from "../components/AskActions";
 import { BotAvatar } from "../components/bot-avatar";
+import { MessageActivityLinks } from "../components/MessageActivityLinks";
 import {
   MarkdownArtifactPreview,
   type MarkdownArtifactPreviewTarget,
 } from "../components/markdown-artifact-preview";
 import { NativeSymbol } from "../components/native-symbol";
+import { PeerMessagesSheet } from "../components/PeerMessagesSheet";
 import { GroupQueueStrip, QueueStrip } from "../components/QueueStrip";
 import {
   applyMobileThreadEvent,
@@ -279,6 +282,16 @@ function Thread() {
       ? { botId }
       : undefined;
   const [snap, setSnap] = useState<MobileSnapshot | null>(null);
+  const [inspector, setInspector] = useState<{
+    view: "queue" | "execution";
+    runId?: string;
+    botId?: string;
+  } | null>(null);
+  const [peerConversation, setPeerConversation] = useState<{
+    botId?: string;
+    peerBotId: string;
+    peerBotName: string;
+  } | null>(null);
   const activeThreadId = useRef<string | undefined>(undefined);
   const [draft, setDraft] = useState("");
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -306,13 +319,26 @@ function Thread() {
   const [markdownPreview, setMarkdownPreview] = useState<MarkdownArtifactPreviewTarget | null>(
     null,
   );
-  const visibleMessages = useMemo(
+  const activityProjection = useMemo(
     () =>
-      userVisibleMessages(snap?.messages ?? [], { includePeerReceipts: true }).filter((message) =>
-        hasVisibleMessagePresentation(message.blocks),
+      projectMessageActivity(
+        userVisibleMessages(snap?.messages ?? [], { includePeerReceipts: true }),
       ),
     [snap?.messages],
   );
+  const visibleMessages = useMemo(
+    () =>
+      activityProjection.messages.filter(
+        (message) =>
+          hasVisibleMessagePresentation(message.blocks) ||
+          activityProjection.activities.has(message.id),
+      ),
+    [activityProjection],
+  );
+  useEffect(() => {
+    setInspector(null);
+    setPeerConversation(null);
+  }, [botId, groupId]);
   const latestMessageId = visibleMessages.at(-1)?.id ?? null;
   const activePendingAttachments = attachmentsForThread(pendingAttachments, threadKey);
   const composerMentionTargets = useMemo(
@@ -511,18 +537,29 @@ function Thread() {
       headerRight: () =>
         inGroup ? (
           <Pressable
-            accessibilityLabel={t("Group settings")}
+            accessibilityLabel={t("Group actions")}
             hitSlop={8}
             onPress={() =>
-              router.push({
-                pathname: "/group-settings",
-                params: { groupId: groupId ?? "" },
-              })
+              Alert.alert(name || t("Group"), undefined, [
+                {
+                  text: t("Group settings"),
+                  onPress: () =>
+                    router.push({
+                      pathname: "/group-settings",
+                      params: { groupId: groupId ?? "" },
+                    }),
+                },
+                { text: t("Queue"), onPress: () => setInspector({ view: "queue" }) },
+                ...(snap?.messages.some((message) => message.runId)
+                  ? [{ text: t("Execution"), onPress: () => setInspector({ view: "execution" }) }]
+                  : []),
+                { text: t("Cancel"), style: "cancel" },
+              ])
             }
           >
             <NativeSymbol
-              ios="gearshape"
-              android="settings-outline"
+              ios="ellipsis"
+              android="ellipsis-horizontal"
               size={21}
               color={tokens.foreground}
             />
@@ -550,6 +587,8 @@ function Thread() {
     t,
     tokens,
     colorScheme,
+    snap?.run?.id,
+    snap?.messages,
   ]);
 
   function leaveBot() {
@@ -575,6 +614,16 @@ function Thread() {
   }
 
   const botActions = [
+    { text: t("Queue"), onPress: () => setInspector({ view: "queue" }), destructive: false },
+    ...(snap?.messages.some((message) => message.runId) || snap?.run
+      ? [
+          {
+            text: t("Execution"),
+            onPress: () => setInspector({ view: "execution" }),
+            destructive: false,
+          },
+        ]
+      : []),
     {
       text: t("Open computer"),
       onPress: () =>
@@ -834,6 +883,8 @@ function Thread() {
               cursor = Math.max(cursor, event.seq ?? -1);
               retryMs = 250;
               if (
+                event.type === "routine.created" ||
+                event.type === "routine.updated" ||
                 event.type === "thread.progress" ||
                 event.type === "agent.tool.called" ||
                 event.type === "thread.message.created" ||
@@ -1305,6 +1356,7 @@ function Thread() {
   }
 
   function renderMessageRow(message: MobileMessage, options?: { enableJump?: boolean }) {
+    const activities = activityProjection.activities.get(message.id) ?? [];
     const actionProps = messageActionProps(message);
     const activityBotId =
       !inGroup && message.role === "bot" && message.id.startsWith("progress:")
@@ -1383,6 +1435,21 @@ function Thread() {
               actionProps={actionProps}
             />
           </Pressable>
+          <MessageActivityLinks
+            activities={activities}
+            peerBot={(id) =>
+              mentionBots.find((bot) => bot.id === id) ??
+              snap?.members?.find((member) => member.botId === id)
+            }
+            onPeer={setPeerConversation}
+            onRoutine={(routineId, ownerId) =>
+              router.push({
+                pathname: "/routine",
+                params: { botId: ownerId ?? botId ?? "", routineId },
+              })
+            }
+            onExecution={(runId, botId) => setInspector({ view: "execution", runId, botId })}
+          />
           {canReactToThreadMessage(message) && message.thumbsUp ? (
             <Pressable
               accessibilityRole="button"
@@ -1586,12 +1653,40 @@ function Thread() {
         ) : null}
       </View>
       <View style={{ paddingBottom: Math.max(insets.bottom + 12, 24) }}>
-        {notificationThreadId && inGroup && (
+        {peerConversation && (peerConversation.botId ?? botId) && (
+          <PeerMessagesSheet
+            botId={peerConversation.botId ?? botId ?? ""}
+            botName={
+              mentionBots.find((bot) => bot.id === (peerConversation.botId ?? botId))?.name ??
+              name ??
+              t("Bot")
+            }
+            botColor={
+              mentionBots.find((bot) => bot.id === (peerConversation.botId ?? botId))?.color ??
+              tokens.mutedForeground
+            }
+            peerBotId={peerConversation.peerBotId}
+            peerBotName={peerConversation.peerBotName}
+            peerBotColor={
+              mentionBots.find((bot) => bot.id === peerConversation.peerBotId)?.color ??
+              tokens.mutedForeground
+            }
+            onClose={() => setPeerConversation(null)}
+          />
+        )}
+        {notificationThreadId && inGroup && inspector && (
           <GroupQueueStrip
-            key={notificationThreadId}
+            key={`${notificationThreadId}:${inspector.view}:${inspector.runId ?? ""}`}
+            initialView={inspector.view}
+            onClose={() => setInspector(null)}
             threadId={notificationThreadId}
-            members={snap?.members ?? []}
+            members={
+              inspector.botId
+                ? (snap?.members ?? []).filter((member) => member.botId === inspector.botId)
+                : (snap?.members ?? [])
+            }
             runIds={[
+              ...(inspector.runId ? [inspector.runId] : []),
               ...new Set([
                 ...(snap?.activeRuns?.map((run) => run.id) ?? []),
                 ...(snap?.run ? [snap.run.id] : []),
@@ -1601,12 +1696,15 @@ function Thread() {
             ]}
           />
         )}
-        {notificationThreadId && botId && !inGroup && (
+        {notificationThreadId && botId && !inGroup && inspector && (
           <QueueStrip
-            key={`${notificationThreadId}:${botId}`}
+            key={`${notificationThreadId}:${botId}:${inspector.view}:${inspector.runId ?? ""}`}
+            initialView={inspector.view}
+            onClose={() => setInspector(null)}
             threadId={notificationThreadId}
             botId={botId}
             runIds={[
+              ...(inspector.runId ? [inspector.runId] : []),
               ...new Set([
                 ...(snap?.run ? [snap.run.id] : []),
                 ...(snap?.messages.flatMap((message) => (message.runId ? [message.runId] : [])) ??

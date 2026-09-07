@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run every infra/compose/*.smoke.sh (bash-only; no Docker/pnpm).
+# Run every infra/compose/*.smoke.sh (bash-only; no Docker/Bun).
 set -euo pipefail
 root="$(cd "$(dirname "$0")" && pwd)"
 shopt -s nullglob

@@ -8,6 +8,7 @@ import {
 } from "@rakazo/adapter-kit";
 import { ACTIVE_RUN_STATUSES } from "@rakazo/core";
 import type { PrismaClient, ThreadEvents } from "@rakazo/db";
+import { getLogger } from "@rakazo/logging";
 import { expireComputerControl, hasActiveComputerControl } from "./computer-control.js";
 import { toComputerRef } from "./computer-lifecycle.js";
 import { checkpointComputerWorkspace } from "./computer-workspace.js";
@@ -171,7 +172,9 @@ export function sandboxIdleMs(): number {
 
 export function scheduleComputerSleep(jobs: JobPublisher, computerId: string): void {
   if (!computerId) return;
-  void jobs.enqueue(computerSleepJob(computerId, new Date(Date.now() + sandboxIdleMs())));
+  void jobs
+    .enqueue(computerSleepJob(computerId, new Date(Date.now() + sandboxIdleMs())))
+    .catch((error) => getLogger().error("computer sleep enqueue", error));
 }
 
 export async function touchRunningComputer(

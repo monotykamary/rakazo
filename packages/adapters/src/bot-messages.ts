@@ -1,5 +1,5 @@
-import { runContinueJob } from "@rakazo/adapter-kit";
-import type { BotMessageIntent, MessageBlock } from "@rakazo/contracts";
+import { type JobPublisher, runContinueJob } from "@rakazo/adapter-kit";
+import type { BotMessageIntent, MessageBlock, WorkLink } from "@rakazo/contracts";
 import {
   BOT_MESSAGE_MAX_LENGTH,
   botMessageContext,
@@ -12,11 +12,18 @@ import {
 import {
   appendEventInTransaction,
   createThreadMessageInTransaction,
+  type Prisma,
   type PrismaClient,
+  type ThreadEvents,
   withTransactionRetry,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
-import type { ExecutorDeps } from "./executor.js";
+
+type BotMessageDeps = {
+  prisma: PrismaClient;
+  events: Pick<ThreadEvents, "notify">;
+  jobs: JobPublisher;
+};
 
 /**
  * The hop the current run sits at, read back from the message that woke this
@@ -60,7 +67,7 @@ export async function loadBotMessageContext(
 }
 
 export async function messageBot(
-  deps: Pick<ExecutorDeps, "prisma" | "events" | "jobs">,
+  deps: BotMessageDeps,
   run: {
     id: string;
     spaceId: string;
@@ -77,7 +84,13 @@ export async function messageBot(
     intent?: BotMessageIntent;
     deliveryKey?: string;
   },
-  options?: { allowTerminalSource?: boolean },
+  options?: {
+    allowTerminalSource?: boolean;
+    onQueued?: (
+      tx: Prisma.TransactionClient,
+      receipt: { runId: string; taskId: string; threadId: string },
+    ) => Promise<WorkLink>;
+  },
 ) {
   const message = String(input.message ?? "").trim();
   if (!message) return { ok: false as const, error: "message is required" };
@@ -93,7 +106,12 @@ export async function messageBot(
   const hop = nextBotMessageHop(sourceContext?.hop);
 
   const candidates = await deps.prisma.bot.findMany({
-    where: { spaceId: run.spaceId, userId: run.userId, archivedAt: null },
+    where: {
+      spaceId: run.spaceId,
+      userId: run.userId,
+      archivedAt: null,
+      ...(options?.onQueued ? { temporary: true, parentBotId: run.botId } : { temporary: false }),
+    },
     select: { id: true, name: true, title: true, thread: { select: { id: true } } },
   });
   const target = resolveBotAddress(candidates, {
@@ -124,12 +142,15 @@ export async function messageBot(
   // A tool call can be re-executed after a lease expiry, so a delivery has to be
   // replayable: without this the recipient is messaged twice and woken twice.
   const deliveryKey = input.deliveryKey ? `bot-message:${input.deliveryKey}` : undefined;
-  const replayed = () =>
+  const replayed = (receipt: { runId?: string | null; run?: { taskId: string } | null }) =>
     ({
       ok: true as const,
       botId: target.id,
       name: target.name,
       delivered: message,
+      threadId: targetThreadId,
+      runId: receipt.runId ?? undefined,
+      taskId: receipt.run?.taskId,
       replayed: true as const,
       note: `Already sent to ${target.name} in this turn; it was not sent again.`,
     }) as const;
@@ -147,6 +168,7 @@ export async function messageBot(
     | {
         ok: true;
         runId: string;
+        taskId: string;
         targetEventSeq: number;
         senderEventSeq: number;
       }
@@ -157,6 +179,7 @@ export async function messageBot(
     | {
         ok: true;
         replayed: true;
+        receipt: { runId: string | null; run: { taskId: string } | null };
       };
   try {
     committed = await withTransactionRetry(() =>
@@ -169,9 +192,18 @@ export async function messageBot(
         if (deliveryKey) {
           const already = await tx.message.findUnique({
             where: { threadId_clientNonce: { threadId: targetThreadId, clientNonce: deliveryKey } },
-            select: { id: true },
+            select: { runId: true },
           });
-          if (already) return { ok: true as const, replayed: true as const };
+          if (already) {
+            const receiptRun = already.runId
+              ? await tx.run.findUnique({ where: { id: already.runId }, select: { taskId: true } })
+              : null;
+            return {
+              ok: true as const,
+              replayed: true as const,
+              receipt: { ...already, run: receiptRun },
+            };
+          }
         }
 
         const senderStillRunning = await tx.run.findFirst({
@@ -181,9 +213,11 @@ export async function messageBot(
             threadId: run.threadId,
             botId: run.botId,
             userId: run.userId,
-            status: options?.allowTerminalSource ? { in: ["completed", "failed"] } : "running",
+            status: options?.allowTerminalSource
+              ? { in: ["completed", "failed", "cancelled"] }
+              : "running",
           },
-          select: { id: true },
+          select: { id: true, status: true },
         });
         if (!senderStillRunning)
           return { ok: false as const, error: "source run is no longer active" };
@@ -204,12 +238,18 @@ export async function messageBot(
 
         // Echo into the sender's chat in the same transaction so a failed notify
         // cannot leave one side delivered and the other blank.
+        // Cancellation is backend-authored status, not fresh output from a cancelled run.
+        // Keep the shared history guard intact; the inbound nonce still deduplicates it.
+        const cancelledOutcome =
+          options?.allowTerminalSource && senderStillRunning.status === "cancelled";
+        const outboundRole = cancelledOutcome ? "system" : "bot";
+        const outboundRunId = cancelledOutcome ? undefined : run.id;
         const outbound = await createThreadMessageInTransaction(tx, {
           threadId: run.threadId,
-          role: "bot",
+          role: outboundRole,
           blocks: [outboundBlock],
           botId: run.botId,
-          runId: run.id,
+          runId: outboundRunId,
         });
         const inboundBlock: MessageBlock = {
           kind: "bot_message_received",
@@ -256,6 +296,17 @@ export async function messageBot(
           select: { id: true },
         });
         await tx.message.update({ where: { id: inbound.id }, data: { runId: nextRun.id } });
+        if (options?.onQueued) {
+          outboundBlock.work = await options.onQueued(tx, {
+            runId: nextRun.id,
+            taskId: task.id,
+            threadId: targetThreadId,
+          });
+          await tx.message.update({
+            where: { id: outbound.id },
+            data: { blocks: [outboundBlock] },
+          });
+        }
         const inboundEvent = await appendEventInTransaction(tx, {
           spaceId: run.spaceId,
           threadId: targetThreadId,
@@ -269,12 +320,13 @@ export async function messageBot(
           threadId: run.threadId,
           botId: run.botId,
           type: "thread.message.created",
-          runId: run.id,
-          payload: { messageId: outbound.id, role: "bot", blocks: [outboundBlock] },
+          runId: outboundRunId,
+          payload: { messageId: outbound.id, role: outboundRole, blocks: [outboundBlock] },
         });
         return {
           ok: true as const,
           runId: nextRun.id,
+          taskId: task.id,
           targetEventSeq: inboundEvent.seq,
           senderEventSeq: outboundEvent.seq,
         };
@@ -286,13 +338,21 @@ export async function messageBot(
     if (deliveryKey && isUniqueConstraintError(error)) {
       const winner = await deps.prisma.message.findUnique({
         where: { threadId_clientNonce: { threadId: targetThreadId, clientNonce: deliveryKey } },
-        select: { id: true },
+        select: { runId: true },
       });
-      if (winner) return replayed();
+      if (winner) {
+        const receiptRun = winner.runId
+          ? await deps.prisma.run.findUnique({
+              where: { id: winner.runId },
+              select: { taskId: true },
+            })
+          : null;
+        return replayed({ ...winner, run: receiptRun });
+      }
     }
     throw error;
   }
-  if ("replayed" in committed) return replayed();
+  if ("replayed" in committed) return replayed(committed.receipt);
   if (!committed.ok) return committed;
 
   await deps.events.notify(targetThreadId, committed.targetEventSeq).catch((error) => {
@@ -310,13 +370,16 @@ export async function messageBot(
     botId: target.id,
     name: target.name,
     delivered: message,
+    threadId: targetThreadId,
+    runId: committed.runId,
+    taskId: committed.taskId,
     note: `Sent to ${target.name}. Delivery is async; a reply wakes you later as a new message. Continue independent work; send another update later only if it adds something new.`,
   };
 }
 
 /** Return a delegated run's terminal outcome unless it already sent one explicitly. */
 export async function returnBotMessageOutcome(
-  deps: Pick<ExecutorDeps, "prisma" | "events" | "jobs">,
+  deps: BotMessageDeps,
   run: {
     id: string;
     spaceId: string;
@@ -379,7 +442,7 @@ async function markBotOutcomeReturned(prisma: PrismaClient, runId: string) {
   await prisma.run.updateMany({
     where: {
       id: runId,
-      status: { in: ["completed", "failed"] },
+      status: { in: ["completed", "failed", "cancelled"] },
       botOutcomeReturnedAt: null,
     },
     data: { botOutcomeReturnedAt: new Date() },

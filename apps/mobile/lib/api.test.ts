@@ -868,6 +868,30 @@ describe("mobile thread refresh targeting", () => {
 });
 
 describe("mobile thread event reduction", () => {
+  it("projects live routine changes with the persisted identity and no duplicates", () => {
+    const change = {
+      type: "routine.updated",
+      id: "event",
+      botId: "bot",
+      seq: 8,
+      payload: {
+        routineId: "routine",
+        name: "Daily report",
+        messageId: "routine-message",
+        messageSeq: 3,
+      },
+    };
+    const once = applyMobileThreadEvent(snapshot(), change);
+    const twice = applyMobileThreadEvent(once, change);
+    expect(twice?.messages.filter((message) => message.id === "routine-message")).toHaveLength(1);
+    expect(twice?.messages.find((message) => message.id === "routine-message")).toMatchObject({
+      seq: 3,
+      role: "system",
+      blocks: [
+        { kind: "routine_change", routineId: "routine", name: "Daily report", action: "updated" },
+      ],
+    });
+  });
   it("applies a persisted thumbs-up event to its message", () => {
     const initial = snapshot([mobileMessage("message-1", [{ kind: "text", text: "Done" }])]);
 

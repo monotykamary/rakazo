@@ -33,7 +33,7 @@ gallery_url="$public_base_url/runs/$run_key/index.html"
 gallery_dir="$GITHUB_WORKSPACE/.tmp/mobile-screenshot-gallery"
 
 MOBILE_SCREENSHOTS_URL="$gallery_url" \
-  pnpm exec tsx packages/testkit/src/cli/generate-mobile-screenshot-gallery.ts \
+  bun run tsx packages/testkit/src/cli/generate-mobile-screenshot-gallery.ts \
     test-report/mobile-screenshots/screenshots \
     "$gallery_dir"
 
@@ -54,4 +54,21 @@ aws s3 cp \
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   printf '### Android screenshots\n- [Screenshot gallery](%s)\n' \
     "$gallery_url" >> "$GITHUB_STEP_SUMMARY"
+fi
+
+# Opt in only after reviewing the recording from a dedicated disposable emulator.
+# Never publish Maestro debug output, fixture sign-in, or arbitrary report files.
+video_path="test-report/mobile-screenshots/notification-demo.mp4"
+if [[ "${RAKAZO_PUBLISH_NOTIFICATION_DEMO:-}" == "1" && -s "$video_path" && ! -L "$video_path" ]]; then
+  aws s3 cp \
+    "$video_path" \
+    "$bucket_uri/runs/$run_key/notification-demo.mp4" \
+    --endpoint-url "$S3_ENDPOINT" \
+    --content-type "video/mp4" \
+    --no-guess-mime-type \
+    --cache-control "public,max-age=31536000,immutable"
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    printf -- '- [Live working status video](%s)\n' \
+      "$public_base_url/runs/$run_key/notification-demo.mp4" >> "$GITHUB_STEP_SUMMARY"
+  fi
 fi

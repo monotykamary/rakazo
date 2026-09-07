@@ -3751,8 +3751,14 @@ msgid "Your email address"
 msgstr "E-posta adresin"
 
 #: src/pages/ModelSettingsOverlay.tsx:540
-msgid "Your key or subscription token is stored securely and is never shown here."
-msgstr "Anahtarın veya abonelik token'ın güvenle saklanır ve burada asla gösterilmez."
+msgid "Stored securely. Never shown here."
+msgstr "Güvenle saklanır. Burada gösterilmez."
+
+msgid "Create new Group"
+msgstr "Yeni grup oluştur"
+
+msgid "Create new Space"
+msgstr "Yeni alan oluştur"
 
 #: src/pages/Auth.tsx:136
 msgid "Your name"

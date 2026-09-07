@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { QueueMutation, QueueSnapshot } from "@rakazo/contracts";
+import { expectAlignedControls } from "../../../packages/testkit/src/playwright-layout";
 import { captureScreenshot } from "./helpers";
 
 test("queue controls and retained execution inspection", async ({ page }, testInfo) => {
@@ -110,14 +111,14 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
     route.fulfill({
       json: {
         json: {
-          runId: "run",
+          runId: route.request().postDataJSON().json.runId,
           events: [
             {
-              id: "event",
+              id: route.request().postDataJSON().json.runId === "run" ? "event" : "related-event",
               spaceId: "space",
               threadId: "thread",
               botId: "bot",
-              runId: "run",
+              runId: route.request().postDataJSON().json.runId,
               seq: 4,
               type: "agent.tool.called",
               createdAt: "2026-07-19T12:00:00Z",
@@ -141,8 +142,25 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
                 id: "run:run",
                 kind: "run",
                 name: "Main",
+                botId: "bot",
                 runId: "run",
                 evidence: [{ kind: "run", id: "run" }],
+              },
+              {
+                id: "run:related-run",
+                kind: "run",
+                name: "Main",
+                botId: "bot",
+                runId: "related-run",
+                code: "return 2;",
+                evidence: [{ kind: "run", id: "related-run" }],
+              },
+              {
+                id: "bot:bot",
+                kind: "participant",
+                name: "Main",
+                botId: "bot",
+                evidence: [{ kind: "message", id: "receipt" }],
               },
               {
                 id: "participant:worker",
@@ -172,6 +190,13 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
               },
             ],
             edges: [
+              {
+                id: "continuation",
+                from: "run:run",
+                to: "run:related-run",
+                kind: "continues",
+                evidence: [{ kind: "run", id: "related-run" }],
+              },
               {
                 id: "delegate",
                 from: "run:run",
@@ -207,6 +232,60 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
       },
     }),
   );
+  await page.route("**/rpc/models/credentials", (route) =>
+    route.fulfill({
+      json: {
+        json: [{ id: "local", provider: "local", label: "Local", hasKey: false, isDefault: true }],
+      },
+    }),
+  );
+  await page.route("**/rpc/models/list", (route) =>
+    route.fulfill({
+      json: {
+        json: [
+          {
+            provider: "local",
+            id: "small",
+            label: "Small",
+            billing: "local",
+            thinkingLevels: ["low", "high"],
+          },
+          {
+            provider: "local",
+            id: "large",
+            label: "Large",
+            billing: "local",
+            thinkingLevels: ["low", "high"],
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/rpc/models/getVisibility", (route) =>
+    route.fulfill({ json: { json: { hide: [] } } }),
+  );
+  const effective = { provider: "local", modelId: "small", thinkingLevel: null };
+  await page.route("**/rpc/models/getSelection", (route) =>
+    route.fulfill({
+      json: { json: { requested: effective, effective, status: "applied", error: null } },
+    }),
+  );
+  let requestedModel: unknown;
+  await page.route("**/rpc/models/setWorkerSelection", (route) => {
+    const input = route.request().postDataJSON().json;
+    expect(input).toMatchObject({ botId: "bot", threadId: "thread", participantId: "worker" });
+    requestedModel = input.selection;
+    return route.fulfill({
+      json: {
+        json: {
+          requested: input.selection ?? effective,
+          effective,
+          status: "pending",
+          error: null,
+        },
+      },
+    });
+  });
   await page.goto("/e2e/fixtures/queue-inspection.html");
   await expect(page.getByRole("button", { name: "Queue · 2", exact: true })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Queued message", exact: true })).toHaveCount(0);
@@ -249,6 +328,27 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
   await expect(page.locator('[data-row-id="third"]')).toHaveCount(0);
   await captureScreenshot(page, testInfo, "queue-controls");
   await page.getByRole("button", { name: "Execution", exact: true }).click();
+  const execution = page.getByRole("dialog", { name: "Execution", exact: true });
+  const runSelect = execution.getByRole("combobox", { name: "Run", exact: true });
+  const flowButton = execution.getByRole("button", { name: "Flow", exact: true });
+  await expectAlignedControls(runSelect, flowButton);
+  await expect(execution.getByRole("button", { name: "Model", exact: true })).toHaveCount(1);
+  await execution.getByRole("button", { name: "Model", exact: true }).click();
+  await execution
+    .getByRole("combobox", { name: "Model", exact: true })
+    .selectOption("local::large");
+  await execution.getByRole("combobox", { name: "Thinking", exact: true }).selectOption("high");
+  await execution.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(execution.getByText("Pending · Effective: small")).toBeVisible();
+  expect(requestedModel).toEqual({ provider: "local", modelId: "large", thinkingLevel: "high" });
+  await captureScreenshot(page, testInfo, "execution-worker-model");
+  await execution.getByRole("button", { name: "Use bot model", exact: true }).click();
+  await expect.poll(() => requestedModel).toBeNull();
+  await expect(execution.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(
+    "local::small",
+  );
+  await expect(execution.getByText("Pending · Effective: small")).toBeVisible();
+  await execution.getByRole("button", { name: "Model", exact: true }).click();
   await page.getByText("agent.tool.called", { exact: false }).click();
   await expect(page.getByText("npm test", { exact: false })).toBeVisible();
   await expect(page.getByText("run.completed", { exact: false })).toHaveCount(0);
@@ -280,19 +380,58 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
     target: { participantId: "worker" },
   });
   await expect(page.locator("[data-flow-node]")).toHaveCount(5);
-  await expect(page.locator("[data-flow-edge]")).toHaveCount(4);
-  await page.getByRole("button", { name: "Main → delegates → Worker", exact: true }).click();
-  await expect(page.getByRole("region", { name: "Evidence", exact: true })).toContainText("event");
+  const outline = execution.getByTestId("execution-flow");
+  await expect(outline.getByRole("region", { name: "Evidence", exact: true })).toHaveCount(0);
+  await expect(outline).not.toContainText("run:run");
+  await expect(outline.getByText("Main", { exact: true })).toHaveCount(1);
+  await outline.locator('[data-flow-node="bot:bot"]').click();
+  await outline.locator('[data-flow-edge="delegate"]').click();
+  const evidencePanel = page.getByRole("region", { name: "Evidence", exact: true });
+  await evidencePanel.locator("summary").click();
+  await expect(evidencePanel.getByText("event", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Show events", exact: true }).click();
+  await expect(flowButton).toBeFocused();
   await page.getByText("agent.tool.called", { exact: false }).click();
   await expect(page.getByText("npm test", { exact: false })).toBeVisible();
   await captureScreenshot(page, testInfo, "execution-evidence");
+  await flowButton.click();
+  await expect(outline).toBeVisible();
+  await expect(execution.getByRole("list", { name: "Retained events" })).toHaveCount(0);
   await page.getByRole("dialog").evaluate((element) => {
     element.scrollTop = 0;
   });
   await captureScreenshot(page, testInfo, "execution-flow");
   await page.setViewportSize({ width: 390, height: 844 });
+  await expectAlignedControls(runSelect, flowButton);
+  await expect
+    .poll(() =>
+      outline.evaluate((element) =>
+        Array.from(element.querySelectorAll("*")).every(
+          (item) => item.scrollWidth <= item.clientWidth + 1,
+        ),
+      ),
+    )
+    .toBe(true);
   await captureScreenshot(page, testInfo, "execution-flow-narrow");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expectAlignedControls(runSelect, flowButton);
+  await captureScreenshot(page, testInfo, "execution-flow-narrow-dark");
+  await outline.locator('[data-flow-node="bot:bot"]').click();
+  await expect(outline.getByRole("button", { name: "Run 1", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await outline.getByRole("button", { name: "Run 2", exact: true }).click();
+  await expect(runSelect).toHaveValue("related-run");
+  await expect(flowButton).toBeFocused();
+  await expect(outline).toHaveCount(0);
+  await flowButton.click();
+  await outline.locator('[data-flow-node="bot:bot"]').click();
+  await expect(outline.getByRole("button", { name: "Run 2", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(outline.getByText("return 2;", { exact: true })).toBeVisible();
   expect(operations.map((operation) => operation.type)).toEqual([
     "edit-begin",
     "edit-patch",

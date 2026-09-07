@@ -26,6 +26,12 @@ export const PI_KIT_PACKAGES = [
     entry: "pi-multiprovider",
     extensions: ["extensions/multiprovider.ts"],
   },
+  {
+    name: "pi-hide-providers",
+    version: "0.1.18",
+    entry: "pi-hide-providers/package.json",
+    extensions: ["hide-providers.ts"],
+  },
 ] as const;
 
 export interface PiKitInstallation {

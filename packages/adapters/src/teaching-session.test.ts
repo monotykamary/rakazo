@@ -92,7 +92,7 @@ function recordingDeps(skill: ReturnType<typeof skillRow>) {
         },
       },
       events: { append: vi.fn(), notify: vi.fn(), finalizeComputerControlRelease: vi.fn() },
-      jobs: { enqueue: vi.fn(), cancel: vi.fn() },
+      jobs: { enqueue: vi.fn(async () => undefined), cancel: vi.fn(async () => undefined) },
       sandbox: { observe: vi.fn(), setScreenControl: vi.fn(), sendInput: vi.fn(), act: vi.fn() },
       home: {},
       dataDir: "/tmp",
@@ -157,6 +157,10 @@ describe("expireTaughtSkillTeaching", () => {
     deps.prisma.bot.findUnique = vi.fn().mockResolvedValue(bot);
     await expireTaughtSkillTeaching(deps as never, "skill-1");
     expect(deps.jobs.cancel).toHaveBeenCalledWith("computer.control-expire:computer-1:lease-1");
+    expect(deps.events.finalizeComputerControlRelease).toHaveBeenCalledWith(
+      expect.objectContaining({ computerId: "computer-1", leaseId: "lease-1", holder: "bot" }),
+    );
+    expect(deps.jobs.enqueue).toHaveBeenCalledOnce();
     expect(tx.event.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({

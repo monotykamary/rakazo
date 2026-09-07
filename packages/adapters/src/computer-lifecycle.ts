@@ -398,7 +398,7 @@ export async function acquireComputerExecutionLease(
   },
 ): Promise<ComputerExecutionLease | null> {
   const computer = await prisma.computer.findUniqueOrThrow({ where: { id: input.computerId } });
-  if (computer.scope !== "team") return null;
+  // Per-bot liveness also protects temporary workers sharing a dedicated computer.
   if (computer.state === "suspending") throw new ComputerBusyError();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + EXECUTION_LEASE_MS);

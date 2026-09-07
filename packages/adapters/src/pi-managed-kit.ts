@@ -15,6 +15,7 @@ import { resolvePiKit } from "@rakazo/pi-kit";
 import { createManagedFovea } from "./pi-managed-fovea.js";
 import { managedMemoryProvider } from "./pi-managed-memory.js";
 import { createBrokerCall, managedCoreTools } from "./pi-managed-tools.js";
+import { manageModelVisibilityExtension } from "./pi-managed-visibility.js";
 
 export interface ManagedKitOptions {
   instructions: string;
@@ -39,7 +40,7 @@ export interface ManagedKit {
   unavailable: string[];
   initialize(runtime: AgentSessionRuntime): Promise<void>;
   beforeModel(): Promise<void>;
-  compact(instructions?: string): Promise<void>;
+  compact(instructions?: string, options?: { requireSuccess?: boolean }): Promise<void>;
   setPlacement(placement: { cwd: string; worktreeId?: string }): Promise<void>;
   settle(): Promise<void>;
   pause(): Promise<void>;
@@ -50,7 +51,7 @@ interface SavedKit {
   version: 1;
   idleAt?: number;
   compactedSource?: string;
-  pendingCompact?: { instructions?: string; reason: string };
+  pendingCompact?: { instructions?: string; reason: string; requireSuccess?: boolean };
   retry?: { status: string; retryId?: number };
   graph?: unknown;
 }
@@ -72,6 +73,9 @@ export async function createManagedKit(options: ManagedKitOptions): Promise<Mana
       ? (options.restore as SavedKit)
       : { version: 1 as const };
   const state: SavedKit = { ...saved };
+  // Explicit model handoffs retry through their ordered RPC transaction. Do not
+  // replay a failed handoff during bootstrap (or when the user restores the old pin).
+  if (state.pendingCompact?.requireSuccess) delete state.pendingCompact;
   let runtime: AgentSessionRuntime | undefined;
   let context: ExtensionContext | undefined;
   let paused = false;
@@ -224,7 +228,7 @@ export async function createManagedKit(options: ManagedKitOptions): Promise<Mana
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
-    additionalExtensionPaths: [installation.extensionPaths[3]!],
+    additionalExtensionPaths: [installation.extensionPaths[3]!, installation.extensionPaths[5]!],
     systemPrompt: options.instructions,
     extensionFactories: [
       {
@@ -284,6 +288,11 @@ export async function createManagedKit(options: ManagedKitOptions): Promise<Mana
   });
   try {
     await loader.reload();
+    const visibility = loader
+      .getExtensions()
+      .extensions.find((extension) => extension.path === installation.extensionPaths[5]);
+    if (!visibility) throw new Error("Managed pi-hide-providers extension unavailable");
+    manageModelVisibilityExtension(visibility, scratch);
   } catch (error) {
     await rm(scratch, { recursive: true, force: true });
     process.env.PI_CODING_AGENT_DIR = previousAgentDir;
@@ -316,11 +325,12 @@ export async function createManagedKit(options: ManagedKitOptions): Promise<Mana
   const source = () =>
     createHash("sha256")
       .update(
-        JSON.stringify(
-          runtime?.session.sessionManager
+        JSON.stringify({
+          contextWindow: runtime?.session.model?.contextWindow,
+          entries: runtime?.session.sessionManager
             .getBranch()
             .filter((entry) => entry.type === "message" || entry.type === "custom_message"),
-        ),
+        }),
       )
       .digest("hex");
   const compactIdle = async () => {
@@ -338,12 +348,12 @@ export async function createManagedKit(options: ManagedKitOptions): Promise<Mana
     try {
       await runtime.session.compact(instructions);
     } catch (error) {
-      // Public Pi API reports an unchanged/small deterministic window as cancellation.
-      // Never fall back to a paid summary, and never suppress broker/lease/model failures.
+      // Only the SDK's explicit empty-window result is a no-op. Fabric cancellation
+      // also covers budget failures and aborts, so it must stay visible and retryable.
       if (
         paused ||
         !(error instanceof Error) ||
-        !["Nothing to compact (session too small)", "Compaction cancelled"].includes(error.message)
+        error.message !== "Nothing to compact (session too small)"
       )
         throw error;
     }
@@ -382,13 +392,17 @@ export async function createManagedKit(options: ManagedKitOptions): Promise<Mana
       if (paused || disposed) throw new Error("Managed execution paused");
       await graph.setPlacement(placement);
     },
-    async compact(instructions) {
+    async compact(instructions, controlOptions) {
       if (paused || disposed) throw new Error("Managed execution paused");
       if (!runtime || runtime.session.isStreaming)
         throw new Error("Compaction requires an idle participant");
       if (instructions === "__pi_vcc__")
         throw new Error("Compaction engine override is not permitted");
-      state.pendingCompact = { reason: "queue-command", instructions };
+      state.pendingCompact = {
+        reason: "queue-command",
+        instructions,
+        requireSuccess: controlOptions?.requireSuccess,
+      };
       await options.checkpoint();
       await compactIdle();
       await reporting;

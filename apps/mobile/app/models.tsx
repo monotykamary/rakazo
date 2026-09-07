@@ -20,6 +20,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ModelRoutingSettings } from "../components/ModelRoutingSettings";
+import { ModelVisibilitySettings } from "../components/ModelVisibilitySettings";
 import { type MobileMe, type MobileModel, type MobileModelCredential, rpc } from "../lib/api";
 import { mobileTokens } from "../lib/appearance";
 import { useI18n } from "../lib/i18n";
@@ -83,9 +84,7 @@ export default function Models() {
       rpc<MobileModelCredential[]>("models/credentials"),
     ]);
     const nextProvider =
-      (preferred.provider && nextCatalog.some((entry) => entry.provider === preferred.provider)
-        ? preferred.provider
-        : nextMe.defaultProvider) ??
+      (preferred.provider ? preferred.provider : nextMe.defaultProvider) ??
       nextCatalog[0]?.provider ??
       "";
     const nextCredential = nextCredentials.find((entry) => entry.provider === nextProvider);
@@ -95,14 +94,10 @@ export default function Models() {
           nextCredential?.modelId ||
           (nextMe.defaultProvider === OPENAI_COMPATIBLE_PROVIDER_ID ? nextMe.defaultModel : "") ||
           ""
-        : (nextCatalog.find(
-            (entry) => entry.provider === nextProvider && entry.id === preferred.modelId,
-          )?.id ??
-          nextCatalog.find(
-            (entry) => entry.provider === nextProvider && entry.id === nextMe.defaultModel,
-          )?.id ??
-          nextCatalog.find((entry) => entry.provider === nextProvider)?.id ??
-          "");
+        : (preferred.provider === nextProvider ? preferred.modelId : "") ||
+          (nextMe.defaultProvider === nextProvider ? nextMe.defaultModel : "") ||
+          nextCatalog.find((entry) => entry.provider === nextProvider)?.id ||
+          "";
     setMe(nextMe);
     setCatalog(nextCatalog);
     setCredentials(nextCredentials);
@@ -156,7 +151,9 @@ export default function Models() {
     return featuredProviders.map((entry) => byId.get(entry.provider)!);
   }, [groups, featuredProviders, showAllProviders]);
   const modelsForProvider = catalog.filter((entry) => entry.provider === provider);
-  const selected = modelsForProvider.find((entry) => entry.id === modelId) ?? modelsForProvider[0];
+  const selected =
+    modelsForProvider.find((entry) => entry.id === modelId) ??
+    (modelId && provider !== OPENAI_COMPATIBLE_PROVIDER_ID ? undefined : modelsForProvider[0]);
   const isOpenAiCompatible = provider === OPENAI_COMPATIBLE_PROVIDER_ID;
   const credential = credentials.find((entry) => entry.provider === provider);
   const currentEntry = catalog.find(
@@ -451,6 +448,14 @@ export default function Models() {
           ) : null}
         </View>
 
+        <ModelVisibilitySettings
+          onChanged={async () => setCatalog(await rpc<MobileModel[]>("models/list", {}))}
+        />
+        {modelId && !selected ? (
+          <Text style={styles.secondary}>
+            {modelId} · {t("Unavailable")}
+          </Text>
+        ) : null}
         {selected ? (
           <>
             {!isOpenAiCompatible ? <Text style={styles.sectionTitle}>{t("Model")}</Text> : null}
@@ -613,9 +618,7 @@ export default function Models() {
                 </Text>
                 <Text style={styles.secondary}>
                   {credential
-                    ? t(
-                        "Your key or subscription token is stored securely and is never shown here.",
-                      )
+                    ? t("Stored securely. Never shown here.")
                     : t("Connect this provider to use it as your personal model.")}
                 </Text>
               </View>

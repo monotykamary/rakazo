@@ -7,7 +7,13 @@
     "lib": ["ES2023", "DOM"],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"],
+      "react-native": ["./node_modules/react-native"],
+      "expo-modules-core": ["./node_modules/expo-modules-core"]
+    }
   },
   "include": ["app", "lib", "components"]
 }

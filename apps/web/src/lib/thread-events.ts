@@ -14,6 +14,7 @@ import {
   prependThreadHistoryPage,
   progressMessageId,
   reduceLiveMessageBlocks,
+  routineChangeMessage,
   runFailureError,
   subagentBlockFromPayload,
   takeLiveMessage,
@@ -243,6 +244,8 @@ export function prependThreadMessagePage(
 
 export function isThreadSnapshotEvent(event: ProductEvent): boolean {
   return (
+    event.type === "routine.created" ||
+    event.type === "routine.updated" ||
     event.type === "thread.cleared" ||
     event.type === "thread.progress" ||
     event.type === "thread.subagent" ||
@@ -263,6 +266,9 @@ export function reduceThreadSnapshot(
   event: ProductEvent,
 ): ThreadSnapshot | null {
   if (!prev) return prev;
+  const routine = routineChangeMessage(event);
+  if (routine)
+    return { ...prev, cursor: event.seq, messages: upsertMessageById(prev.messages, routine) };
   if (event.type === "thread.cleared") {
     return {
       ...prev,

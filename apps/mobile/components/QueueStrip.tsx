@@ -25,6 +25,7 @@ import { useMobileTokens } from "../lib/native";
 import { pickFromLibrary } from "../lib/pick-attachments";
 import { type QueueClient, queueRows, useExecution, useQueue } from "../lib/use-queue";
 import { ExecutionFlowList } from "./ExecutionFlowList";
+import { ModelSelectionControl } from "./ModelSelectionControl";
 
 const executionClient: ExecutionClient = {
   inspect: async (input) => ExecutionInspectionSchema.parse(await rpc("execution/inspect", input)),
@@ -39,38 +40,44 @@ export function GroupQueueStrip({
   threadId,
   members,
   runIds,
+  initialView,
+  onClose,
 }: {
   threadId: string;
   members: { botId: string; name: string }[];
   runIds: string[];
+  initialView?: "queue" | "execution";
+  onClose?: () => void;
 }) {
   const { t } = useI18n();
   const tokens = useMobileTokens();
   const [selected, setSelected] = useState(members[0]?.botId ?? "");
-  const [choosing, setChoosing] = useState(false);
+  const [choosing, setChoosing] = useState(Boolean(initialView) && members.length > 1);
   const member = members.find((item) => item.botId === selected) ?? members[0];
   if (!member) return null;
   return (
     <View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={t("Queue for bot")}
-        style={styles.button}
-        onPress={() => setChoosing(true)}
-      >
-        <Text style={{ color: tokens.foreground }}>{member.name}</Text>
-      </Pressable>
+      {!initialView && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t("Queue for bot")}
+          style={styles.button}
+          onPress={() => setChoosing(true)}
+        >
+          <Text style={{ color: tokens.foreground }}>{member.name}</Text>
+        </Pressable>
+      )}
       <Modal
         visible={choosing}
         presentationStyle="pageSheet"
         animationType="slide"
-        onRequestClose={() => setChoosing(false)}
+        onRequestClose={() => (onClose ? onClose() : setChoosing(false))}
       >
         <View style={[styles.sheet, { backgroundColor: tokens.background }]}>
           <Pressable
             accessibilityRole="button"
             style={styles.button}
-            onPress={() => setChoosing(false)}
+            onPress={() => (onClose ? onClose() : setChoosing(false))}
           >
             <Text style={{ color: tokens.foreground }}>{t("Close")}</Text>
           </Pressable>
@@ -93,12 +100,16 @@ export function GroupQueueStrip({
           />
         </View>
       </Modal>
-      <QueueStrip
-        key={`${threadId}:${member.botId}`}
-        threadId={threadId}
-        botId={member.botId}
-        runIds={runIds}
-      />
+      {!choosing && (
+        <QueueStrip
+          key={`${threadId}:${member.botId}`}
+          threadId={threadId}
+          botId={member.botId}
+          runIds={runIds}
+          initialView={initialView}
+          onClose={onClose}
+        />
+      )}
     </View>
   );
 }
@@ -107,10 +118,14 @@ export function QueueStrip({
   threadId,
   botId,
   runIds = [],
+  initialView,
+  onClose,
 }: {
   threadId: string;
   botId: string;
   runIds?: string[];
+  initialView?: "queue" | "execution";
+  onClose?: () => void;
 }) {
   const { t } = useI18n();
   const tokens = useMobileTokens();
@@ -118,8 +133,10 @@ export function QueueStrip({
   const { snapshot, error, busy: queueBusy, mutate } = queue;
   const [attaching, setAttaching] = useState(false);
   const busy = queueBusy || attaching;
-  const [open, setOpen] = useState(false);
-  const [inspect, setInspect] = useState(false);
+  const [open, setOpen] = useState(initialView === "queue");
+  const [inspect, setInspect] = useState(initialView === "execution");
+  const closeQueue = () => (onClose ? onClose() : setOpen(false));
+  const closeInspect = () => (onClose ? onClose() : setInspect(false));
   const [text, setText] = useState("");
   const [images, setImages] = useState<Images>([]);
   const [lane, setLane] = useState<"steer" | "followUp">("followUp");
@@ -207,29 +224,31 @@ export function QueueStrip({
   }
   return (
     <View>
-      <View style={styles.controls}>
-        {button(
-          `${t("Queue")} · ${snapshot?.rows.length ?? "…"}${snapshot?.paused ? ` · ${t("Paused")}` : ""}`,
-          () => setOpen(true),
-          false,
-        )}
-        {error || snapshot?.errorHold || snapshot?.uncertainRowIds.length ? (
-          <Text style={{ color: tokens.destructive }}>{t("Needs attention")}</Text>
-        ) : null}
-        {runIds.length > 0 && button(t("Execution"), () => setInspect(true), false)}
-      </View>
+      {!initialView && (
+        <View style={styles.controls}>
+          {button(
+            `${t("Queue")} · ${snapshot?.rows.length ?? "…"}${snapshot?.paused ? ` · ${t("Paused")}` : ""}`,
+            () => setOpen(true),
+            false,
+          )}
+          {error || snapshot?.errorHold || snapshot?.uncertainRowIds.length ? (
+            <Text style={{ color: tokens.destructive }}>{t("Needs attention")}</Text>
+          ) : null}
+          {runIds.length > 0 && button(t("Execution"), () => setInspect(true), false)}
+        </View>
+      )}
       <Modal
         visible={open}
         presentationStyle="pageSheet"
         animationType="slide"
-        onRequestClose={() => setOpen(false)}
+        onRequestClose={closeQueue}
       >
         <View style={[styles.sheet, { backgroundColor: tokens.background }]}>
           <View style={styles.controls}>
             <Text accessibilityRole="header" style={labelStyle}>
               {t("Queue")}
             </Text>
-            {button(t("Close"), () => setOpen(false), false)}
+            {button(t("Close"), closeQueue, false)}
           </View>
           {error && (
             <Text accessibilityRole="alert" style={{ color: tokens.destructive }}>
@@ -401,11 +420,19 @@ export function QueueStrip({
         visible={inspect}
         presentationStyle="pageSheet"
         animationType="slide"
-        onRequestClose={() => setInspect(false)}
+        onRequestClose={closeInspect}
       >
         <View style={[styles.sheet, { backgroundColor: tokens.background }]}>
-          {button(t("Close"), () => setInspect(false), false)}
-          {inspect && <ExecutionList key={`${threadId}:${botId}`} runIds={runIds} queue={queue} />}
+          {button(t("Close"), closeInspect, false)}
+          {inspect && (
+            <ExecutionList
+              key={`${threadId}:${botId}`}
+              runIds={runIds}
+              queue={queue}
+              botId={botId}
+              threadId={threadId}
+            />
+          )}
         </View>
       </Modal>
     </View>
@@ -414,38 +441,67 @@ export function QueueStrip({
 
 type SteeringQueue = ReturnType<typeof useQueue>;
 
-function ExecutionList({ runIds, queue }: { runIds: string[]; queue: SteeringQueue }) {
+function ExecutionList({
+  runIds,
+  queue,
+  botId,
+  threadId,
+}: {
+  runIds: string[];
+  queue: SteeringQueue;
+  botId: string;
+  threadId: string;
+}) {
   const { t } = useI18n();
   const tokens = useMobileTokens();
   const [runId, setRunId] = useState(runIds[0] ?? "");
+  const runs = [...new Set([...runIds, runId])].filter(Boolean);
   return (
     <View style={{ flex: 1 }}>
-      <ScrollView horizontal style={{ flexGrow: 0 }}>
-        {[...new Set([...runIds, runId])].map((id) => (
-          <Pressable
-            key={id}
-            accessibilityRole="button"
-            accessibilityState={{ selected: runId === id }}
-            onPress={() => setRunId(id)}
-            style={styles.button}
-          >
-            <Text style={{ color: tokens.foreground }}>{id}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-      <Text accessibilityRole="header" style={{ color: tokens.foreground }}>
-        {t("Execution")}
-      </Text>
-      {runId && <ExecutionEvents key={runId} runId={runId} onRun={setRunId} queue={queue} />}
+      {runs.length > 1 && (
+        <ScrollView horizontal style={{ flexGrow: 0 }}>
+          {runs.map((id, index) => (
+            <Pressable
+              key={id}
+              accessibilityRole="button"
+              accessibilityState={{ selected: runId === id }}
+              onPress={() => setRunId(id)}
+              style={styles.button}
+            >
+              <Text style={{ color: tokens.foreground }}>
+                {t("Run {number}", { number: index + 1 })}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      )}
+      {!runId && <Text style={{ color: tokens.mutedForeground }}>{t("No retained events")}</Text>}
+      {runId && (
+        <ExecutionEvents
+          key={runId}
+          runId={runId}
+          runIds={runs}
+          onRun={setRunId}
+          queue={queue}
+          botId={botId}
+          threadId={threadId}
+        />
+      )}
     </View>
   );
 }
 function ExecutionEvents({
   runId,
+  runIds,
   onRun,
   queue,
+  botId,
+  threadId,
 }: {
+  botId: string;
+  threadId: string;
   runId: string;
+  runIds: string[];
   onRun: (runId: string) => void;
   queue: SteeringQueue;
 }) {
@@ -459,13 +515,21 @@ function ExecutionEvents({
   const [expanded, setExpanded] = useState<string>();
   return (
     <>
-      <Text style={{ color: tokens.mutedForeground }}>
-        {data?.participants
-          .map((item) => item.name ?? item.participantId ?? item.botId)
-          .join(" · ")}
-      </Text>
+      {data?.participants
+        .filter((participant) => participant.botId === botId && participant.participantId)
+        .map((participant, index) => (
+          <View key={`model:${participant.participantId}`}>
+            <Text style={{ color: tokens.mutedForeground }}>
+              {participant.name ?? t("Participant {number}", { number: index + 1 })}
+            </Text>
+            <ModelSelectionControl
+              botId={botId}
+              worker={{ threadId, participantId: participant.participantId! }}
+            />
+          </View>
+        ))}
       {data &&
-        queue.steeringParticipants(data).map((participant) => (
+        queue.steeringParticipants(data).map((participant, index) => (
           <Pressable
             key={participant.participantId}
             accessibilityRole="button"
@@ -476,7 +540,8 @@ function ExecutionEvents({
             }}
           >
             <Text style={{ color: tokens.foreground }}>
-              {t("Steer participant")} · {participant.name ?? participant.participantId}
+              {t("Steer participant")} ·{" "}
+              {participant.name ?? t("Participant {number}", { number: index + 1 })}
             </Text>
           </Pressable>
         ))}
@@ -486,7 +551,13 @@ function ExecutionEvents({
           <View>
             <Text style={{ color: tokens.foreground }}>
               {queue.steeringParticipants(data).find((item) => item.participantId === target)
-                ?.name ?? target}
+                ?.name ??
+                t("Participant {number}", {
+                  number:
+                    queue
+                      .steeringParticipants(data)
+                      .findIndex((item) => item.participantId === target) + 1,
+                })}
             </Text>
             <TextInput
               accessibilityLabel={t("Message to participant")}
@@ -542,7 +613,13 @@ function ExecutionEvents({
       {flow && data ? (
         <ExecutionFlowList
           flow={data.flow}
-          onRun={onRun}
+          rootRunId={runId}
+          runIds={runIds}
+          onRun={(id) => {
+            setEvidence(undefined);
+            setFlow(false);
+            onRun(id);
+          }}
           onEvidence={(ids) => {
             setEvidence(ids);
             setFlow(false);

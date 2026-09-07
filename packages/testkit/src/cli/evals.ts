@@ -130,11 +130,11 @@ async function main() {
       CLOUD_AGENT_PROVIDER: "",
       MODEL_API_KEY: "",
     });
-    execFileSync("pnpm", ["--filter", "@rakazo/db", "generate"], {
+    execFileSync("bun", ["run", "--filter", "@rakazo/db", "generate"], {
       stdio: "pipe",
       timeout: 120_000,
     });
-    execFileSync("pnpm", ["--filter", "@rakazo/db", "exec", "prisma", "migrate", "deploy"], {
+    execFileSync("bun", ["run", "--cwd", "packages/db", "prisma", "migrate", "deploy"], {
       stdio: "pipe",
       timeout: 120_000,
     });

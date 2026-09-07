@@ -45,13 +45,13 @@ describe("configured model selection", () => {
       },
     },
     {
-      name: "drops override thinking when its provider has no credential",
+      name: "preserves exact pin and thinking when its credential is unavailable",
       input: { bot },
       expected: {
-        provider: "space-provider",
-        id: "space-model",
-        credential: spaceCredential,
-        thinkingLevel: null,
+        provider: "bot-provider",
+        id: "bot-model",
+        credential: null,
+        thinkingLevel: "high",
       },
     },
     {

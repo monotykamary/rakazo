@@ -17,8 +17,8 @@ on:
       - "infra/updater/**"
       - "packages/**"
       - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
+      - "bun.lock"
+      - "bunfig.toml"
   workflow_dispatch:
 
 permissions:

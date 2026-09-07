@@ -78,31 +78,34 @@ describe("provider-neutral computer workspace", () => {
 });
 
 describe("Team run checkpoints", () => {
-  it("defers a remote export when another run prevents an exclusive checkpoint", async () => {
-    const { checkpointRunComputerWorkspace } = await import("./computer-workspace.js");
-    const exportWorkspace = vi.fn();
-    const updateMany = vi.fn().mockResolvedValue({ count: 0 });
-    const deps = { sandbox: { exportWorkspace }, home: {}, prisma: { computer: { updateMany } } };
-    const result = await checkpointRunComputerWorkspace(
-      deps as never,
-      { id: "team", homeKey: "team", scope: "team" },
-      { id: "remote", providerRef: "remote", kind: "e2b", botId: "team" },
-      { ...context, botId: "writer", screenLeaseId: "run-a:2" },
-    );
-    expect(result).toBeUndefined();
-    expect(exportWorkspace).not.toHaveBeenCalled();
-    expect(updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          state: "running",
-          executionLeases: {
-            none: { expiresAt: { gt: expect.any(Date) }, NOT: { runId: "run-a", fence: 2 } },
-          },
+  it.each(["team", "dedicated"])(
+    "defers a %s export when another run prevents an exclusive checkpoint",
+    async (scope) => {
+      const { checkpointRunComputerWorkspace } = await import("./computer-workspace.js");
+      const exportWorkspace = vi.fn();
+      const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+      const deps = { sandbox: { exportWorkspace }, home: {}, prisma: { computer: { updateMany } } };
+      const result = await checkpointRunComputerWorkspace(
+        deps as never,
+        { id: "team", homeKey: "team", scope },
+        { id: "remote", providerRef: "remote", kind: "e2b", botId: "team" },
+        { ...context, botId: "writer", screenLeaseId: "run-a:2" },
+      );
+      expect(result).toBeUndefined();
+      expect(exportWorkspace).not.toHaveBeenCalled();
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            state: "running",
+            executionLeases: {
+              none: { expiresAt: { gt: expect.any(Date) }, NOT: { runId: "run-a", fence: 2 } },
+            },
+          }),
+          data: expect.objectContaining({ state: "suspending" }),
         }),
-        data: expect.objectContaining({ state: "suspending" }),
-      }),
-    );
-  });
+      );
+    },
+  );
 
   it("restores the running state when an exclusive remote export fails", async () => {
     const { checkpointRunComputerWorkspace } = await import("./computer-workspace.js");

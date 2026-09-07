@@ -16,7 +16,7 @@ describe("loadEnv", () => {
     expect(env.nodeEnv).toBe("test");
   });
 
-  it("keeps explicit emulator settings for pnpm test", () => {
+  it("keeps explicit emulator settings for bun run test", () => {
     const env = loadEnv({
       ...base,
       AGENT_RUNTIME: "scripted",

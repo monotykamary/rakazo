@@ -1322,6 +1322,25 @@ describeJourneys("required product journeys", () => {
     const home = path.join(dataDir, "homes", gone.id);
     expect(existsSync(home)).toBe(true);
 
+    // Attach spend to a real run so deletion exercises both bot and run lifecycles.
+    const goneRun = await prisma.run.findFirstOrThrow({ where: { botId: gone.id } });
+    const goneSpend = await prisma.usageRecord.create({
+      data: {
+        spaceId: goneRun.spaceId,
+        userId: goneRun.userId,
+        botId: gone.id,
+        runId: goneRun.id,
+        provider: "scripted",
+        model: "offline-accounting-model",
+        inputTokens: 1200,
+        outputTokens: 340,
+      },
+    });
+    const usageBefore = await rpc<{ inputTokens: number; outputTokens: number; runs: number }>(
+      app,
+      ada,
+      "usage/summary",
+    );
     const stolen = await raw(app, bob, "bots/archive", { botId: gone.id });
     expect(stolen.status).toBeGreaterThanOrEqual(400);
     expect((await rpc<Bot[]>(app, ada, "bots/list")).map((bot) => bot.id)).toContain(gone.id);
@@ -1351,11 +1370,36 @@ describeJourneys("required product journeys", () => {
       content: "important retained context",
     });
     expect(await prisma.botDeletion.findUniqueOrThrow({ where: { id: gone.id } })).toMatchObject({
+      name: "Gone",
       memoriesPreserved: true,
     });
     expect(await prisma.artifact.findUnique({ where: { id: goneArtifact.id } })).toBeNull();
     expect(existsSync(home)).toBe(false);
 
+    expect(await prisma.run.findUnique({ where: { id: goneRun.id } })).toBeNull();
+    expect(
+      await prisma.usageRecord.findUniqueOrThrow({ where: { id: goneSpend.id } }),
+    ).toMatchObject({
+      spaceId: goneRun.spaceId,
+      userId: goneRun.userId,
+      botId: gone.id,
+      runId: null,
+      provider: "scripted",
+      model: "offline-accounting-model",
+      inputTokens: 1200,
+      outputTokens: 340,
+    });
+    expect(await rpc(app, ada, "usage/summary")).toEqual(usageBefore);
+    const retainedUsage = await rpc<Array<{ id: string; runId: string | null }>>(
+      app,
+      ada,
+      "usage/list",
+    );
+    expect(retainedUsage).toContainEqual(
+      expect.objectContaining({ id: goneSpend.id, runId: null }),
+    );
+    const otherUsage = await rpc<Array<{ id: string }>>(app, bob, "usage/list");
+    expect(otherUsage.some((row) => row.id === goneSpend.id)).toBe(false);
     await rpc(app, ada, "bots/remove", { botId: forget.id, deleteMemories: true });
     expect(await prisma.memoryDocument.findUnique({ where: { id: forgetMemory.id } })).toBeNull();
   });

@@ -7,7 +7,19 @@ import { fileURLToPath } from "node:url";
 
 // Developer-only snapshot refresh. Runtime installation never needs sibling checkouts.
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const sources = ["pi-fabric", "pi-fovea", "pi-queue-steer", "pi-retry", "pi-multiprovider"];
+const allSources = [
+  "pi-fabric",
+  "pi-fovea",
+  "pi-queue-steer",
+  "pi-retry",
+  "pi-multiprovider",
+  "pi-hide-providers",
+];
+const args = process.argv.slice(2);
+if (args.length && (args.length !== 2 || args[0] !== "--only" || !allSources.includes(args[1]))) {
+  throw new Error(`Usage: vendor-pi-kit.mjs [--only ${allSources.join("|")}]`);
+}
+const sources = args.length ? [args[1]] : allSources;
 const destination = resolve(root, "vendor/pi-kit");
 const kitManifestPath = resolve(root, "packages/pi-kit/package.json");
 const manifest = JSON.parse(readFileSync(kitManifestPath, "utf8"));
@@ -15,6 +27,8 @@ const consumers = ["packages/core/package.json", "packages/adapters/package.json
   path: resolve(root, path),
   manifest: JSON.parse(readFileSync(resolve(root, path), "utf8")),
 }));
+const artifactManifestPath = resolve(destination, "manifest.json");
+const previous = JSON.parse(readFileSync(artifactManifestPath, "utf8"));
 const staging = mkdtempSync(resolve(tmpdir(), "rakazo-kit-pack-"));
 const records = [];
 try {
@@ -64,13 +78,18 @@ try {
   mkdirSync(destination, { recursive: true });
   for (const record of records)
     renameSync(resolve(staging, record.filename), resolve(destination, record.filename));
-  writeFileSync(
-    resolve(destination, "manifest.json"),
-    `${JSON.stringify({ version: 1, packages: records }, null, 2)}\n`,
-  );
+  // A targeted refresh must preserve every unselected archive identity and hash.
+  const replacements = new Map(records.map((record) => [record.name, record]));
+  const packages = previous.packages.map((record) => replacements.get(record.name) ?? record);
+  for (const record of records) {
+    if (!packages.some((entry) => entry.name === record.name)) packages.push(record);
+  }
+  writeFileSync(artifactManifestPath, `${JSON.stringify({ version: 1, packages }, null, 2)}\n`);
   writeFileSync(kitManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  for (const consumer of consumers)
-    writeFileSync(consumer.path, `${JSON.stringify(consumer.manifest, null, 2)}\n`);
+  for (const consumer of consumers) {
+    const content = `${JSON.stringify(consumer.manifest, null, 2)}\n`;
+    if (readFileSync(consumer.path, "utf8") !== content) writeFileSync(consumer.path, content);
+  }
   console.log(
     `Snapshotted ${records.length} extension packages. Update the lockfile and run kit verification before shipping.`,
   );

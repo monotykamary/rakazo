@@ -17,6 +17,7 @@ import {
   progressMessageId,
   readBoundedJsonResponse,
   reduceLiveMessageBlocks,
+  routineChangeMessage,
   runFailureError,
   signupRequiresEmailVerification,
   type ThreadHistory,
@@ -685,6 +686,8 @@ export function blockText(message: MobileMessage) {
 }
 
 type ThreadEvent = {
+  threadId?: string;
+  createdAt?: string;
   id?: string;
   botId?: string;
   type: string;
@@ -742,6 +745,19 @@ export function applyMobileThreadEvent(
   event: ThreadEvent,
 ): MobileSnapshot | null {
   if (!prev) return prev;
+  const routine = routineChangeMessage({
+    ...event,
+    id: event.id ?? "",
+    threadId: event.threadId ?? prev.threadId,
+    seq: event.seq ?? prev.cursor ?? 0,
+    createdAt: event.createdAt ?? "",
+  });
+  if (routine)
+    return {
+      ...prev,
+      cursor: event.seq ?? prev.cursor,
+      messages: upsertMessageById(prev.messages, routine),
+    };
   if (event.type === "thread.cleared") {
     return {
       ...prev,

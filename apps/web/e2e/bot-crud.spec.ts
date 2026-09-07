@@ -139,20 +139,67 @@ test("bot creation, editing, and deletion persist", async ({ page }, testInfo) =
   await expect(descriptionInput).toHaveValue("Builds durable, source-backed research briefs.");
   await captureScreenshot(page, testInfo, "29-reloaded-bot-profile");
 
-  const atlas = botList.getByRole("button", { name: /^Atlas/ });
-  await atlas.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Delete" }).click();
-  await expect(page.getByRole("alertdialog", { name: "Delete Atlas?" })).toBeVisible();
-  await captureScreenshot(page, testInfo, "30-delete-bot-confirmation");
-  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  const longName = "A".repeat(48);
+  await nameInput.fill(longName);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  const longNameBot = botList.getByRole("button", { name: new RegExp(`^${longName}`) });
+  await expect(longNameBot).toBeVisible();
+  await expect(page.getByPlaceholder(`Message ${longName}`)).toBeVisible();
+  const dialogFits = (element: Element) => {
+    const box = element.getBoundingClientRect();
+    return (
+      box.left >= 0 &&
+      box.top >= 0 &&
+      box.right <= innerWidth + 1 &&
+      box.bottom <= innerHeight + 1 &&
+      [element, ...element.querySelectorAll("*")].every(
+        (item) => item.scrollWidth <= item.clientWidth + 1,
+      )
+    );
+  };
+  await longNameBot.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Clear conversation", exact: true }).click();
+  const clearDialog = page.getByRole("alertdialog", { name: `Clear ${longName}’s conversation?` });
+  await expect(clearDialog).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 420 });
+  await expect.poll(() => clearDialog.evaluate(dialogFits)).toBe(true);
+  await captureScreenshot(page, testInfo, "29b-long-name-clear-dialog");
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1280, height: 720 });
 
-  await expect(botList.getByText("Atlas", { exact: true })).toHaveCount(0);
+  await longNameBot.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+  const deleteDialog = page.getByRole("alertdialog", { name: `Delete ${longName}?` });
+  await expect(deleteDialog).toBeVisible();
+  await expect
+    .poll(() =>
+      deleteDialog.getByRole("radio").evaluateAll(
+        (radios) =>
+          radios.length === 2 &&
+          radios.every((radio) => {
+            const box = radio.getBoundingClientRect();
+            return box.width > 0 && Math.abs(box.width - box.height) < 1;
+          }),
+      ),
+    )
+    .toBe(true);
+  await page.setViewportSize({ width: 390, height: 420 });
+  await expect.poll(() => deleteDialog.evaluate(dialogFits)).toBe(true);
+  await captureScreenshot(page, testInfo, "30-delete-bot-confirmation");
+  const deleteButton = deleteDialog.getByRole("button", { name: "Delete", exact: true });
+  await deleteButton.scrollIntoViewIfNeeded();
+  await expect(deleteButton).toBeInViewport();
+  await captureScreenshot(page, testInfo, "30b-delete-bot-actions");
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await deleteButton.click();
+
+  await expect(botList.getByText(longName, { exact: true })).toHaveCount(0);
   await expect(botList.getByRole("button", { name: /^Chief/ })).toBeVisible();
   await page.waitForURL((url) => url.pathname !== deletedBotPath);
 
   await page.goto(deletedBotPath);
   await page.waitForURL((url) => url.pathname !== deletedBotPath);
-  await expect(botList.getByText("Atlas", { exact: true })).toHaveCount(0);
+  await expect(botList.getByText(longName, { exact: true })).toHaveCount(0);
   await expect(botList.getByRole("button", { name: /^Chief/ })).toBeVisible();
   await expect(page.getByPlaceholder("Message Chief")).toBeVisible();
   await captureScreenshot(page, testInfo, "31-deleted-bot-fallback");

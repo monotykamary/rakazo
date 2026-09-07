@@ -44,6 +44,8 @@ vi.mock("./pi-rpc-transport.js", async (original) => {
   return {
     ...actual,
     JsonPeer: class {
+      private model: JsonRecord | undefined;
+      private thinkingLevel: unknown = "off";
       constructor(
         _port: PrivateDuplex,
         _handle: unknown,
@@ -53,7 +55,17 @@ vi.mock("./pi-rpc-transport.js", async (original) => {
         if (!stock)
           queueMicrotask(() => observe({ type: "hello", version: 1, runtimeVersion: "0.85.1" }));
       }
-      async request(operation: string) {
+      async request(operation: string, data: JsonRecord = {}) {
+        if (operation === "set_model") this.model = { provider: data.provider, id: data.modelId };
+        if (operation === "set_thinking_level") this.thinkingLevel = data.level;
+        if (operation === "get_state")
+          return {
+            model: this.model,
+            thinkingLevel: this.thinkingLevel,
+            isStreaming: false,
+            isCompacting: false,
+            pendingMessageCount: 0,
+          };
         if (operation === "compact") return compactReply();
         if (operation === "prompt") this.observe({ type: "agent_settled" });
         return { version: 1, runtimeVersion: "0.85.1", nativeTools: false };
@@ -295,6 +307,9 @@ describe("managed delegation admission", () => {
     const f = fixture();
     await f.run(
       async (_root, control) => {
+        // Restoring the root first compacts for its verified model handoff.
+        expect(compactReply).toHaveBeenCalledTimes(1);
+        compactReply.mockClear();
         const context = { id: "command", signal: new AbortController().signal };
         expect(await control.command({ kind: "compact" }, context)).toEqual({
           outcome: "completed",

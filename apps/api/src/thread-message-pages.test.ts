@@ -4,10 +4,78 @@ import {
   isPeerRun,
   loadAllMessages,
   loadMessagePage,
+  loadPeerMessagePage,
   shouldForwardPeerThreadEvent,
 } from "./thread-message-pages.js";
 
 describe("thread message pages", () => {
+  it("reads one bounded peer page and never returns unrelated blocks", async () => {
+    const sent = {
+      kind: "bot_message_sent",
+      toBotId: "peer",
+      toBotName: "Helper",
+      text: "Review Atlas",
+    };
+    const received = {
+      kind: "bot_message_received",
+      fromBotId: "peer",
+      fromBotName: "Helper",
+      text: "Reviewed",
+    };
+    const row = (seq: number, blocks: unknown[]) => ({
+      id: `message-${seq}`,
+      threadId: "owned-thread",
+      seq,
+      role: "system",
+      blocks,
+      botId: "owner-bot",
+      replyToMessageId: null,
+      runId: null,
+      thumbsUp: false,
+      createdAt: new Date("2026-09-07T00:00:00Z"),
+    });
+    const findMany = vi.fn(async () => [
+      row(9, [received, { kind: "text", text: "Unrelated private transcript" }]),
+      row(5, [sent, { ...sent, toBotId: "another-peer" }]),
+      row(2, [sent]),
+    ]);
+    const prisma = { message: { findMany } } as unknown as PrismaClient;
+    const page = await loadPeerMessagePage(prisma, {
+      threadId: "owned-thread",
+      peerBotId: "peer",
+      before: 10,
+      pageSize: 2,
+    });
+    expect(findMany).toHaveBeenCalledExactlyOnceWith({
+      where: {
+        threadId: "owned-thread",
+        seq: { lt: 10 },
+        OR: [
+          { blocks: { array_contains: [{ kind: "bot_message_sent", toBotId: "peer" }] } },
+          { blocks: { array_contains: [{ kind: "bot_message_received", fromBotId: "peer" }] } },
+        ],
+      },
+      orderBy: { seq: "desc" },
+      take: 3,
+    });
+    expect(page.messages.map((message) => message.seq)).toEqual([5, 9]);
+    expect(page.messages.map((message) => message.blocks)).toEqual([[sent], [received]]);
+    expect(page.olderCursor).toBe(5);
+  });
+
+  it("does not scan or auto-fetch earlier pages for an empty peer conversation", async () => {
+    const findMany = vi.fn(async () => []);
+    const prisma = { message: { findMany } } as unknown as PrismaClient;
+    await expect(
+      loadPeerMessagePage(prisma, { threadId: "owned-thread", peerBotId: "peer", pageSize: 60 }),
+    ).resolves.toEqual({
+      threadId: "owned-thread",
+      messages: [],
+      olderCursor: null,
+    });
+    expect(findMany).toHaveBeenCalledOnce();
+    expect(findMany.mock.calls[0]?.[0]).not.toHaveProperty("where.seq");
+  });
   it("caches peer-run classification for live events", async () => {
     const findUnique = vi.fn(async () => ({ trigger: "bot_message" }));
     const prisma = { run: { findUnique } } as unknown as PrismaClient;

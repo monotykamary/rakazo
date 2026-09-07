@@ -113,7 +113,15 @@ export default function Layout() {
                 <Stack.Screen name="group-settings" options={{ title: t("Group settings") }} />
                 <Stack.Screen name="bot-settings" options={{ title: t("Chat settings") }} />
                 <Stack.Screen name="thread" options={{ title: t("Thread") }} />
-                <Stack.Screen name="routine" options={{ title: t("Routine") }} />
+                <Stack.Screen
+                  name="routine"
+                  options={{
+                    title: t("Routine"),
+                    presentation: "formSheet",
+                    sheetAllowedDetents: [0.75, 1],
+                    sheetGrabberVisible: true,
+                  }}
+                />
                 <Stack.Screen name="computer" options={{ title: t("Computer") }} />
               </Stack>
             </ThemeProvider>
