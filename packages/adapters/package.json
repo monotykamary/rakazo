@@ -31,7 +31,7 @@
     "@rakazo/db": "workspace:*",
     "@rakazo/logging": "workspace:*",
     "@rakazo/pi-kit": "workspace:*",
-    "pi-multiprovider": "file:../../vendor/pi-kit/pi-multiprovider-0.2.9-46e2d86bf274.tgz",
+    "pi-multiprovider": "file:../../vendor/pi-kit/pi-multiprovider-0.2.10-7f54b802745f.tgz",
     "chat": "4.39.0",
     "chat-adapter-lark": "0.3.1",
     "chat-adapter-sendblue": "0.2.0",

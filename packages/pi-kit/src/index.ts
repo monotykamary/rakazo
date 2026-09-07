@@ -6,23 +6,23 @@ export const PI_RUNTIME_VERSION = "0.85.1";
 
 /** Reviewed together; never resolve floating extension versions at session startup. */
 export const PI_KIT_PACKAGES = [
-  { name: "pi-fabric", version: "0.88.1", entry: "pi-fabric", extensions: ["dist/index.js"] },
-  { name: "pi-fovea", version: "0.22.0", entry: "pi-fovea/ops", extensions: ["src/index.ts"] },
+  { name: "pi-fabric", version: "0.88.2", entry: "pi-fabric", extensions: ["dist/index.js"] },
+  { name: "pi-fovea", version: "0.22.1", entry: "pi-fovea/ops", extensions: ["src/index.ts"] },
   {
     name: "pi-queue-steer-factory",
-    version: "0.16.1",
+    version: "0.16.2",
     entry: "pi-queue-steer-factory/headless",
     extensions: ["index.ts"],
   },
   {
     name: "@monotykamary/pi-retry",
-    version: "0.8.5",
+    version: "0.8.6",
     entry: "@monotykamary/pi-retry/package.json",
     extensions: ["retry.ts"],
   },
   {
     name: "pi-multiprovider",
-    version: "0.2.9",
+    version: "0.2.10",
     entry: "pi-multiprovider",
     extensions: ["extensions/multiprovider.ts"],
   },

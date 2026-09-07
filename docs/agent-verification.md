@@ -12,12 +12,14 @@ model can demonstrate that it chooses a useful action for a natural request.
 | Computer replay | Pi, browser tool handlers, page state | Model endpoint, browser and sandbox | `pnpm test` |
 | Docker computer replay | Pi, supervisor, Chromium, page helper, downloads and files | Model endpoint, local fixture website | `pnpm test:computer-replay` |
 | Agent quality | Product API, Postgres, executor, Pi, real model | Sandbox and connected services | `pnpm test:evals --live ...` |
-| Vision acceptance | Product API, Pi, real vision model, E2B desktop | Fixture website | `pnpm test:computer` |
+| Vision acceptance | Product API, Pi, real vision model, Box or E2B desktop | Fixture website | `pnpm test:computer` |
 
-Default and PR tests never require paid inference. The nightly topology job also
-runs the Docker replay. Real-model quality runs are separate nightly evidence,
-not a deterministic PR gate. Missing live credentials mean **not run**, not a
-passing model evaluation.
+Default and PR tests never require paid inference. Nightly runs only the web
+tests with emulated providers. Docker topology and browser replay have a manual
+workflow; hosted sandboxes and real-model quality runs require an explicit local
+command. Nightly verification never starts computer sandboxes or requests model
+or sandbox credentials.
+Missing live credentials mean **not run**, not a passing model evaluation.
 
 ## Deterministic Pi tests
 
@@ -60,26 +62,57 @@ to an existing browser. It owns and cleans up its test resources. It exercises
 the runtime and computer boundary; it does not claim UI, approval, or database
 executor coverage.
 
-These are authored synthetic scenarios, not recordings of a successful live
-model run. To add a regression from a real failure, reduce it to synthetic data,
-remove credentials and unstable identifiers, and encode meaningful state
-transitions. Resolve fresh page references instead of replaying old reference
-IDs. For coordinate scenarios, control the viewport and fixture layout.
+The suite includes authored failure scenarios and a contacts-export recording
+captured with Luna through OpenRouter against real Docker Chromium. Replay uses
+the HTTP model emulator with real Pi and resolves fresh page references. Tests
+cover cancellation, a transient download failure, workspace restoration, and
+an interrupted model stream after export without duplicating the export.
+Separate Postgres integration tests verify that computer actions wait for
+approval, execute the approved payload once, and have no effects after denial.
+
+To capture another successful run manually:
+
+```bash
+# Requires OPENROUTER_API_KEY; incurs inference usage, with a local Docker sandbox.
+pnpm test:computer-replay --image=rakazo/computer:local \
+  --live --record=new-fixture.json
+```
+
+The recorder accepts only this synthetic contacts scenario. Its closed
+vocabulary retains action names, known button labels and success/error outcomes;
+it excludes model prose, raw responses, URLs, credentials, IDs, element refs and
+screenshots. A new fixture is written only after both live execution and an
+immediate offline replay produce the exact CSV and exactly one export. Failed
+attempts print only the sanitized decisions and do not publish a fixture.
+
+This records semantic browser actions, not coordinate or vision decisions.
+Box currently lacks the page-browser capability used here, so this capture uses
+local Docker. Box remains the default for the separate screenshot/coordinate
+acceptance journey. One successful captured run demonstrates replay coverage;
+it does not measure the live model's reliability.
 
 ## Live computer acceptance
 
-Run a vision-capable model through OpenRouter against a real E2B desktop:
+Run a vision-capable model through OpenRouter against a real Box desktop:
 
 ```bash
 COMPUTER_E2E_MODEL=openai/gpt-5.6-luna pnpm test:computer
+# Run the same checks against E2B when provider-specific verification is needed:
+COMPUTER_E2E_MODEL=openai/gpt-5.6-luna pnpm test:computer --sandbox e2b
 ```
 
-This opt-in test requires `OPENROUTER_API_KEY` and `E2B_API_KEY` and incurs
-inference and sandbox usage. It checks visual observation, a real browser click,
+Box is the default regardless of the application's sandbox setting. This opt-in
+test requires `OPENROUTER_API_KEY` and the selected sandbox's credential
+(`BOX_API_KEY` or `E2B_API_KEY`) and incurs inference and sandbox usage.
+It checks visual observation, a real browser click,
 terminal access and exact file contents. It then destroys the sandbox outside
 the app and calls `computer/recover`, requiring a new sandbox with the saved
 file restored. `computer/boot` returns the stored running state and does not
 request recovery from an externally deleted sandbox.
+
+Both providers run the same assertions. This journey does not cover PTY sessions
+or multiple screens, which Box does not support. Provider conformance tests
+remain separate. Live runs retain error logs to diagnose provider failures.
 
 ## Real-model quality
 
@@ -104,20 +137,35 @@ and synthetic services; it does not use production application data. Each trial
 uses fresh accounts and services. The runner disables its routines and cancels
 its work before proceeding; cleanup failure leaves remaining trials not run.
 
-Nightly runs accept the same connection JSON through the `MODEL_CONNECTION_JSON`
-repository secret, including compatible endpoints. When absent, they reuse the
-existing OpenRouter canary credential and configured default model. Connection
-credentials are available only to the prerequisite and live execution steps.
+Live evaluations run only through an explicit local CLI invocation. They are
+not scheduled by the nightly workflow.
+
+The September 2026 Luna/OpenRouter baseline passed all 15 cases over three
+trials each (45/45) after correcting the harness. The initial run passed 41/45:
+one shell command was falsely reported successful by the fake sandbox, and
+three correct outcomes failed overly narrow wording checks. Regression tests
+cover those fixes; the original report remains separate from the corrected run.
 
 The suite covers artifacts and calculations, inbox grounding and injected
 instructions, precise and read-only CRM operations, approval payloads, uncertain
 writes, durable preferences, workspace memory isolation, saved taught playbooks,
-and GitHub release monitoring. The 15 cases include a saved playbook applied to
-new input; they do not evaluate visual teaching or native mobile recording.
+GitHub release monitoring, and a Slack-to-Salesforce-and-Zendesk customer update.
+The recorded baseline above covers the original 15 cases; the current 16-case
+suite also verifies that a real model selects matching records across two local
+service emulators and posts a grounded reply to the originating Slack-like DM.
+It does not evaluate visual teaching or native mobile recording.
 
-The fake sandbox supports file operations and a limited shell emulator. It does
-not execute arbitrary scripts, so a failure involving shell execution needs
-confirmation in the real Docker or live computer lane. Release monitoring
+Keep compact scenario seeds, generators and grading criteria in this repository
+so contract changes are reviewed together and failures reproduce from one
+commit. Fixtures must be synthetic. If a future corpus is too large for the
+repository, publish it as a versioned artifact pinned by immutable digest and
+retain a small offline conformance fixture here. Do not import third-party eval
+data unless its redistribution terms are explicit and compatible.
+
+The eval sandbox executes file tools but returns an explicit error for model
+shell commands instead of pretending to run them. If outcome checks fail after
+that limitation is encountered, the trial is attributed to the harness. Confirm
+shell-dependent outcomes in the real Docker or live computer lane. Release monitoring
 checks a daily schedule and a newly introduced release; unchanged-release
 notification deduplication is not covered by this suite.
 
@@ -128,7 +176,9 @@ checks are explicit parts of the scenario.
 
 Reports under `test-report/evals/` contain per-case success counts, first trial
 success, autonomous success rate, latency, tool counts, criteria, redacted
-traces and artifacts. Unavailable token or cost measurements remain null.
+traces, artifacts and redacted memory evidence. Tool and usage totals retain
+records across conversation clearing; clearing history cannot reset a trial’s
+tool budget. Unavailable token or cost measurements remain null.
 Failures distinguish agent outcomes, product errors, provider failures,
 harness failures and incomplete runs. Read the category and evidence before
 attributing a red run to a prompt change. Several trials establish an initial

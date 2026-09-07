@@ -52,7 +52,7 @@ async function main() {
     model: values.model ?? process.env.PI_DEFAULT_MODEL ?? null,
     provider: values.provider ?? null,
     controls,
-    fixtures: "synthetic services and fake sandbox",
+    fixtures: "synthetic services, messaging and fake sandbox",
     assistedRetries: false,
     limitations: [
       "Does not evaluate browser perception, native recording perception, or real external services.",
@@ -114,6 +114,7 @@ async function main() {
       AGENT_RUNTIME: "pi",
       DATA_DIR: dataDir,
       MAX_TOOL_CALLS_PER_TURN: String(controls.maxToolCalls),
+      WEB_PROVIDER: "fake",
       LOG_LEVEL: "off",
       COMPOSIO_API_KEY: "",
       PIPEDREAM_CLIENT_ID: "",
@@ -140,14 +141,17 @@ async function main() {
     // Import runtime modules only after generation; their barrel exports load Prisma.
     const { createApp } = await import("../../../../apps/api/src/app.ts");
     const { runTrial } = await import("../evals/runner.js");
+    const { EvalSandboxProvider } = await import("../evals/sandbox.js");
     for (let i = 0; i < trials.length; i++) {
       const planned = trials[i]!;
       const scenario = selected.find((c) => c.id === planned.caseId)!;
       trials[i] = await runTrial(scenario, planned.trial, {
         ...controls,
         connection,
-        createApp: (composio) =>
-          createApp({
+        createApp: async (composio, messaging) => {
+          const sandbox = new EvalSandboxProvider();
+          const handles = await createApp({
+            sandbox,
             databaseUrl,
             realtimeDatabaseUrl: databaseUrl,
             dataDir: path.join(dataDir, `${scenario.id}-${planned.trial}`),
@@ -155,6 +159,8 @@ async function main() {
             agentRuntime: "pi",
             wakeupDriver: "memory",
             composio,
+            messaging,
+            messagingOpenSignup: false,
             defaultProvider: connection.provider,
             defaultModel: connection.modelId!,
             deploymentModelKey: undefined,
@@ -179,7 +185,9 @@ async function main() {
             mcpStdioAllowedCommands: [],
             updaterUrl: undefined,
             updaterToken: undefined,
-          }),
+          });
+          return { ...handles, harnessIssues: sandbox.harnessIssues };
+        },
       });
       save();
       const result = trials[i]!;

@@ -3,38 +3,38 @@
   "packages": [
     {
       "name": "pi-fabric",
-      "version": "0.88.1",
-      "filename": "pi-fabric-0.88.1-5ad25726a04e.tgz",
-      "sha256": "5ad25726a04e21bc2a5104526a504897066afab9065e40a38e543f0553eb8f35",
-      "baseCommit": "82d39b26f17c0eca583f9de739460f7d1e618ba7"
+      "version": "0.88.2",
+      "filename": "pi-fabric-0.88.2-a0651b757cc0.tgz",
+      "sha256": "a0651b757cc087c1a359f944db57f4145bdef431c5c7d4aeeee0e5fe01694bdc",
+      "baseCommit": "c0a7846b55061c32079878d48e0ea74b8ab6e722"
     },
     {
       "name": "pi-fovea",
-      "version": "0.22.0",
-      "filename": "pi-fovea-0.22.0-051f3431b171.tgz",
-      "sha256": "051f3431b171a109ef955fd63db1c694d4bbb7635e7f7dfd604fe7ea8338d394",
-      "baseCommit": "ab8bf15a8d3f07518a264b538cebd1de7f3d5711"
+      "version": "0.22.1",
+      "filename": "pi-fovea-0.22.1-b8a01161c936.tgz",
+      "sha256": "b8a01161c9360dea49afa43e7282eba0edc0da6e54c5e21f011eb12d812e96f5",
+      "baseCommit": "7f259549432aebc94cc67a4170b783027f8e9ddd"
     },
     {
       "name": "pi-queue-steer-factory",
-      "version": "0.16.1",
-      "filename": "pi-queue-steer-factory-0.16.1-083935d87583.tgz",
-      "sha256": "083935d87583075b7c1f92f96f54b91fcf0832d26e4d441949891c9f6f0943f4",
-      "baseCommit": "c0c78571bf51d99a09d3612fed69560c5c2fada0"
+      "version": "0.16.2",
+      "filename": "pi-queue-steer-factory-0.16.2-7d5a12d3688f.tgz",
+      "sha256": "7d5a12d3688f8b118c89a7edb32da03693e16b93178ac21dc56d7ae51d934159",
+      "baseCommit": "71db0f376fca163248885fb96fd22877d830217e"
     },
     {
       "name": "@monotykamary/pi-retry",
-      "version": "0.8.5",
-      "filename": "monotykamary-pi-retry-0.8.5-cf28c9d2fedd.tgz",
-      "sha256": "cf28c9d2fedd3bcffa21f3bd6b531668a95925efd5f2f3a1eac55f9605cbbf73",
-      "baseCommit": "4b00163100f383024ea51b228297eed23ecf7240"
+      "version": "0.8.6",
+      "filename": "monotykamary-pi-retry-0.8.6-ac70784e6bb9.tgz",
+      "sha256": "ac70784e6bb966ec681dde8eb9d4f87314a33fa2191a9da915dab47b0da7eef7",
+      "baseCommit": "c342daa5de9c664273bc66b3c15ca52cf36f7b49"
     },
     {
       "name": "pi-multiprovider",
-      "version": "0.2.9",
-      "filename": "pi-multiprovider-0.2.9-46e2d86bf274.tgz",
-      "sha256": "46e2d86bf2748d329a36aa475d0a03d7b0a16b606a668a72a643054555fc3324",
-      "baseCommit": "78b7855d9c4b4852cbe33c6fd0af8fb672a5af86"
+      "version": "0.2.10",
+      "filename": "pi-multiprovider-0.2.10-7f54b802745f.tgz",
+      "sha256": "7f54b802745f41d4858608f4f7c7fa3f17f379233440a9f854b31da53cbd6a7f",
+      "baseCommit": "a598e0198d03e36b0c0d7c73f4b082115bb373d9"
     }
   ]
 }

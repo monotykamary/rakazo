@@ -81,6 +81,7 @@ import { cors } from "hono/cors";
 import { type AppEnv, loadEnv } from "./env.js";
 import { createMessagingInboundHandler } from "./messaging-inbound.js";
 import { mountMessagingWebhookRoutes } from "./messaging-webhook.js";
+import { mountApiRequestBodyLimits } from "./request-body-limit.js";
 import { createRouter } from "./router.js";
 import { TeamChatBridge } from "./team-chat-bridge.js";
 import { ModelTeamChatEngagementJudge } from "./team-chat-judge.js";
@@ -106,6 +107,7 @@ export async function createApp(
   overrides: Partial<AppEnv> & {
     prisma?: PrismaClient;
     realtime?: RealtimeFanout;
+    sandbox?: SandboxProvider;
     composio?: ComposioProvider;
     pipedream?: ManagedConnectorProvider;
     messaging?: MessagingSurface;
@@ -117,6 +119,7 @@ export async function createApp(
   const {
     prisma: prismaOverride,
     realtime: realtimeOverride,
+    sandbox: sandboxOverride,
     composio: composioOverride,
     pipedream: pipedreamOverride,
     messaging: messagingOverride,
@@ -173,18 +176,20 @@ export async function createApp(
   const jobKind = env.wakeupDriver;
   const inMemoryJobs = jobKind === "memory" ? new InMemoryJobQueue() : undefined;
   const jobs = inMemoryJobs ?? new GraphileJobPublisher(env.databaseUrl);
-  const sandbox: SandboxProvider = createRunSandbox(env.sandboxProvider, {
-    supervisorUrl: env.sandboxSupervisorUrl,
-    supervisorToken: env.sandboxSupervisorToken,
-    e2bApiKey: env.e2bApiKey,
-    daytonaApiKey: env.daytonaApiKey,
-    daytonaApiUrl: env.daytonaApiUrl,
-    daytonaTarget: env.daytonaTarget,
-    boxApiKey: env.boxApiKey,
-    boxApiUrl: env.boxApiUrl,
-    dataDir: env.dataDir,
-    prisma,
-  });
+  const sandbox: SandboxProvider =
+    sandboxOverride ??
+    createRunSandbox(env.sandboxProvider, {
+      supervisorUrl: env.sandboxSupervisorUrl,
+      supervisorToken: env.sandboxSupervisorToken,
+      e2bApiKey: env.e2bApiKey,
+      daytonaApiKey: env.daytonaApiKey,
+      daytonaApiUrl: env.daytonaApiUrl,
+      daytonaTarget: env.daytonaTarget,
+      boxApiKey: env.boxApiKey,
+      boxApiUrl: env.boxApiUrl,
+      dataDir: env.dataDir,
+      prisma,
+    });
   const mcpOAuth = new McpOAuthBroker(prisma, secrets, remoteConnectors);
   const memoryProviders = new SpaceMemoryProviderResolver(prisma, secrets);
   const oauthLogins = new PiOAuthLogins();
@@ -428,6 +433,7 @@ export async function createApp(
         }),
     );
   }
+  mountApiRequestBodyLimits(app);
   app.on(["GET", "POST"], "/api/auth/*", async (c) => {
     const path = new URL(c.req.url).pathname.replace("/api/auth", "");
     if (blockedAuthPaths.some((blocked) => path.startsWith(blocked))) {

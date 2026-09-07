@@ -123,7 +123,7 @@ integration("executor durable runtime boundary", () => {
     const stored = await app.prisma.runtimeSession.findFirstOrThrow({ where: { threadId } });
     expect(stored.revision).toBe(2);
   });
-  it.each(["messaging", "bot_message"])(
+  it.each(["messaging", "bot_message", "webhook"])(
     "never restores or dispatches private state in %s",
     async (trigger) => {
       await run(trigger);

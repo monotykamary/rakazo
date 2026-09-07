@@ -84,6 +84,18 @@ describe("run tool selection", () => {
       messagingChannelRun: false,
     }).map((tool) => tool.name);
 
+  it.each(["messaging", "bot_message", "webhook"])(
+    "withholds private queue control from %s runs",
+    (trigger) => {
+      expect(toolNames(trigger)).not.toContain("manage_queue");
+    },
+  );
+
+  it("exposes queue control only in a private user thread", () => {
+    expect(toolNames("user")).toContain("manage_queue");
+    expect(toolNames("user", "group")).not.toContain("manage_queue");
+  });
+
   it("keeps page browser tools without vision, and hides them without a graphical computer", () => {
     const withPage = toolNames("message", null, {
       graphicalToolsAllowed: false,

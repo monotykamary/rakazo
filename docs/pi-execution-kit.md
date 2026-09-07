@@ -14,7 +14,7 @@ Rakazo keeps a continuous conversation per bot. Isolated Pi coding-agent RPC wor
 
 One shared headless queue engine owns FIFO order, lanes, holds, edit sessions, dispatch reservations, and recovery. PostgreSQL commits reservations before delivery; uncertain delivery remains held for explicit reconciliation. The native Pi queue is not reconstructed from a second editable plan.
 
-Web/Electron and mobile use the same queue and execution controllers. `manage_queue` exposes revision-checked natural-language control of the current private bot queue; external messaging runs and children cannot read or mutate that private plan.
+Web/Electron and mobile use the same queue and execution controllers. `manage_queue` exposes revision-checked natural-language control of the current private bot queue; external messaging runs, inbound webhooks, and children cannot read or mutate that private plan.
 
 Queued work captures an immutable authorized computer/project binding. Missing or changed targets block rather than silently switching directories. Existing worktrees are selected with `cwd`; automatic `worktree: true` creation is explicitly rejected. Create a worktree through the authorized shell tool, then delegate to its explicit path.
 

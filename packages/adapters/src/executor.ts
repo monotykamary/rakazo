@@ -67,6 +67,7 @@ import {
   toolRequiresApproval,
   toolRequiresExplicitApproval,
   translateQueueControl,
+  unattendedTriggerToolRequiresApproval,
   userTurnBlocksForRun,
 } from "@rakazo/core";
 import { approvalEffectKey } from "@rakazo/core/node/approval-effect-key";
@@ -191,7 +192,7 @@ import {
   teamBotWorkspaceDirectory,
 } from "./computer-support.js";
 import { observationToolResult, parseComputerActions } from "./computer-tools.js";
-import { checkpointAndRecordComputerWorkspace } from "./computer-workspace.js";
+import { checkpointRunComputerWorkspace } from "./computer-workspace.js";
 import { sanitizeConnectorError } from "./connector-safety.js";
 import { resolveDeploymentModel } from "./deployment-model.js";
 import { resolveExecutorModelRouting } from "./executor-model-routing.js";
@@ -1081,10 +1082,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
         );
         const managedRuntime = deps.runtime.describe().id === "pi";
         const privateRuntime =
-          managedRuntime &&
-          !messagingChannelRun &&
-          run.trigger !== "messaging" &&
-          run.trigger !== "bot_message";
+          managedRuntime && !messagingChannelRun && isPrivateRuntimeTrigger(run.trigger);
         const runtimeSession = privateRuntime
           ? await createRuntimeSession(deps.prisma, {
               spaceId: run.spaceId,
@@ -1284,7 +1282,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
         screenRelease = { computer, context };
         scheduleComputerSleep(deps.jobs, storedComputer.id);
         const workspaceCheckpoint = createRunWorkspaceCheckpoint(() =>
-          checkpointAndRecordComputerWorkspace(deps, storedComputer, computer, context),
+          checkpointRunComputerWorkspace(deps, storedComputer, computer, context),
         );
         let currentTurnFiles: Awaited<ReturnType<typeof materializeCurrentTurnFiles>>;
         try {
@@ -1741,23 +1739,30 @@ export function createRunExecutor(deps: ExecutorDeps) {
             }
           }
           const viaConnector = !BUILTIN_AGENT_TOOL_NAMES.has(name);
-          const requiresApprovalByDefault = toolRequiresApproval(name, viaConnector);
-          const requiresExplicitApproval = toolRequiresExplicitApproval(name);
+          const requiresUnattendedApproval = unattendedTriggerToolRequiresApproval(
+            run.trigger,
+            name,
+            viaConnector,
+          );
+          const requiresApprovalByDefault =
+            requiresUnattendedApproval || toolRequiresApproval(name, viaConnector);
+          const requiresMandatoryApproval =
+            requiresUnattendedApproval || toolRequiresExplicitApproval(name);
           const connectorKind = connectorKindFromToolName(
             name,
             connectedPlugins.map((plugin) => plugin.provider),
           );
-          const approvalResolved = requiresExplicitApproval
+          const approvalResolved = requiresMandatoryApproval
             ? { decision: "ask" as const, source: "default" as const, matchingRules: [] }
             : resolveActionApprovalDetail({
                 toolName: name,
                 connectorKind,
                 rules: await loadApprovalRules(),
               });
-          const autoReviewPref = requiresExplicitApproval
+          const autoReviewPref = requiresMandatoryApproval
             ? false
             : await loadAutoReviewPreference();
-          const checker = requiresExplicitApproval ? undefined : resolveAutoReviewChecker();
+          const checker = requiresMandatoryApproval ? undefined : resolveAutoReviewChecker();
           const checkerConfigured =
             autoReviewPref && checker
               ? isAutoReviewCheckerConfigured({}) ||
@@ -1769,7 +1774,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                   ),
                 )
               : false;
-          const plan = requiresExplicitApproval
+          const plan = requiresMandatoryApproval
             ? "ask"
             : planActionGate({
                 resolved: approvalResolved,
@@ -3603,7 +3608,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
             context,
           );
           for await (const event of withRuntimeCleanup(runtimeEvents, runAbortController)) {
-            if (approvalPausePending) return;
+            // Buffered events may arrive after the tool asks to pause but before
+            // Pi acknowledges its checkpoint. Keep draining until that save commits.
+            if (approvalPausePending && (!runtimeSession || runtimePauseCommitted)) return;
             if (!leaseValid) return;
             const now = Date.now();
             if (now - lastLeaseCheckAt >= 1_000) {
@@ -3895,6 +3902,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
             }
           }
 
+          if (approvalPausePending && runtimeSession && !runtimePauseCommitted)
+            throw new Error("Managed runtime ended before its approval checkpoint committed");
           if (approvalPausePending || !leaseValid) return;
           approvedEffectReplays.assertDrained();
           pendingProgress += progressRedactor.finish();
@@ -4246,6 +4255,10 @@ function computerRetryDelay(fence: number): number {
   return Math.min(10_000, 250 * 2 ** Math.min(Math.max(fence - 1, 0), 5));
 }
 
+function isPrivateRuntimeTrigger(trigger: string): boolean {
+  return !["messaging", "bot_message", "webhook"].includes(trigger);
+}
+
 export function selectBuiltinToolsForRun(options: {
   graphicalToolsAllowed: boolean;
   /** Page browser tools need a graphical computer (Chrome), not model vision. */
@@ -4275,8 +4288,7 @@ export function selectBuiltinToolsForRun(options: {
     (tool) =>
       (tool.name !== "manage_queue" ||
         (!options.messagingChannelRun &&
-          options.trigger !== "messaging" &&
-          options.trigger !== "bot_message" &&
+          isPrivateRuntimeTrigger(options.trigger) &&
           !options.groupId)) &&
       (!options.messagingChannelRun ||
         (!["remember", "save_memory", "recall_memory"].includes(tool.name) &&

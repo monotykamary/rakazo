@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { type AgentRuntime, type JobPublisher, runJobKey } from "@rakazo/adapter-kit";
+import { MessagingTeamChatEmulator } from "@rakazo/adapters";
 import type { ModelConnectInput, RunStatus } from "@rakazo/contracts";
 import { ACTIVE_RUN_STATUSES, isTerminal } from "@rakazo/core";
 import type { createDb } from "@rakazo/db";
@@ -14,6 +15,7 @@ export type EvalApp = {
   prisma: ReturnType<typeof createDb>["prisma"];
   jobs: JobPublisher;
   runtime: AgentRuntime;
+  harnessIssues?: readonly string[];
   connector?: { records: readonly unknown[] };
   stop: () => Promise<void>;
 };
@@ -27,7 +29,7 @@ export type TrialOptions = {
   connection: ModelConnectInput;
   timeoutMs: number;
   maxToolCalls: number;
-  createApp: (services: EvalServices) => Promise<EvalApp>;
+  createApp: (services: EvalServices, messaging: MessagingTeamChatEmulator) => Promise<EvalApp>;
 };
 class EvalFailure extends Error {
   constructor(
@@ -48,6 +50,10 @@ export async function runTrial(
   const started = Date.now();
   const deadline = started + options.timeoutMs;
   const services = new EvalServices();
+  const messaging = new MessagingTeamChatEmulator({
+    provider: "slack",
+    capabilities: { groups: false },
+  });
   scenario.configure?.(services);
   let handles: EvalApp | undefined;
   let cookie = "";
@@ -57,10 +63,46 @@ export async function runTrial(
   let pendingApproval: Evidence["pendingApproval"] = null;
   let approvalPending = false;
   let priorMemory = "";
+  let messagingLinked = false;
+  let messagingAddress = "";
+  let messagingOriginThreadId: string | null = null;
   const secrets = [options.connection.apiKey ?? "", options.connection.baseUrl ?? ""];
   let phase: FailureCategory = "harness";
+  const seenTools = new Map<string, { name: string }>();
+  let clearedToolCount = 0;
+  const seenUsage = new Map<string, { inputTokens: number; outputTokens: number }>();
+  const countCurrentTools = () =>
+    handles!.prisma.event.count({
+      where: { spaceId: { in: actors.map((actor) => actor.spaceId) }, type: "agent.tool.called" },
+    });
+  // Clearing conversation history deletes its events and usage rows. Preserve
+  // observed records by id so multi-turn totals and budgets never reset or double count.
+  const captureTools = async () => {
+    if (!handles) return seenTools.size;
+    const events = await handles.prisma.event.findMany({
+      where: {
+        spaceId: { in: actors.map((actor) => actor.spaceId) },
+        type: "agent.tool.called",
+        ...(seenTools.size ? { id: { notIn: [...seenTools.keys()] } } : {}),
+      },
+      select: { id: true, payload: true },
+    });
+    for (const event of events)
+      seenTools.set(event.id, {
+        name: redact(String((event.payload as { name?: string }).name ?? "unknown"), secrets),
+      });
+    return seenTools.size;
+  };
+  const captureUsage = async () => {
+    if (!handles) return;
+    const usage = await handles.prisma.usageRecord.findMany({
+      where: { OR: actorScopes(actors) },
+      select: { id: true, inputTokens: true, outputTokens: true },
+    });
+    for (const row of usage) seenUsage.set(row.id, row);
+  };
   try {
-    handles = await options.createApp(services);
+    handles = await options.createApp(services, messaging);
     const { app, prisma } = handles;
     const setupActor = async () => {
       const signup = await app.request("/api/auth/sign-up/email", {
@@ -75,7 +117,7 @@ export async function runTrial(
       if (!signup.ok) throw new EvalFailure("harness", `Fixture signup failed (${signup.status})`);
       cookie = sessionCookieHeader(signup);
       await rpc(app, cookie, "models/connect", options.connection);
-      for (const provider of ["GMAIL", "CRM", "GITHUB"])
+      for (const provider of scenario.connections ?? ["GMAIL", "CRM", "GITHUB"])
         await rpc(app, cookie, "connections/begin", {
           connectorId: "composio",
           provider,
@@ -99,6 +141,9 @@ export async function runTrial(
         modelProvider: options.connection.provider,
         modelId: options.connection.modelId,
       });
+      messagingLinked = false;
+      messagingAddress = `U-eval-${randomUUID()}`;
+      messaging.resetWitnesses();
       if (scenario.approvalTool)
         await rpc(app, cookie, "approvalRules/set", {
           effect: "require_approval",
@@ -147,7 +192,9 @@ export async function runTrial(
         continue;
       }
       if ("clear" in step) {
+        await Promise.all([captureTools(), captureUsage()]);
         await rpc(app, cookie, "threads/clear", { botId });
+        clearedToolCount = seenTools.size - (await countCurrentTools());
         continue;
       }
       let runId: string;
@@ -155,6 +202,44 @@ export async function runTrial(
         runId = (
           await rpc<{ runId: string }>(app, cookie, "threads/send", { botId, text: step.ask })
         ).runId;
+      } else if ("slack" in step) {
+        if (!messagingLinked) {
+          const link = await rpc<{ code: string }>(app, cookie, "messaging/link/start", { botId });
+          await messaging.emitInbound({
+            isDirect: true,
+            from: messagingAddress,
+            fromLabel: "Teammate",
+            content: link.code,
+          });
+          await poll(async () => (messaging.sent.length > 0 ? true : undefined), deadline);
+          messaging.resetWitnesses();
+          messagingLinked = true;
+        }
+        const inbound = await messaging.emitInbound({
+          isDirect: true,
+          from: messagingAddress,
+          fromLabel: "Teammate",
+          content: step.slack,
+        });
+        messagingOriginThreadId = inbound.threadId;
+        runId = await poll(
+          async () =>
+            (
+              await prisma.run.findFirst({
+                where: {
+                  botId,
+                  sourceMessage: {
+                    is: {
+                      clientNonce: `messaging:${inbound.provider}:${inbound.handle}`,
+                    },
+                  },
+                },
+                orderBy: { createdAt: "desc" },
+                select: { id: true },
+              })
+            )?.id,
+          deadline,
+        );
       } else {
         const routines = await prisma.routine.findMany({ where: { botId } });
         if (routines.length !== 1)
@@ -201,12 +286,7 @@ export async function runTrial(
       const terminal = await poll(async () => {
         const [run, toolCount] = await Promise.all([
           prisma.run.findUnique({ where: { id: runId }, select: { status: true, error: true } }),
-          prisma.event.count({
-            where: {
-              spaceId: { in: actors.map((actor) => actor.spaceId) },
-              type: "agent.tool.called",
-            },
-          }),
+          countCurrentTools().then((count) => count + clearedToolCount),
         ]);
         seenToolCount = toolCount;
         if (toolCount > options.maxToolCalls)
@@ -241,6 +321,9 @@ export async function runTrial(
             ? "provider"
             : "product";
         throw new EvalFailure(category, error);
+      }
+      if ("slack" in step && terminal.status === "completed") {
+        await waitForMessagingDelivery(prisma, runId, deadline);
       }
       const snap = await rpc<{
         messages: Array<{
@@ -289,6 +372,7 @@ export async function runTrial(
       where: { botId },
       select: { name: true, prompt: true, crons: true, active: true },
     });
+    await captureTools();
     const evidence: Evidence = {
       text: lastText,
       files,
@@ -301,6 +385,11 @@ export async function runTrial(
       pendingApproval,
       priorMemory,
       destinationWrites: handles.connector?.records.length ?? 0,
+      toolNames: [...seenTools.values()].map((event) => event.name),
+      messaging: {
+        originThreadId: messagingOriginThreadId,
+        outbound: structuredClone(messaging.sent),
+      },
     };
     phase = "harness";
     result.criteria = scenario.grade(evidence);
@@ -308,11 +397,16 @@ export async function runTrial(
       result.criteria.length > 0 && result.criteria.every((c) => c.pass) ? "passed" : "failed";
     result.category = result.status === "passed" ? null : "agent";
     result.reason = result.status === "passed" ? null : "Outcome criteria failed";
+    if (result.status === "failed" && handles.harnessIssues?.length) {
+      result.category = "harness";
+      result.reason = handles.harnessIssues.join(" ");
+    }
     result.artifacts = Object.fromEntries(
-      Object.entries({ ...files, "final-response": lastText }).map(([key, value]) => [
-        key,
-        value === null ? null : redact(value, secrets),
-      ]),
+      Object.entries({
+        ...files,
+        "final-response": lastText,
+        "memory-snapshot": evidence.memory,
+      }).map(([key, value]) => [key, value === null ? null : redact(value, secrets)]),
     );
   } catch (error) {
     result.status = "failed";
@@ -328,23 +422,14 @@ export async function runTrial(
       } catch {
         result.cleanupFailed = true;
       }
-      const usage = await handles.prisma.usageRecord
-        .findMany({ where: { OR: actorScopes(actors) } })
-        .catch(() => []);
-      if (usage.length) {
-        result.inputTokens = usage.reduce((n, u) => n + u.inputTokens, 0);
-        result.outputTokens = usage.reduce((n, u) => n + u.outputTokens, 0);
+      await captureUsage().catch(() => undefined);
+      if (seenUsage.size) {
+        result.inputTokens = [...seenUsage.values()].reduce((n, u) => n + u.inputTokens, 0);
+        result.outputTokens = [...seenUsage.values()].reduce((n, u) => n + u.outputTokens, 0);
       }
-      // Include interrupted-run calls too. Raw tool arguments, URLs, credentials, IDs, and errors are intentionally omitted.
-      const events = await handles.prisma.event
-        .findMany({
-          where: {
-            spaceId: { in: actors.map((actor) => actor.spaceId) },
-            type: "agent.tool.called",
-          },
-          orderBy: { seq: "asc" },
-        })
-        .catch(() => []);
+      // Include interrupted and cleared-run calls without retaining raw arguments or ids in reports.
+      await captureTools().catch(() => undefined);
+      const events = [...seenTools.values()];
       result.toolCalls = events.length;
       if (events.length > options.maxToolCalls) {
         result.status = "failed";
@@ -355,9 +440,7 @@ export async function runTrial(
         result.trace.push({
           step: 0,
           status: "interrupted",
-          tools: events.map((e) =>
-            redact(String((e.payload as { name?: string }).name ?? "unknown"), secrets),
-          ),
+          tools: events.map((event) => event.name),
         });
     }
     try {
@@ -394,6 +477,37 @@ async function poll<T>(read: () => Promise<T | undefined>, deadline: number): Pr
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   throw new EvalFailure("incomplete", "Trial time budget exceeded");
+}
+
+async function waitForMessagingDelivery(
+  prisma: EvalApp["prisma"],
+  runId: string,
+  deadline: number,
+): Promise<void> {
+  await poll(
+    async () =>
+      (
+        await prisma.run.findUnique({
+          where: { id: runId },
+          select: { messagingMirroredAt: true },
+        })
+      )?.messagingMirroredAt ?? undefined,
+    deadline,
+  );
+  const messages = await prisma.message.findMany({
+    where: { runId, role: "bot" },
+    select: { id: true },
+  });
+  await poll(async () => {
+    const outbound = await prisma.messagingOutbound.findMany({
+      where: { sourceMessageId: { in: messages.map((message) => message.id) } },
+      select: { status: true, providerHandle: true },
+    });
+    return outbound.length > 0 &&
+      outbound.every((row) => row.providerHandle !== null || row.status === "failed")
+      ? true
+      : undefined;
+  }, deadline);
 }
 
 function actorScopes(actors: readonly EvalActor[]) {
