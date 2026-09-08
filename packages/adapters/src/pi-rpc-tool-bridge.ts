@@ -18,26 +18,43 @@ import { prepareManagedToolArguments } from "./pi-tool-arguments.js";
 
 /** Shared by every parent/child operation. Latch synchronously before publishing a pause. */
 export class RunAuthority {
-  paused = false;
+  private pauseLatched = false;
+  onPause?: () => void;
+  get paused() {
+    return this.pauseLatched;
+  }
+  set paused(value: boolean) {
+    if (!value || this.pauseLatched) return;
+    this.pauseLatched = true;
+    this.onPause?.();
+  }
   gracefulPause = false;
   count = 0;
-  readonly childSessions = new Map<string, unknown>();
-  readonly participants = new Map<string, import("./pi-rpc-transport.js").JsonPeer>();
+  readonly workerBridges = new Map<string, import("./pi-rpc-transport.js").JsonPeer>();
   rootState?: Record<string, unknown>;
-  childrenStarted = 0;
+  readonly deferredEvents: AgentRuntimeEvent[] = [];
   chain: Promise<unknown> = Promise.resolve();
   constructor(
     readonly request: AgentRunRequest,
     readonly signal: AbortSignal,
   ) {}
-  async check(effects = false) {
+  async checkLease(effects = false, checkpoint = false) {
     this.signal.throwIfAborted();
-    if (this.paused) throw new Error("Managed run is paused");
-    if ((await this.request.assertActive?.({ effects })) === "pause") {
+    if (
+      (await this.request.assertActive?.({
+        effects,
+        ...(checkpoint ? { checkpoint: true } : {}),
+      })) === "pause"
+    ) {
       this.gracefulPause = true;
       this.paused = true;
     }
     this.signal.throwIfAborted();
+  }
+  async check(effects = false) {
+    this.signal.throwIfAborted();
+    if (this.paused) throw new Error("Managed run is paused");
+    await this.checkLease(effects);
     if (this.paused) throw new Error("Managed run is paused");
   }
   serialize<T>(fn: () => Promise<T>): Promise<T> {
@@ -57,20 +74,23 @@ export class ToolBridge {
     description: string;
     parameters: unknown;
     argumentKind: string;
+    connector?: { id: string; resourceId?: string; toolName: string };
   }>;
   private readonly tools = new Map<string, ConnectorTool>();
   private readonly used = new Set<string>();
+  private readonly inFlight = new Set<Promise<unknown>>();
   pendingPauseEvents: AgentRuntimeEvent[] = [];
   constructor(
     private readonly request: AgentRunRequest,
     readonly authority: RunAuthority,
     private readonly emit: (event: AgentRuntimeEvent) => void,
-    private readonly delegate: (args: Record<string, unknown>, id: string) => Promise<unknown>,
+    private readonly participantSignal?: AbortSignal,
   ) {
     const definitions = structuredClone(request.tools);
     const names = normalizeAgentToolNames(definitions);
     this.catalog = definitions.map((tool, index) => {
       const handle = randomUUID();
+      const mcp = tool.protocol === "mcp" || tool.route?.connectorId === "mcp";
       this.tools.set(handle, tool);
       return {
         handle,
@@ -78,10 +98,33 @@ export class ToolBridge {
         description: tool.description,
         parameters: parametersFor(tool),
         argumentKind: tool.name,
+        ...(tool.route
+          ? {
+              connector: {
+                id: mcp ? "mcp" : tool.route.connectorId,
+                toolName: tool.route.toolName,
+                ...(tool.route.resourceId
+                  ? {
+                      resourceId: mcp
+                        ? `${tool.route.connectorId}:${tool.route.resourceId}`
+                        : tool.route.resourceId,
+                    }
+                  : {}),
+              },
+            }
+          : {}),
       };
     });
   }
-  invoke(value: unknown): Promise<unknown> {
+  async waitForIdle(): Promise<void> {
+    await Promise.allSettled([...this.inFlight]);
+  }
+  invoke(value: unknown, signal?: AbortSignal): Promise<unknown> {
+    const operationSignal = AbortSignal.any([
+      this.authority.signal,
+      ...(this.participantSignal ? [this.participantSignal] : []),
+      ...(signal ? [signal] : []),
+    ]);
     const input = record(value);
     const handle = string(input.handle);
     const callId = string(input.callId);
@@ -101,6 +144,7 @@ export class ToolBridge {
     ) as Record<string, unknown>;
     const executionId = `${this.request.runId}:${randomUUID()}`;
     const dispatch = async () => {
+      operationSignal.throwIfAborted();
       const limit = maxToolCallsPerTurn();
       if (limit && ++this.authority.count > limit) {
         this.authority.paused = true;
@@ -137,21 +181,16 @@ export class ToolBridge {
           details: { approval: "paused" },
           terminate: true,
         };
-      } else if (tool.name === "run_subagent") {
-        const authorization = this.request.executeTool
-          ? await this.authority.serialize(() =>
-              this.request.executeTool!(tool.name, args, executionId, tool.route),
-            )
-          : undefined;
-        result =
-          isToolPauseResult(authorization) ||
-          (authorization && typeof authorization === "object" && "error" in authorization)
-            ? authorization
-            : await this.delegate(args, executionId);
       } else {
         if (!this.request.executeTool)
           throw new Error("Tool unavailable without an authorized executor");
-        result = await this.request.executeTool(tool.name, args, executionId, tool.route);
+        result = await this.request.executeTool(
+          tool.name,
+          args,
+          executionId,
+          tool.route,
+          operationSignal,
+        );
       }
       const structured =
         result && typeof result === "object"
@@ -197,17 +236,14 @@ export class ToolBridge {
       if (paused) this.pendingPauseEvents.push(evidence);
       else this.emit(evidence);
       return {
+        executionId,
         result: output,
         paused,
         isError: structured?.isError === true || Boolean(structured?.error),
       };
     };
-    // Child sessions share the serial inner-effect gate, not a gate held by their parent.
-    const invoked =
-      tool.name === "run_subagent"
-        ? this.authority.check(true).then(dispatch)
-        : this.authority.serialize(dispatch);
-    return invoked.catch((error) => {
+    const invoked = this.authority.serialize(dispatch);
+    const work = invoked.catch((error) => {
       if (!this.authority.gracefulPause) throw error;
       this.pendingPauseEvents.push({
         type: "execution",
@@ -225,6 +261,9 @@ export class ToolBridge {
         },
       };
     });
+    this.inFlight.add(work);
+    void work.finally(() => this.inFlight.delete(work)).catch(() => undefined);
+    return work;
   }
   publishPause() {
     for (const event of this.pendingPauseEvents.splice(0)) this.emit(event);

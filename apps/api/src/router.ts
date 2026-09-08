@@ -29,6 +29,7 @@ import {
   checkpointAndRecordComputerWorkspace,
   clearInactiveUserComputerControl,
   computerSupportsUpdate,
+  createMachinesService,
   createVoiceProvider,
   deletePushToken,
   deploymentAutoReviewDefault,
@@ -44,6 +45,7 @@ import {
   isScratchpadStatus,
   listPiCatalog,
   listScratchpadItems,
+  type MachinesService,
   McpOAuthBroker,
   type MemoryProviderResolver,
   mapScratchpadItem,
@@ -99,6 +101,7 @@ import {
   appendEventInTransaction,
   createExternalConversationRepos,
   createGroupRepos,
+  createPrismaMachineStore,
   createRepos,
   createSpaceForMember,
   createThreadMessageInTransaction,
@@ -113,6 +116,7 @@ import {
   issueMessagingLinkCode,
   listDispatchedWork,
   lockOwnedGroup,
+  machineAssignment,
   newestModelCredentialOrder,
   newestVoiceCredentialOrder,
   Prisma,
@@ -135,6 +139,7 @@ import {
   toComputerStatus,
 } from "./computer-status.js";
 import { searchIntegrationCatalog } from "./integration-catalog.js";
+import { assignBotMachine } from "./machines.js";
 import { buildMcpUpdateMaterial } from "./mcp-material.js";
 import {
   disconnectMemoryProvider,
@@ -167,6 +172,15 @@ import {
   type UpdaterProxyConfig,
   UpdaterProxyError,
 } from "./server-update.js";
+import {
+  declareService,
+  listServices,
+  removeService,
+  restartService,
+  serviceChanges,
+  servicePreviewUrl,
+  stopService,
+} from "./services.js";
 import { assertTeachingSendAllowed, createTaughtSkillsService } from "./taught-skills.js";
 import {
   isPeerRun,
@@ -416,6 +430,8 @@ import { listQueue, mutateQueue } from "./queue.js";
 
 export interface RouterDeps {
   prisma: PrismaClient;
+  /** Machine tunnel service; built from the Prisma store when absent. */
+  machines?: MachinesService;
   events: ThreadEvents;
   auth: Auth;
   jobs: JobPublisher;
@@ -468,6 +484,8 @@ export function createRouter(deps: RouterDeps) {
     if (!context.actor) throw new ORPCError("UNAUTHORIZED");
     return next({ context: { ...context, actor: context.actor } });
   });
+  const machines =
+    deps.machines ?? createMachinesService({ store: createPrismaMachineStore(deps.prisma) });
 
   return os.router({
     queue: {
@@ -1038,10 +1056,19 @@ export function createRouter(deps: RouterDeps) {
         if (!bot.computer) throw new IsolationError();
         const currentMode = bot.computer.scope === "dedicated" ? "dedicated" : "team";
         if (currentMode === input.mode) {
-          return repos.setBotComputer(context.actor, bot.id, input.mode);
+          const current = (await repos.listBots(context.actor)).find(
+            (entry) => entry.id === bot.id,
+          );
+          if (!current) throw new IsolationError();
+          return current;
+        }
+        if (bot.computer.kind === "machine") {
+          throw new ORPCError("BAD_REQUEST", {
+            message: "Move the bot to the default machine before changing computer sharing.",
+          });
         }
         const claimed = await deps.prisma.bot.updateMany({
-          where: { id: bot.id, computerSwitching: false },
+          where: { id: bot.id, computerId: bot.computer.id, computerSwitching: false },
           data: { computerSwitching: true },
         });
         if (claimed.count !== 1) throw new ORPCError("CONFLICT");
@@ -4384,6 +4411,66 @@ export function createRouter(deps: RouterDeps) {
       list: authed.runs.list.handler(async ({ context, input }) => ({
         runs: await listSpaceRuns(deps.prisma, context.actor, input.filter),
       })),
+    },
+    machines: {
+      list: authed.machines.list.handler(async ({ context }) => machines.list(context.actor)),
+      startPairing: authed.machines.startPairing.handler(async ({ context, input }) => {
+        const started = await machines.startPairing(context.actor, input);
+        return {
+          pairingId: started.pairingId,
+          code: started.code,
+          expiresAt: started.expiresAt.toISOString(),
+        };
+      }),
+      cancelPairing: authed.machines.cancelPairing.handler(async ({ context, input }) => {
+        await machines.cancelPairing(context.actor, input);
+        return { ok: true as const };
+      }),
+      revoke: authed.machines.revoke.handler(async ({ context, input }) => {
+        await machines.revoke(context.actor, input);
+        return { ok: true as const };
+      }),
+      remove: authed.machines.remove.handler(async ({ context, input }) => {
+        await machines.remove(context.actor, input);
+        return { ok: true as const };
+      }),
+      assignment: authed.machines.assignment.handler(async ({ context, input }) =>
+        machineAssignment(deps.prisma, context.actor, input),
+      ),
+      assign: authed.machines.assign.handler(async ({ context, input }) =>
+        assignBotMachine(
+          { ...deps, defaultComputerKind: deps.sandbox.describe().id },
+          context.actor,
+          input,
+        ),
+      ),
+    },
+    services: {
+      list: authed.services.list.handler(async ({ context, input }) =>
+        listServices(deps, context.actor, input.botId),
+      ),
+      declare: authed.services.declare.handler(async ({ context, input }) =>
+        declareService(deps, context.actor, input),
+      ),
+      stop: authed.services.stop.handler(async ({ context, input }) =>
+        stopService(deps, context.actor, input),
+      ),
+      restart: authed.services.restart.handler(async ({ context, input }) =>
+        restartService(deps, context.actor, input),
+      ),
+      remove: authed.services.remove.handler(async ({ context, input }) =>
+        removeService(deps, context.actor, input),
+      ),
+      changes: authed.services.changes.handler(async ({ context, input }) =>
+        serviceChanges(deps, context.actor, input),
+      ),
+      previewUrl: authed.services.previewUrl.handler(async ({ context, input }) =>
+        servicePreviewUrl(
+          { ...deps, previewSecret: deps.env?.screenProxySecret },
+          context.actor,
+          input,
+        ),
+      ),
     },
     voice: {
       catalog: authed.voice.catalog.handler(async () => listVoiceCatalog()),

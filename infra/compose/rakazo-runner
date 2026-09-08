@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# Host wrapper for the paired machine runner daemon. Installed by
+# infra/compose/install-machine.sh (symlinked into ~/.local/bin). Requires only
+# Docker Engine with the Compose plugin; the runner itself runs in containers.
+set -Eeuo pipefail
+
+fail() { printf '%s\n' "$1" >&2; exit 1; }
+usage() {
+  printf '%s\n' 'Usage: rakazo-runner pair --server <origin> --code <pairing-code> [--name <name>]' >&2
+  printf '%s\n' '       rakazo-runner start | stop | logs' >&2
+}
+
+self=$(readlink -f -- "${BASH_SOURCE[0]}") || fail 'readlink -f is required.'
+source_dir=$(cd -- "$(dirname -- "$self")" && pwd)
+env_file="$source_dir/.env.machine"
+compose() {
+  docker compose --env-file "$env_file" -f "$source_dir/docker-compose.machine.yml" "$@"
+}
+require_machine() {
+  [[ ! -L "$env_file" && -f "$env_file" ]] || fail 'No machine configuration here. Run infra/compose/install-machine.sh first.'
+  command -v docker >/dev/null 2>&1 || fail 'Docker is required on the machine host.'
+}
+
+command=${1:-}
+if (($#)); then shift; fi
+if [[ "$command" != pair ]] && (($#)); then
+  usage
+  exit 2
+fi
+
+case "$command" in
+  pair)
+    server=""
+    code=""
+    name=""
+    seen=""
+    while (($#)); do
+      case "$1" in
+        --server|--code|--name)
+          if (($# < 2)) || [[ "$2" == --* ]]; then
+            printf 'Option %s needs a value.\n' "$1" >&2
+            usage
+            exit 2
+          fi
+          key=${1#--}
+          if [[ "$seen" == *" $key "* ]]; then
+            printf 'Duplicate option %s.\n' "$1" >&2
+            usage
+            exit 2
+          fi
+          seen="$seen $key "
+          case "$key" in
+            server) server=$2 ;;
+            code) code=$2 ;;
+            name) name=$2 ;;
+          esac
+          shift 2
+          ;;
+        *)
+          printf 'Unknown option %s.\n' "$1" >&2
+          usage
+          exit 2
+          ;;
+      esac
+    done
+    if [[ -z "$server" || -z "$code" ]]; then
+      usage
+      exit 2
+    fi
+    require_machine
+    pair_args=(pair --server "$server" --code "$code")
+    if [[ -n "$name" ]]; then pair_args+=(--name "$name"); fi
+    compose run --rm runner bun run --filter @rakazo/runner cli "${pair_args[@]}"
+    # Credentials land in the shared volume; a daemon that is already running
+    # restarts to load them. The supervisor secret never crosses this boundary.
+    if compose ps --status running --quiet runner 2>/dev/null | grep -q .; then
+      compose restart runner
+    fi
+    ;;
+  start)
+    require_machine
+    compose up -d
+    ;;
+  stop)
+    require_machine
+    compose stop runner
+    ;;
+  logs)
+    require_machine
+    compose logs runner
+    ;;
+  help|-h|--help)
+    usage
+    exit 0
+    ;;
+  "")
+    usage
+    exit 2
+    ;;
+  *)
+    printf 'Unknown command: %s\n' "$command" >&2
+    usage
+    exit 2
+    ;;
+esac

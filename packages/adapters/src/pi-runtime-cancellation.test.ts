@@ -53,7 +53,6 @@ describe("Pi runtime cancellation", () => {
       input,
       new RunAuthority(input, controller.signal),
       () => undefined,
-      async () => undefined,
     );
     controller.abort();
     try {

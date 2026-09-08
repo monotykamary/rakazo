@@ -2,7 +2,8 @@ import type { AgentRunRequest, AgentRuntimeEvent, ConnectorTool } from "@rakazo/
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRpcHarness } from "./pi-rpc-test-emulator.js";
 import { RunAuthority, ToolBridge } from "./pi-rpc-tool-bridge.js";
-import { maxToolCallsPerTurn } from "./pi-runtime.js";
+import { maxToolCallsPerTurn, normalizeAgentToolNames } from "./pi-runtime.js";
+import { MANAGED_RESERVED_TOOL_NAMES } from "./pi-tool-names.js";
 
 const destination: ConnectorTool = {
   name: "destination.write",
@@ -37,16 +38,67 @@ function setup(tools: ConnectorTool[]) {
     executeTool,
   };
   const authority = new RunAuthority(request, new AbortController().signal);
-  const bridge = new ToolBridge(
-    request,
-    authority,
-    (event) => events.push(event),
-    async () => "delegated",
-  );
+  const bridge = new ToolBridge(request, authority, (event) => events.push(event));
   return { request, authority, bridge, executeTool, events };
 }
 afterEach(() => vi.unstubAllEnvs());
 describe("Pi connector tool dispatch", () => {
+  it.each([...MANAGED_RESERVED_TOOL_NAMES])(
+    "isolates reserved connector name %s while retaining its route",
+    async (name) => {
+      const tool = { ...destination, name };
+      const fixture = setup([tool]);
+      const exposed = fixture.bridge.catalog[0]!;
+      expect(MANAGED_RESERVED_TOOL_NAMES.has(exposed.name)).toBe(false);
+      expect(exposed.name).not.toBe(name);
+      await fixture.bridge.invoke({ handle: exposed.handle, callId: "reserved", args: {} });
+      expect(fixture.executeTool).toHaveBeenCalledWith(
+        name,
+        {},
+        expect.any(String),
+        destination.route,
+        expect.any(AbortSignal),
+      );
+    },
+  );
+  it("keeps the real Fabric kernel active when a connector is named fabric_exec", async () => {
+    const tool = { ...destination, name: "fabric_exec" };
+    const name = normalizeAgentToolNames([tool])[0]!;
+    const executeTool = vi.fn(async () => "connector result");
+    const harness = await createRpcHarness({
+      tool: {
+        name: "fabric_exec",
+        args: {
+          code: `return await tools.call({ref:${JSON.stringify(`extensions.${name}`)},args:{collection:"notes",title:"Result",body:"Done"}});`,
+        },
+      },
+    });
+    try {
+      await harness.run({ tools: [tool], executeTool });
+      expect(executeTool).toHaveBeenCalledOnce();
+      expect(executeTool).toHaveBeenCalledWith(
+        "fabric_exec",
+        { collection: "notes", title: "Result", body: "Done" },
+        expect.any(String),
+        destination.route,
+        expect.any(AbortSignal),
+      );
+      for (const request of harness.requests)
+        expect(
+          request.tools.map((item: { function: { name: string } }) => item.function.name),
+        ).toEqual(["fabric_exec"]);
+    } finally {
+      await harness.close();
+    }
+  }, 30000);
+  it("keeps existing safe names stable when a reserved-name suffix collides", () => {
+    const reserved = { ...destination, name: "fabric_exec" };
+    const suffix = normalizeAgentToolNames([reserved])[0]!;
+    const names = normalizeAgentToolNames([reserved, { ...destination, name: suffix }]);
+    expect(names[1]).toBe(suffix);
+    expect(new Set(names).size).toBe(2);
+    expect(names).not.toContain("fabric_exec");
+  });
   it("exposes safe names while freezing the original connector name and route", async () => {
     const fixture = setup([destination]);
     expect(fixture.bridge.catalog[0]?.name).toBe("destination_write");
@@ -62,9 +114,41 @@ describe("Pi connector tool dispatch", () => {
       { collection: "notes", title: "Result", body: "Done" },
       expect.stringContaining("run:"),
       { connectorId: "destination", toolName: "destination.write" },
+      expect.any(AbortSignal),
     );
     expect(fixture.events).toContainEqual(
       expect.objectContaining({ type: "execution", status: "completed" }),
+    );
+  });
+  it("projects MCP provenance without rebinding installed authority or colliding source identities", async () => {
+    const definition = (name: string, connectorId: string, protocol?: "mcp"): ConnectorTool => ({
+      name,
+      description: name,
+      inputSchema: { type: "object", properties: {} },
+      protocol,
+      route: { connectorId, resourceId: "same-id", toolName: "lookup" },
+    });
+    const fixture = setup([
+      definition("installed_lookup", "installed", "mcp"),
+      definition("mcp_lookup", "mcp"),
+      definition("api_lookup", "installed"),
+    ]);
+    expect(fixture.bridge.catalog.map((tool) => tool.connector)).toEqual([
+      { id: "mcp", resourceId: "installed:same-id", toolName: "lookup" },
+      { id: "mcp", resourceId: "mcp:same-id", toolName: "lookup" },
+      { id: "installed", resourceId: "same-id", toolName: "lookup" },
+    ]);
+    await fixture.bridge.invoke({
+      handle: fixture.bridge.catalog[0]!.handle,
+      callId: "mcp-call",
+      args: {},
+    });
+    expect(fixture.executeTool).toHaveBeenCalledWith(
+      "installed_lookup",
+      {},
+      expect.any(String),
+      { connectorId: "installed", resourceId: "same-id", toolName: "lookup" },
+      expect.any(AbortSignal),
     );
   });
   it("rejects unknown handles and duplicate execution identities without replay", async () => {
@@ -98,6 +182,7 @@ describe("Pi connector tool dispatch", () => {
       { path: "state.json", content: '{\n  "last_run": 1\n}' },
       expect.any(String),
       undefined,
+      expect.any(AbortSignal),
     );
   });
   it("allows more than eighty calls by default and enforces a shared child fuse", async () => {
@@ -112,12 +197,7 @@ describe("Pi connector tool dispatch", () => {
     expect(fixture.executeTool).toHaveBeenCalledTimes(100);
     vi.stubEnv("MAX_TOOL_CALLS_PER_TURN", "2");
     const limited = setup([shell]);
-    const child = new ToolBridge(
-      limited.request,
-      limited.authority,
-      () => undefined,
-      async () => undefined,
-    );
+    const child = new ToolBridge(limited.request, limited.authority, () => undefined);
     await limited.bridge.invoke({
       handle: limited.bridge.catalog[0]!.handle,
       callId: "parent",
@@ -201,6 +281,7 @@ describe("Pi connector tool dispatch", () => {
     });
     try {
       const events = await harness.run({
+        executeTool: async () => ({ ok: true }),
         tools: [
           {
             name: "run_subagent",

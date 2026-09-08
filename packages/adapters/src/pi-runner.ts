@@ -28,12 +28,14 @@ import { type ModelSelectionStatus, ModelSelectionStatusSchema } from "@rakazo/c
 import { resolvePiKit } from "@rakazo/pi-kit";
 import { boundedExecutionEvidence } from "./pi-execution-evidence.js";
 import { createManagedKit, type ManagedKit } from "./pi-managed-kit.js";
+import type { ManagedProxyTool } from "./pi-managed-mcp.js";
+import { createPrivateAgentsDispatcher } from "./pi-rpc-agents-bridge.js";
 import { type JsonRecord, type PrivateDuplex, record, string } from "./pi-rpc-protocol.js";
 import { JsonPeer, readJsonFrames } from "./pi-rpc-transport.js";
 import { pruneComputerScreenshotContext } from "./pi-runtime.js";
 import { prepareManagedToolArguments } from "./pi-tool-arguments.js";
 
-const CORE_TOOLS = ["read", "write", "edit", "bash", "powershell", "grep", "find", "ls"] as const;
+import { MANAGED_RESERVED_TOOL_NAMES } from "./pi-tool-names.js";
 
 /** Stock RPC is process stdio; the separate private duplex is injected by the isolated entrypoint. */
 export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<never> {
@@ -146,6 +148,13 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
       await managedKit?.dispose();
       await runtime?.dispose();
       return { stopped: true };
+    }
+    if (message.operation === "suspend") {
+      paused = true;
+      await managedKit?.pause();
+      await runtime?.session.abort();
+      await checkpoint();
+      return { paused: true };
     }
     if (message.operation === "pause") {
       paused = true;
@@ -356,15 +365,26 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
       });
     modelRuntime.completeSimple = (m, ctx, options) => brokerStream(m, ctx, options).result();
     modelRuntime.complete = (m, ctx, options) => modelRuntime.stream(m, ctx, options).result();
-    const proxies: ToolDefinition[] = data.tools.map((value) => {
+    const proxies: ManagedProxyTool[] = data.tools.map((value) => {
       const tool = record(value);
       const name = string(tool.name);
-      if (CORE_TOOLS.some((core) => core === name))
+      if (MANAGED_RESERVED_TOOL_NAMES.has(name))
         throw new Error("Managed tool collides with reserved native tool");
       return {
         name,
         label: name,
         description: String(tool.description),
+        ...(tool.connector
+          ? {
+              connector: {
+                id: string(record(tool.connector).id),
+                toolName: string(record(tool.connector).toolName),
+                ...(record(tool.connector).resourceId
+                  ? { resourceId: string(record(tool.connector).resourceId) }
+                  : {}),
+              },
+            }
+          : {}),
         prepareArguments: (args) => prepareManagedToolArguments(String(tool.argumentKind), args),
         parameters: tool.parameters as ToolDefinition["parameters"],
         async execute(callId, args, signal) {
@@ -417,6 +437,23 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
       ...{ getPlacement: () => placement },
       instructions: String(data.instructions),
       proxyTools: proxies,
+      agents:
+        data.agents === true
+          ? async (action, args, signal) => {
+              if (paused) throw new Error("Managed run is paused");
+              await checkpoint();
+              const response = record(
+                await createPrivateAgentsDispatcher(peer)(action, args, signal),
+              );
+              if (response.paused === true) {
+                paused = true;
+                await managedKit?.pause();
+                await checkpoint();
+                throw new Error("Managed agent authorization paused");
+              }
+              return response.result;
+            }
+          : undefined,
       restore: restore?.kitState ? record(restore.kitState).managed : undefined,
       // Root-only host memory authority; delegated children never see a host memory half.
       hostMemory:

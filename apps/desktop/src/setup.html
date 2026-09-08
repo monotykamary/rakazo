@@ -31,11 +31,12 @@
 
           <label class="choice" for="mode-existing">
             <input id="mode-existing" type="radio" name="mode" value="existing" />
-            <span class="choice-title">Existing instance</span>
+            <span class="choice-title">Another server</span>
           </label>
         </fieldset>
 
         <section id="panel-new" class="panel">
+          <p class="setup-note">Bots pause when this computer sleeps.</p>
           <div id="stack" hidden>
             <p id="stack-phase" class="stack-phase" role="status" aria-live="polite"></p>
             <pre id="stack-output" class="stack-output" hidden></pre>
@@ -57,6 +58,16 @@
             autocomplete="off"
             placeholder="https://rakazo.example.com"
           />
+          <p id="server-switch-notice" class="setup-note" hidden>Connecting does not move existing bots or history.</p>
+          <details class="server-guide">
+            <summary>Set up an always-on server</summary>
+            <p>On a Linux server with Docker, run this from a Rakazo checkout:</p>
+            <pre><code>bash infra/compose/deploy-server.sh \
+  --host app.example.com \
+  --allow-signup owner@example.com \
+  --build --prepare-only</code></pre>
+            <p>Use your hostname and signup email. Configure email in the generated .env, then repeat without --prepare-only. Point DNS at the server and allow ports 80 and 443.</p>
+          </details>
         </section>
 
         <p id="status" class="status" role="status" aria-live="polite"></p>

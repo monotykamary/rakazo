@@ -3,6 +3,10 @@ import { builtinAgentTools } from "./builtin-tools.js";
 import { boundedExecutionEvidence } from "./pi-execution-evidence.js";
 import { createRpcHarness } from "./pi-rpc-test-emulator.js";
 
+const children = (state: any): any[] =>
+  state?.agents?.records.map((entry: any) => entry.record) ?? [];
+const childRecord = (state: any, id: string) => children(state).find((child) => child.id === id);
+
 const read = {
   name: "read_file",
   description: "Read",
@@ -76,16 +80,18 @@ describe("managed runtime continuity", () => {
           },
         },
       });
-      const id = Object.keys(saved.participants)[0]!;
+      const id = children(saved)[0]!.id;
       expect(id).toBeTruthy();
       const helperReply = harness.requests
         .at(-1)!
         .messages.findLast((message: { role: string }) => message.role === "tool");
       expect(String(helperReply?.content)).toContain(id);
       expect(String(helperReply?.content)).toContain("completed");
-      expect(JSON.stringify(saved.participants[id].session)).toContain("Child original marker");
-      expect(saved.participants[id].placement.cwd).toBe("project");
-      expect(JSON.stringify(saved.participants[id].session)).not.toContain(
+      expect(JSON.stringify(childRecord(saved, id).checkpoint.session)).toContain(
+        "Child original marker",
+      );
+      expect(childRecord(saved, id).checkpoint.placement.cwd).toBe("project");
+      expect(JSON.stringify(childRecord(saved, id).checkpoint.session)).not.toContain(
         Buffer.from("root-only-image-fixture").toString("base64"),
       );
       let sent = false;
@@ -121,11 +127,15 @@ describe("managed runtime continuity", () => {
           });
         },
       });
-      expect(JSON.stringify(saved.participants[id].session)).toContain("Child original marker");
-      expect(JSON.stringify(saved.participants[id].session)).toContain("Child continuation marker");
-      expect(saved.participants[id].parentParticipantId).toBe("run-next");
-      expect(saved.participants[id].session.sourceMessageIds).toContain("targeted");
-      expect(JSON.stringify(saved.participants[id].session)).toContain(
+      expect(JSON.stringify(childRecord(saved, id).checkpoint.session)).toContain(
+        "Child original marker",
+      );
+      expect(JSON.stringify(childRecord(saved, id).checkpoint.session)).toContain(
+        "Child continuation marker",
+      );
+      expect(childRecord(saved, id).parentId).toBe("run-next");
+      expect(childRecord(saved, id).checkpoint.session.sourceMessageIds).toContain("targeted");
+      expect(JSON.stringify(childRecord(saved, id).checkpoint.session)).toContain(
         Buffer.from("offline-image-fixture").toString("base64"),
       );
       expect(authorized).toHaveBeenCalledTimes(2);
@@ -163,25 +173,23 @@ describe("managed runtime continuity", () => {
           scopes.add(control.participantId);
           trace.push({
             boundary,
-            statuses: Object.values(saved?.participants ?? {}).map((value: any) => value.status),
+            statuses: children(saved).map((value: any) => value.status),
           });
-          const child = Object.values(saved?.participants ?? {}).find(
-            (value: any) => value.status === "running",
-          ) as any;
+          const child = children(saved).find((value: any) => value.status === "running") as any;
           if (boundary !== "before_model" || delivered || !child) return;
           delivered = true;
           await control.deliver({
             id: "child-steering",
             messageId: "queue:child-steering",
-            participantId: child.participantId,
+            participantId: child.id,
             text: "Targeted child-only marker",
           });
         },
       });
       expect(delivered, JSON.stringify(trace)).toBe(true);
       expect([...scopes]).toEqual(["run"]);
-      const child = Object.values(saved.participants)[0] as any;
-      expect(JSON.stringify(child.session)).toContain("Targeted child-only marker");
+      const child = children(saved)[0] as any;
+      expect(JSON.stringify(child.checkpoint.session)).toContain("Targeted child-only marker");
       const rootRequests = harness.requests.filter(
         (request) => !JSON.stringify(request.messages).includes("Complete the delegated task."),
       );
@@ -190,7 +198,7 @@ describe("managed runtime continuity", () => {
           JSON.stringify(request.messages).includes("Targeted child-only marker"),
         ),
       ).toBe(false);
-      expect(child.placement.cwd).toBe("project");
+      expect(child.checkpoint.placement.cwd).toBe("project");
       expect(harness.host.reaped).toBe(2);
     } finally {
       await harness.close();
@@ -217,17 +225,15 @@ describe("managed runtime continuity", () => {
           },
         },
         runtimeBoundary: async (boundary, control) => {
-          const child = Object.values(saved?.participants ?? {}).find(
-            (value: any) => value.status === "running",
-          ) as any;
+          const child = children(saved).find((value: any) => value.status === "running") as any;
           if (boundary !== "before_model" || awaited || !child) return;
           awaited = true;
           const result = await control.command(
-            { kind: "participant-await", participantId: child.participantId },
+            { kind: "participant-await", participantId: child.id },
             { id: "gate", signal: AbortSignal.timeout(10000) },
           );
           expect(result).toEqual({ outcome: "completed" });
-          expect(saved.participants[child.participantId].status).toBe("completed");
+          expect(childRecord(saved, child.id).status).toBe("completed");
           completed = true;
         },
       });
@@ -284,7 +290,7 @@ describe("managed runtime continuity", () => {
   }, 30000);
 
   it("retains real Fabric code, result and rich audit evidence", async () => {
-    const code = 'return await extensions.read_file({path: "notes.txt"});';
+    const code = 'return await pi.read({path: "notes.txt"});';
     const harness = await createRpcHarness({ tool: { name: "fabric_exec", args: { code } } });
     try {
       const events = await harness.run({

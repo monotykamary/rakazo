@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentRunRequest } from "@rakazo/adapter-kit";
 import { resolvePiKit } from "@rakazo/pi-kit";
+import type { FabricInvocationContext } from "pi-fabric/protocol";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { builtinAgentTools } from "./builtin-tools.js";
 import {
@@ -33,11 +34,23 @@ beforeAll(() => {
 });
 afterAll(() => vi.unstubAllEnvs());
 
+const invocation: FabricInvocationContext = {
+  cwd: "/work",
+  signal: undefined,
+  parentToolCallId: "fabric-test",
+  nestedToolCallId: "memory-test",
+  extensionContext: {} as never,
+  update: () => undefined,
+};
 const ready = { version: 1, runtimeVersion: "0.85.1", nativeTools: false, memory: true };
 type BridgeArgs = ConstructorParameters<typeof ToolBridge>;
 const captured = new Map<
   string,
-  { request: BridgeArgs[0]; authority: BridgeArgs[1]; delegate: BridgeArgs[3] }
+  {
+    request: BridgeArgs[0];
+    authority: BridgeArgs[1];
+    delegate: (args: Record<string, unknown>, id: string) => Promise<unknown>;
+  }
 >();
 const bridgeHandlers: Array<(message: JsonRecord) => Promise<unknown>> = [];
 const allObservers: Array<(event: JsonRecord) => void> = [];
@@ -104,7 +117,15 @@ vi.mock("./pi-rpc-tool-bridge.js", async (original) => {
     ToolBridge: class extends actual.ToolBridge {
       constructor(...args: BridgeArgs) {
         super(...args);
-        captured.set(args[0].runId, { request: args[0], authority: args[1], delegate: args[3] });
+        captured.set(args[0].runId, {
+          request: args[0],
+          authority: args[1],
+          delegate: (input, callId) =>
+            bridgeHandlers[0]!({
+              operation: "agents",
+              data: { action: "run", callId, args: input },
+            }),
+        });
       }
     },
   };
@@ -123,6 +144,7 @@ const base: AgentRunRequest = {
   instructions: "Policy",
   history: [],
   queueOnly: true,
+  executeTool: async () => ({ ok: true }),
   tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
   model: {
     provider: "openai-compatible",
@@ -145,7 +167,7 @@ function runtimeFixture(
     exercise: (root: {
       request: BridgeArgs[0];
       authority: BridgeArgs[1];
-      delegate: BridgeArgs[3];
+      delegate: (args: Record<string, unknown>, id: string) => Promise<unknown>;
     }) => Promise<void>,
   ) => {
     for await (const _event of runtime.run(
@@ -169,6 +191,24 @@ function runtimeFixture(
 const memoryCall = (data: JsonRecord) => ({ operation: "memory", data });
 
 describe("managed host memory bridge", () => {
+  it("preserves host-restored memory and model routing through root service checkpoints", async () => {
+    const save = vi.fn(async () => undefined);
+    const memory = { source: "host-memory-fixture" };
+    const modelRouting = { marker: "host-routing-fixture" };
+    await runtimeFixture(undefined, {
+      session: { restore: { rootParticipantId: "old-root", memory, modelRouting }, save },
+    })(async () => {
+      await bridgeHandlers[0]!({ operation: "checkpoint", data: { version: 1, entries: [] } });
+      expect(save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          memory,
+          modelRouting,
+          rootParticipantId: "root",
+          agents: expect.objectContaining({ records: [] }),
+        }),
+      );
+    });
+  });
   it("serves the root memory authority through the private bridge with runtime validation", async () => {
     const authority = vi.fn(async (call: { action: string }) => ({
       hits: [{ snippet: `remembered ${call.action}` }],
@@ -288,64 +328,69 @@ describe("managed host memory bridge", () => {
   it("routes source-less expansion and session scope to the local engine, archive default to the host", async () => {
     const host = vi.fn(async () => "archive");
     const local = vi.fn(async () => "session");
-    const hybrid = hybridMemoryProvider({ invoke: host } as never, { invoke: local } as never);
-    const routed = (action: string, args: Record<string, unknown>) => hybrid.invoke(action, args);
+    const hybrid = hybridMemoryProvider(
+      { invoke: host } as never,
+      { invoke: local, sourceId: "managed-session" } as never,
+    );
+    const routed = (action: string, args: Record<string, unknown>) =>
+      hybrid.invoke(action, args, invocation);
     // Source-less follow pointers and explicit session scope stay on the current runtime engine.
     await expect(routed("expand", { session: "current", entryIds: ["e1"] })).resolves.toBe(
       "session",
     );
     await expect(routed("recall", { scope: "session" })).resolves.toBe("session");
     await expect(routed("sessions", { scope: "session" })).resolves.toBe("session");
-    expect(local).toHaveBeenLastCalledWith("sessions", { scope: "session" }, undefined);
+    expect(local).toHaveBeenLastCalledWith("sessions", { scope: "session" }, invocation);
     await expect(routed("recall", { session: "current" })).resolves.toBe("session");
     // Foreign logical ids map through and fail closed inside the local engine.
     await expect(routed("recall", { scope: "session:foreign" })).resolves.toBe("session");
-    expect(local).toHaveBeenLastCalledWith(
-      "recall",
-      { scope: "session:foreign", session: "foreign" },
-      undefined,
+    expect(local).toHaveBeenLastCalledWith("recall", { scope: "session:foreign" }, invocation);
+    await expect(routed("expand", { source: "managed-session", session: "current" })).resolves.toBe(
+      "session",
     );
-    // Source-bearing pointers and the bare default go to the bot archive.
+    // Archive source pointers and the bare default go to the bot archive.
     await expect(routed("expand", { source: "bot", session: "k" })).resolves.toBe("archive");
     await expect(routed("recall", { source: "bot", query: "x" })).resolves.toBe("archive");
     await expect(routed("recall", { query: "x" })).resolves.toBe("archive");
     await expect(routed("sessions", {})).resolves.toBe("archive");
-    await expect(routed("forget", {})).resolves.toBe("archive");
-    expect(local).toHaveBeenCalledTimes(5);
+    await expect(routed("forget", {})).rejects.toThrow("Unknown memory action");
+    expect(local).toHaveBeenCalledTimes(6);
   });
 
   it("proxies kit memory actions to the host and fails closed on the pinned Fabric schemas", async () => {
     const authority = vi.fn(async () => ({ total: 0, hits: [] }));
     const provider = managedHostMemoryProvider(authority, () => false);
-    expect((await provider.list()).map((action) => action.name)).toEqual([
+    expect((await provider.list({}, invocation)).map((action) => action.name)).toEqual([
       "recall",
       "expand",
       "sessions",
     ]);
-    const described = (await provider.describe("recall"))!;
+    const described = (await provider.describe("recall", invocation))!;
     // The host binds the source, so the public descriptor never requires it.
     expect((described.inputSchema as { required?: string[] }).required ?? []).not.toContain(
       "source",
     );
     // Compaction follow pointers keep their exact-expansion knobs.
-    const expand = (await provider.describe("expand"))!;
+    const expand = (await provider.describe("expand", invocation))!;
     const expandProperties = expand.inputSchema.properties as Record<string, unknown>;
     expect(Object.keys(expandProperties)).toEqual(
       expect.arrayContaining(["maxEntries", "maxChars"]),
     );
-    await expect(provider.invoke("forget", {}, {})).rejects.toThrow("Unknown memory action");
+    await expect(provider.invoke("forget", {}, invocation)).rejects.toThrow(
+      "Unknown memory action",
+    );
     const signal = new AbortController().signal;
-    await provider.invoke("recall", { source: "bot", query: "x" }, { signal });
+    await provider.invoke("recall", { source: "bot", query: "x" }, { ...invocation, signal });
     expect(authority).toHaveBeenCalledWith({
       action: "recall",
       args: { source: "bot", query: "x" },
       signal,
     });
     const paused = managedHostMemoryProvider(authority, () => true);
-    await expect(paused.invoke("recall", { source: "bot" }, {})).rejects.toThrow(/paused/);
+    await expect(paused.invoke("recall", { source: "bot" }, invocation)).rejects.toThrow(/paused/);
     const aborted = managedHostMemoryProvider(authority, () => false);
     await expect(
-      aborted.invoke("recall", { source: "bot" }, { signal: AbortSignal.abort() }),
+      aborted.invoke("recall", { source: "bot" }, { ...invocation, signal: AbortSignal.abort() }),
     ).rejects.toThrow();
     expect(authority).toHaveBeenCalledTimes(1);
   });

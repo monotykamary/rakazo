@@ -5,7 +5,7 @@ import type {
   ConnectorProvider,
   ConnectorTool,
 } from "@rakazo/adapter-kit";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ConnectorRegistry } from "./composio-connector.js";
 import { DestinationEmulator } from "./destination-emulator.js";
 
@@ -45,6 +45,15 @@ const context: AdapterContext = {
 };
 
 describe("ConnectorRegistry", () => {
+  it("forwards explicit full discovery without changing the legacy default", async () => {
+    const provider = new StubConnector("mcp", []);
+    const discover = vi.spyOn(provider, "discoverTools");
+    const registry = new ConnectorRegistry(new DestinationEmulator(), [provider]);
+    await registry.discoverTools(context, { catalog: "full" });
+    expect(discover).toHaveBeenLastCalledWith(context, { catalog: "full" });
+    await registry.discoverTools(context);
+    expect(discover).toHaveBeenLastCalledWith(context, undefined);
+  });
   it("preserves every colliding tool and routes through hidden source metadata", async () => {
     const first = new StubConnector("first", [tool("shared.tool")]);
     const second = new StubConnector("second", [tool("shared.tool")]);

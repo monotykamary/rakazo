@@ -13,6 +13,7 @@ playwright-report
 *.tsbuildinfo
 .env
 .env.local
+.env.machine
 .env.*.local
 data
 apps/**/data

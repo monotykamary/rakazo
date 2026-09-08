@@ -37,6 +37,7 @@ const EXPLICIT_APPROVAL_BUILTIN_TOOLS = new Set(["create_space"]);
 const UNATTENDED_SAFE_BUILTIN_TOOLS = new Set([
   "browser_snapshot",
   "cloud_agent_status",
+  "discover_projects",
   "computer_observe",
   "list_files",
   "list_secrets",
@@ -81,16 +82,25 @@ export function connectorToolRequiresApproval(toolName: string): boolean {
   return !READ_ONLY_CONNECTOR_PATTERN.test(toolName);
 }
 
-export function toolRequiresApproval(toolName: string, viaConnector: boolean): boolean {
+export function toolRequiresApproval(
+  toolName: string,
+  viaConnector: boolean,
+  args?: Record<string, unknown>,
+): boolean {
   if (APPROVAL_EXEMPT_TOOLS.has(toolName)) return false;
-  if (toolRequiresExplicitApproval(toolName)) return true;
+  if (toolRequiresExplicitApproval(toolName, args)) return true;
   if (APPROVAL_REQUIRED_BUILTIN_TOOLS.has(toolName)) return true;
   if (viaConnector) return connectorToolRequiresApproval(toolName);
   return false;
 }
 
 /** Security-boundary changes cannot be auto-reviewed or permanently allowed. */
-export function toolRequiresExplicitApproval(toolName: string): boolean {
+export function toolRequiresExplicitApproval(
+  toolName: string,
+  args?: Record<string, unknown>,
+): boolean {
+  if (toolName === "computer_services")
+    return args?.action !== "list" && args?.action !== "changes";
   return EXPLICIT_APPROVAL_BUILTIN_TOOLS.has(toolName);
 }
 
@@ -99,8 +109,10 @@ export function unattendedTriggerToolRequiresApproval(
   trigger: string,
   toolName: string,
   viaConnector: boolean,
+  args?: Record<string, unknown>,
 ): boolean {
   if (trigger !== "webhook") return false;
+  if (toolName === "computer_services") return toolRequiresExplicitApproval(toolName, args);
   return viaConnector
     ? connectorToolRequiresApproval(toolName)
     : !UNATTENDED_SAFE_BUILTIN_TOOLS.has(toolName);

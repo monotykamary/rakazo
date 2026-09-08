@@ -2,6 +2,7 @@ import type { AgentRunRequest } from "@rakazo/adapter-kit";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { builtinAgentTools } from "./builtin-tools.js";
 import { ManagedPiRuntime } from "./pi-managed-runtime.js";
+import type { NativeAgents } from "./pi-native-agents.js";
 import type { AgentProcessHost, JsonRecord, PrivateDuplex } from "./pi-rpc-protocol.js";
 import type { ToolBridge } from "./pi-rpc-tool-bridge.js";
 
@@ -16,7 +17,7 @@ const captured = vi.hoisted(
       {
         request: BridgeArgs[0];
         authority: BridgeArgs[1];
-        delegate: BridgeArgs[3];
+        delegate: (args: Record<string, unknown>, label: string) => Promise<unknown>;
         tools: ToolBridge;
       }
     >(),
@@ -31,14 +32,38 @@ vi.mock("./pi-rpc-tool-bridge.js", async (original) => {
         captured.set(args[0].runId, {
           request: args[0],
           authority: args[1],
-          delegate: args[3],
+          delegate: async (input, _label) => {
+            const { participantId, ...request } = input;
+            const result = participantId
+              ? await native.get(base.runId)!.dispatcher(args[0].runId)("resume", {
+                  id: participantId,
+                  task: input.task,
+                })
+              : await native.get(base.runId)!.dispatcher(args[0].runId)("run", request);
+            const value = result as { status: string; error?: string };
+            if (value.status === "failed") throw new Error(value.error ?? "failed");
+            return result;
+          },
           tools: this,
         });
       }
     },
   };
 });
-// Only the worker transport is simulated. Runtime admission and shared tool authority are real.
+const native = vi.hoisted(() => new Map<string, NativeAgents>());
+vi.mock("./pi-native-agents.js", async (original) => {
+  const actual = await original<typeof import("./pi-native-agents.js")>();
+  return {
+    ...actual,
+    NativeAgents: class extends actual.NativeAgents {
+      constructor(...args: ConstructorParameters<typeof NativeAgents>) {
+        super(...args);
+        native.set(args[0].request.runId, this);
+      }
+    },
+  };
+});
+// Only the worker transport is simulated. Fabric service and shared tool authority are real.
 vi.mock("./pi-rpc-transport.js", async (original) => {
   const actual = await original<typeof import("./pi-rpc-transport.js")>();
   return {
@@ -91,6 +116,7 @@ const base: AgentRunRequest = {
   history: [],
   queueOnly: true,
   tools: builtinAgentTools.filter((tool) => ["run_subagent", "manage_queue"].includes(tool.name)),
+  executeTool: async () => ({ ok: true }),
   model: {
     provider: "openai-compatible",
     id: "offline",
@@ -145,10 +171,190 @@ const restored = {
 
 beforeEach(() => {
   captured.clear();
+  native.clear();
   vi.unstubAllEnvs();
   compactReply.mockReset().mockResolvedValue({ outcome: "completed" });
 });
 describe("managed delegation admission", () => {
+  it("uses one service ceiling for native recursion and keeps descendants parent-scoped", async () => {
+    const f = fixture();
+    await f.run(
+      async () => {
+        const service = native.get(base.runId)!.service;
+        await service.run(base.runId, { task: "first" });
+        expect(service.snapshot().starts).toBe(3);
+        expect(service.snapshot().records.map((entry) => entry.record.depth)).toEqual([1, 2, 3]);
+        const grandchild = service.snapshot().records[1]!.record;
+        await expect(service.status(base.runId, grandchild.id)).rejects.toThrow(
+          "Unknown direct child",
+        );
+      },
+      {
+        claimParticipantSteering: async (id) => {
+          const service = native.get(base.runId)!.service;
+          const depth = native.get(base.runId)!.entry(id)!.record.depth;
+          if (depth < 3) await service.run(id, { task: "nested" });
+          else await expect(service.run(id, { task: "too deep" })).rejects.toThrow("depth limit");
+          return [];
+        },
+      },
+    );
+    expect(f.start).toHaveBeenCalledTimes(4);
+    expect(f.stop).toHaveBeenCalledTimes(4);
+  });
+
+  it("does not charge admission when a pause arrives during asynchronous model preparation", async () => {
+    const f = fixture();
+    const entered = barrier();
+    const release = barrier();
+    await f.run(
+      async ({ authority }) => {
+        const service = native.get(base.runId)!.service;
+        const attempt = service.run(base.runId, { task: "pending model" });
+        const outcome = expect(attempt).rejects.toThrow();
+        await entered.promise;
+        authority.gracefulPause = true;
+        authority.paused = true;
+        release.release();
+        await outcome;
+        expect(service.snapshot().starts).toBe(0);
+        expect(f.start).toHaveBeenCalledTimes(1);
+      },
+      {
+        resolveParticipantModel: async () => {
+          entered.release();
+          await release.promise;
+          return undefined;
+        },
+      },
+    );
+  });
+
+  it("authorizes models with Fabric's stable ID and spends no admission on denied scope", async () => {
+    const f = fixture();
+    const ids: string[] = [];
+    await f.run(
+      async () => {
+        const agents = native.get(base.runId)!;
+        await expect(
+          agents.dispatcher(base.runId)("run", { task: "denied", model: "provider/denied" }),
+        ).rejects.toThrow("denied model");
+        await expect(
+          agents.dispatcher(base.runId)("run", { task: "denied", tools: ["manage_queue"] }),
+        ).rejects.toThrow("outside parent scope");
+        expect(agents.service.snapshot().starts).toBe(0);
+        expect(f.start).toHaveBeenCalledTimes(1);
+        const child = await agents.service.run(base.runId, { task: "allowed", recursive: false });
+        expect(child.id).toBe(ids.at(-1));
+        expect(captured.get(child.id)!.request.tools).toEqual([]);
+        expect(captured.get(child.id)!.request.memory).toBeUndefined();
+        expect(child).not.toHaveProperty("checkpoint");
+      },
+      {
+        resolveParticipantModel: async (id, selection) => {
+          ids.push(id);
+          if (selection?.modelId === "denied") throw new Error("denied model");
+          return undefined;
+        },
+      },
+    );
+  });
+
+  it("narrows canonical and normalized product tools without granting shell for query-only scopes", async () => {
+    const f = fixture();
+    const read = { name: "read_file", description: "Read", inputSchema: { type: "object" } };
+    const shell = { name: "shell", description: "Shell", inputSchema: { type: "object" } };
+    const product = {
+      name: "product.search",
+      description: "Search",
+      inputSchema: { type: "object" },
+    };
+    await f.run(
+      async (root) => {
+        const agents = native.get(base.runId)!;
+        const normalized = root.tools.catalog.find(
+          (tool) => tool.argumentKind === product.name,
+        )!.name;
+        for (const name of ["grep", "find", product.name, "read_file"])
+          await expect(
+            agents.dispatcher(base.runId)("run", { task: "denied", tools: [name] }),
+          ).rejects.toThrow();
+        expect(agents.service.snapshot().starts).toBe(0);
+        const result = await agents.service.run(base.runId, {
+          task: "read only",
+          tools: ["read", normalized],
+        });
+        expect(captured.get(result.id)!.request.tools.map((tool) => tool.name)).toEqual([
+          "run_subagent",
+          "read_file",
+          product.name,
+        ]);
+      },
+      { tools: [...base.tools, read, shell, product] },
+    );
+  });
+
+  it("acknowledges native controls and drains explicit stop through worker cleanup", async () => {
+    const f = fixture();
+    const entered = barrier();
+    const finish = barrier();
+    await f.run(
+      async () => {
+        const service = native.get(base.runId)!.service;
+        const child = await service.spawn(base.runId, { task: "controlled" });
+        await entered.promise;
+        await service.steer(base.runId, child.id, "Continue carefully");
+        await service.compact(base.runId, child.id);
+        compactReply.mockResolvedValueOnce({ accepted: true });
+        await expect(service.compact(base.runId, child.id)).rejects.toThrow("not confirmed");
+        let stopped = false;
+        const stopping = service.stop(base.runId, child.id).then((record) => {
+          stopped = true;
+          return record;
+        });
+        await Promise.resolve();
+        expect(stopped).toBe(false);
+        finish.release();
+        expect((await stopping).status).toBe("stopped");
+        expect(f.stop).toHaveBeenCalledTimes(1);
+      },
+      {
+        claimParticipantSteering: async () => {
+          entered.release();
+          await finish.promise;
+          return [];
+        },
+      },
+    );
+  });
+
+  it("naturally drains background native spawns before shutting down the root", async () => {
+    const f = fixture();
+    const entered = barrier();
+    const finish = barrier();
+    let spawned = false;
+    const work = f.run(
+      async () => {
+        await native.get(base.runId)!.dispatcher(base.runId)("spawn", { task: "background" });
+        await entered.promise;
+        spawned = true;
+      },
+      {
+        claimParticipantSteering: async () => {
+          entered.release();
+          await finish.promise;
+          return [];
+        },
+      },
+    );
+    await expect.poll(() => spawned).toBe(true);
+    expect(f.stop).not.toHaveBeenCalled();
+    finish.release();
+    await work;
+    expect(native.get(base.runId)!.service.snapshot().records[0]!.record.status).toBe("completed");
+    expect(f.stop).toHaveBeenCalledTimes(2);
+  });
+
   it("reserves a resumed identity after authorization and before checkpoint/start awaits", async () => {
     const f = fixture();
     const auth = barrier();
@@ -162,30 +368,30 @@ describe("managed delegation admission", () => {
       executeTool: async () => ({ ok: true }),
     }));
     await f.run(
-      async ({ delegate, authority }) => {
+      async ({ delegate }) => {
         // Both calls pass the pre-placement checks before either can reserve.
         blockAuth = true;
         const first = delegate({ participantId: "child", task: "one" }, "one");
         const second = delegate({ participantId: "child", task: "two" }, "two");
         const results = Promise.allSettled([first, second]);
         await bothChecking.promise;
-        expect(authority.childrenStarted).toBe(0);
+        expect(native.get(base.runId)!.service.snapshot().starts).toBe(0);
         blockAuth = false;
         auth.release();
         await saving.promise;
-        await expect.poll(() => placement.mock.calls.length).toBe(2);
-        expect(authority.childrenStarted).toBe(1);
+        expect(placement).toHaveBeenCalledTimes(1);
+        expect(native.get(base.runId)!.service.snapshot().starts).toBe(1);
         expect(f.start).toHaveBeenCalledTimes(1);
         saved.release();
         const outcomes = await results;
         expect(outcomes.filter((r) => r.status === "fulfilled")).toHaveLength(1);
         expect(outcomes.find((r) => r.status === "rejected")).toMatchObject({
-          reason: expect.objectContaining({ message: expect.stringContaining("already active") }),
+          reason: expect.objectContaining({ message: expect.stringContaining("idle") }),
         });
         expect(f.start).toHaveBeenCalledTimes(2);
         // Completion releases the active identity, not its started-budget slot.
         await delegate({ participantId: "child", task: "three" }, "three");
-        expect(authority.childrenStarted).toBe(2);
+        expect(native.get(base.runId)!.service.snapshot().starts).toBe(2);
       },
       {
         session: {
@@ -215,24 +421,24 @@ describe("managed delegation admission", () => {
     let blocked = false;
     let checks = 0;
     await f.run(
-      async ({ delegate, authority }) => {
+      async ({ delegate }) => {
         for (let i = 0; i < 7; i++) await delegate({ task: String(i) }, String(i));
-        expect(authority.childrenStarted).toBe(7);
+        expect(native.get(base.runId)!.service.snapshot().starts).toBe(7);
         blocked = true;
         const results = Promise.allSettled([
           delegate({ task: "eight" }, "eight"),
           delegate({ task: "nine" }, "nine"),
         ]);
         await both.promise;
-        expect(authority.childrenStarted).toBe(7);
+        expect(native.get(base.runId)!.service.snapshot().starts).toBe(7);
         blocked = false;
         auth.release();
         const outcomes = await results;
         expect(outcomes.filter((r) => r.status === "fulfilled")).toHaveLength(1);
         expect(outcomes.find((r) => r.status === "rejected")).toMatchObject({
-          reason: expect.objectContaining({ message: expect.stringContaining("budget exceeded") }),
+          reason: expect.objectContaining({ message: expect.stringContaining("start limit") }),
         });
-        expect(authority.childrenStarted).toBe(8);
+        expect(native.get(base.runId)!.service.snapshot().starts).toBe(8);
         expect(f.start).toHaveBeenCalledTimes(9);
       },
       {
@@ -261,10 +467,10 @@ describe("managed delegation admission", () => {
             delegate({ participantId: "child", task: "attempt" }, "attempt"),
           ).rejects.toThrow("failed");
           failSave = false;
-          expect(authority.childrenStarted).toBe(1);
-          expect(authority.participants.has("child")).toBe(false);
+          expect(native.get(base.runId)!.service.snapshot().starts).toBe(1);
+          expect(authority.workerBridges.has("child")).toBe(false);
           await delegate({ participantId: "child", task: "retry" }, "retry");
-          expect(authority.childrenStarted).toBe(2);
+          expect(native.get(base.runId)!.service.snapshot().starts).toBe(2);
         },
         {
           session: {
@@ -285,13 +491,15 @@ describe("managed delegation admission", () => {
   it("does not spend start budget for denied placement or foreign/missing lineage", async () => {
     const f = fixture();
     await f.run(
-      async ({ delegate, authority }) => {
+      async ({ delegate }) => {
         await expect(delegate({ participantId: "grandchild" }, "foreign")).rejects.toThrow(
-          "outside",
+          "Unknown direct child",
         );
-        await expect(delegate({ participantId: "missing" }, "missing")).rejects.toThrow("outside");
+        await expect(delegate({ participantId: "missing" }, "missing")).rejects.toThrow(
+          "Unknown direct child",
+        );
         await expect(delegate({ participantId: "child" }, "denied")).rejects.toThrow("denied");
-        expect(authority.childrenStarted).toBe(0);
+        expect(native.get(base.runId)!.service.snapshot().starts).toBe(0);
         expect(f.start).toHaveBeenCalledTimes(1);
       },
       {
@@ -393,7 +601,7 @@ describe("managed delegation admission", () => {
   });
 
   it("shares the tool fuse between root and a restored child", async () => {
-    vi.stubEnv("MAX_TOOL_CALLS_PER_TURN", "1");
+    vi.stubEnv("MAX_TOOL_CALLS_PER_TURN", "2");
     const f = fixture();
     const executeTool = vi.fn(async () => ({ ok: true }));
     const read = {
@@ -414,8 +622,8 @@ describe("managed delegation admission", () => {
         const child = captured.get("child")!;
         await expect(invokeRead(child.tools, "child-read")).rejects.toThrow("tool budget exceeded");
         expect(child.authority).toBe(root.authority);
-        expect(root.authority.count).toBe(2);
-        expect(executeTool).toHaveBeenCalledTimes(1);
+        expect(root.authority.count).toBe(3);
+        expect(executeTool).toHaveBeenCalledTimes(2);
       },
       {
         tools: [...base.tools, read],
@@ -437,11 +645,11 @@ describe("managed delegation admission", () => {
         expect(child.request.session?.restore).toEqual({ marker: "original transcript" });
         expect(child.request.queueOnly).toBe(false);
         expect(child.request.tools.map((tool) => tool.name)).toEqual(["run_subagent"]);
-        expect(root.authority.childSessions.get("grandchild")).toMatchObject({
-          parentParticipantId: "child",
+        expect(native.get(base.runId)!.entry("grandchild")!.record).toMatchObject({
+          parentId: "child",
         });
-        expect(root.authority.childSessions.get("child")).toMatchObject({
-          parentParticipantId: "next-root",
+        expect(native.get(base.runId)!.entry("child")!.record).toMatchObject({
+          parentId: "next-root",
         });
         expect(steering).toHaveBeenCalledWith("child", []);
         expect(root.authority.request.runId).toBe("next-root");

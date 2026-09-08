@@ -19,7 +19,7 @@ describe.skipIf(!databaseAvailable)("eval history accounting", () => {
         id,
         name: "fabric_exec",
         arguments: {
-          code: `return await extensions.write_file(${JSON.stringify({
+          code: `return await pi.write(${JSON.stringify({
             path: `results/${turn}.txt`,
             content: turn,
           })});`,
@@ -42,11 +42,11 @@ describe.skipIf(!databaseAvailable)("eval history accounting", () => {
               const tool = request.messages.findLast((message) => message.role === "tool");
               expect(tool?.tool_call_id).toBe(`${turn}-write`);
               const envelope = JSON.parse(String(tool?.content)) as {
-                isError: boolean;
-                text: string;
+                ok: boolean;
+                output: string;
               };
-              expect(envelope.isError).toBe(false);
-              expect(JSON.parse(envelope.text)).toMatchObject({ ok: true });
+              expect(envelope.ok).toBe(true);
+              expect(JSON.parse(envelope.output)).toMatchObject({ ok: true });
             },
             response: { type: "text" as const, text: `Saved ${turn} turn.` },
           },

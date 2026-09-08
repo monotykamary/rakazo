@@ -9,16 +9,31 @@ import { AsyncChannel } from "./pi-rpc-transport.js";
 
 /** Private composition-root configuration; never accept this URL/token from a run. */
 export class SupervisorAgentProcessHost implements AgentProcessHost {
-  constructor(private readonly options: { baseUrl: string; token: string; fetch?: typeof fetch }) {}
+  // Private composition-root configuration; never accept this URL/token from a run.
+  // Tunnel mode omits the bearer: the machine runner injects its local supervisor token.
+  constructor(
+    private readonly options: {
+      baseUrl: string;
+      token: string;
+      fetch?: typeof fetch;
+      omitAuthorization?: boolean;
+    },
+  ) {}
   async start(scope: Readonly<AgentProcessScope>, signal: AbortSignal) {
     signal.throwIfAborted();
     const frozen = Object.freeze({ ...scope });
-    const headers = {
-      authorization: `Bearer ${this.options.token}`,
+    const headers: Record<string, string> = {
+      ...(this.options.omitAuthorization ? {} : { authorization: `Bearer ${this.options.token}` }),
       "content-type": "application/json",
       "x-rakazo-run-id": frozen.runId,
+      // Delegated participant processes run under the root run's durable authority.
+      "x-rakazo-root-run-id": frozen.rootRunId ?? frozen.runId,
       "x-rakazo-bot-id": frozen.botId,
       "x-rakazo-space-id": frozen.spaceId,
+      ...(frozen.leaseOwner ? { "x-rakazo-lease-owner": frozen.leaseOwner } : {}),
+      ...(frozen.leaseFence === undefined
+        ? {}
+        : { "x-rakazo-lease-fence": String(frozen.leaseFence) }),
     };
     const http = this.options.fetch ?? fetch;
     const base = this.options.baseUrl.replace(/\/$/, "");

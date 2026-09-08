@@ -217,14 +217,14 @@ test("without Docker the app explains how to get it and offers to check again", 
     path: path.join(import.meta.dirname, "screenshots", "07-setup-docker-missing.png"),
   });
 
-  // Existing instance stays available without Docker.
-  await setup.getByRole("radio", { name: /Existing instance/ }).check();
+  // Another server stays available without Docker.
+  await setup.getByRole("radio", { name: /Another server/ }).check();
   await expect(setup.locator("#stack")).toBeHidden();
   await expect(setup.getByRole("button", { name: "Continue" })).toBeEnabled();
   expect(await savedSetup()).toBeNull();
 });
 
-test("switching to Existing instance while the stack starts keeps that choice", async () => {
+test("switching to Another server while the stack starts keeps that choice", async () => {
   app = await launch("ok");
   const setup = await app.firstWindow();
 
@@ -232,7 +232,7 @@ test("switching to Existing instance while the stack starts keeps that choice", 
   await expect(setup.locator("#stack-phase")).toHaveText("Downloading Rakazo images…");
 
   // Fake docker sleeps during pull; leave This computer before ready so followStack must not save.
-  await setup.getByRole("radio", { name: /Existing instance/ }).check();
+  await setup.getByRole("radio", { name: /Another server/ }).check();
   await expect(setup.locator("#panel-existing")).toBeVisible();
   await expect(setup.getByRole("button", { name: "Continue" })).toBeEnabled();
   await expect(setup.getByRole("button", { name: "Check connection" })).toBeVisible();

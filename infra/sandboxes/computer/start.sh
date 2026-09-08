@@ -13,6 +13,21 @@ if [[ -n "${RAKAZO_COMPUTER_CONTROL_TOKEN:-}" ]]; then
   /usr/local/bin/rakazo-computer-control >/tmp/rakazo/control.log 2>&1 &
 fi
 
+# Supervised project services: long-lived processes that survive Pi worker
+# exits and are only killed when the whole computer stops. The control helper
+# needs supervisord reachable on loopback.
+if supervisord -c /etc/rakazo/supervisord.conf >/tmp/rakazo/supervisord-start.log 2>&1 &
+then
+  for _ in $(seq 1 50); do
+    if python3 /usr/local/bin/rakazo-service-ctl list </dev/null >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.2
+  done
+else
+  echo "supervisord failed to start" >&2
+fi
+
 rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
 
 Xvfb :1 -screen 0 1280x800x24 -ac +extension RANDR +render -noreset >/tmp/rakazo/xvfb.log 2>&1 &

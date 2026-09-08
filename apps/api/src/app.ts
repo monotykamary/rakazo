@@ -20,6 +20,9 @@ import {
   createCloudAgentConnection,
   createConnectorStack,
   createJobReconciler,
+  createMachineFetch,
+  createMachineRouting,
+  createMachinesService,
   createMessagingContextLoader,
   createMessagingTeamChatSender,
   createRunExecutor,
@@ -61,10 +64,13 @@ import { blockedAuthPaths, createAuth } from "@rakazo/auth";
 import { signupPolicyFromEnv } from "@rakazo/core";
 import {
   createDb,
+  createPrismaMachineStore,
   createThreadEvents,
+  machineScopeFromTunnelRequest,
   type PrismaClient,
   provisionMessagingIdentity,
   requireMembership,
+  sweepExpiredMachineCommands,
 } from "@rakazo/db";
 import {
   createServiceLogger,
@@ -79,6 +85,7 @@ import { MarkdownMemoryStore } from "@rakazo/memory";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { type AppEnv, loadEnv } from "./env.js";
+import { mountMachineRunnerRoutes } from "./machines.js";
 import {
   createMessagingInboundHandler,
   teamChatSenderCanWakeMessageRoutines,
@@ -87,6 +94,7 @@ import {
 import { mountMessagingWebhookRoutes } from "./messaging-webhook.js";
 import { mountApiRequestBodyLimits } from "./request-body-limit.js";
 import { createRouter } from "./router.js";
+import { mountServicePreviewRoutes } from "./services.js";
 import { isDeferredReservationLost, TeamChatBridge } from "./team-chat-bridge.js";
 import { ModelTeamChatEngagementJudge } from "./team-chat-judge.js";
 import {
@@ -188,7 +196,8 @@ export async function createApp(
   const jobKind = env.wakeupDriver;
   const inMemoryJobs = jobKind === "memory" ? new InMemoryJobQueue() : undefined;
   const jobs = inMemoryJobs ?? new GraphileJobPublisher(env.databaseUrl);
-  const sandbox: SandboxProvider =
+  const machines = createMachinesService({ store: createPrismaMachineStore(prisma) });
+  const fallbackSandbox: SandboxProvider =
     sandboxOverride ??
     createRunSandbox(env.sandboxProvider, {
       supervisorUrl: env.sandboxSupervisorUrl,
@@ -202,6 +211,21 @@ export async function createApp(
       dataDir: env.dataDir,
       prisma,
     });
+  const machineRouting = createMachineRouting({
+    prisma,
+    machineFetch: (machineId) =>
+      createMachineFetch(machines, machineId, {
+        scopeResolver: (info) => machineScopeFromTunnelRequest(prisma, { ...info, machineId }),
+      }),
+    fallbackSandbox,
+    fallbackHost: env.sandboxSupervisorToken
+      ? new SupervisorAgentProcessHost({
+          baseUrl: env.sandboxSupervisorUrl,
+          token: env.sandboxSupervisorToken,
+        })
+      : undefined,
+  });
+  const sandbox = machineRouting.sandbox;
   const mcpOAuth = new McpOAuthBroker(prisma, secrets, remoteConnectors);
   const memoryProviders = new SpaceMemoryProviderResolver(prisma, secrets);
   const oauthLogins = new PiOAuthLogins();
@@ -265,14 +289,7 @@ export async function createApp(
     runtimeOverride ??
     (env.agentRuntime === "scripted"
       ? new ScriptedAgentRuntime()
-      : new PiAgentRuntime({
-          host: env.sandboxSupervisorToken
-            ? new SupervisorAgentProcessHost({
-                baseUrl: env.sandboxSupervisorUrl,
-                token: env.sandboxSupervisorToken,
-              })
-            : undefined,
-        }));
+      : new PiAgentRuntime({ host: machineRouting.host }));
   const notifications = new ExpoPushProvider(env.dataDir);
   const auth = createAuth(prisma, {
     secret: env.authSecret,
@@ -374,13 +391,17 @@ export async function createApp(
     ? createJobReconciler({
         prisma,
         jobs,
-        reconcileCloudAgents: () => reconcileCloudAgents({ prisma, jobs, cloudAgent }),
+        reconcileCloudAgents: async () => {
+          await sweepExpiredMachineCommands(prisma);
+          await reconcileCloudAgents({ prisma, jobs, cloudAgent });
+        },
       })
     : undefined;
   reconciler?.start();
 
   const router = createRouter({
     prisma,
+    machines,
     events,
     auth,
     jobs,
@@ -421,6 +442,9 @@ export async function createApp(
   });
   const app = new Hono();
   app.use("*", requestLogging(logger));
+  mountApiRequestBodyLimits(app);
+  // Token-only opaque-origin previews own their CORS; never inherit API credentials.
+  mountServicePreviewRoutes(app, { prisma, sandbox, previewSecret: env.screenProxySecret });
   app.use(
     "*",
     cors({
@@ -446,7 +470,7 @@ export async function createApp(
         }),
     );
   }
-  mountApiRequestBodyLimits(app);
+  mountMachineRunnerRoutes(app, { machines });
   app.on(["GET", "POST"], "/api/auth/*", async (c) => {
     const path = new URL(c.req.url).pathname.replace("/api/auth", "");
     if (blockedAuthPaths.some((blocked) => path.startsWith(blocked))) {

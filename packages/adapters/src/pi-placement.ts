@@ -31,20 +31,22 @@ export function bindPlacementExecutor(
       throw new Error("Tool path escapes its captured placement");
     return posix.join(root, input);
   };
-  return (name, args, executionId, route) => {
-    if (route) return execute(name, args, executionId, route);
+  return (name, args, executionId, route, signal) => {
+    if (route) return execute(name, args, executionId, route, signal);
     if (
       ["read_file", "write_file", "edit_file", "list_files", "open_path", "attach_file"].includes(
         name,
       )
     )
-      return execute(name, { ...args, path: path(args.path) }, executionId);
+      return execute(name, { ...args, path: path(args.path) }, executionId, undefined, signal);
     if (name === "shell")
       return execute(
         name,
         { ...args, cwd: path(args.cwd === "/home/rakazo" ? "." : args.cwd) },
         executionId,
+        undefined,
+        signal,
       );
-    return execute(name, args, executionId, route);
+    return execute(name, args, executionId, route, signal);
   };
 }

@@ -30,7 +30,9 @@ import {
   Toggle,
 } from "@rakazo/ui-web";
 import { X } from "lucide-react";
-import { lazy, Suspense, useEffect, useId, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useState } from "react";
+import { BotRunsOn } from "../../components/BotRunsOn";
+import { BotServices } from "../../components/BotServices";
 import { rpc } from "../../lib/rpc";
 
 const ScratchpadSection = lazy(() =>
@@ -226,6 +228,14 @@ export function BotSettings({
   const [description, setDescription] = useState(bot.description);
   const [color, setColor] = useState(bot.color);
   const [computerMode, setComputerMode] = useState(bot.computerMode);
+  const [machineAssigned, setMachineAssigned] = useState(false);
+  const onMachineChange = useCallback(
+    (machineId: string | null) => {
+      if (machineId !== null || machineAssigned) setComputerMode("dedicated");
+      setMachineAssigned(machineId !== null);
+    },
+    [machineAssigned],
+  );
   const [memoryScope, setMemoryScope] = useState(bot.memoryScope);
   const [autoSpeak, setAutoSpeak] = useState(bot.autoSpeak);
   const [voiceId, setVoiceId] = useState(bot.voiceId ?? "");
@@ -360,7 +370,11 @@ export function BotSettings({
             ›
           </span>
         </summary>
-        <ComputerModePicker value={computerMode} onChange={setComputerMode} />
+        {!machineAssigned ? (
+          <ComputerModePicker value={computerMode} onChange={setComputerMode} />
+        ) : null}
+        <BotRunsOn bot={bot} onMachineChange={onMachineChange} />
+        <BotServices botId={bot.id} />
         <Suspense fallback={null}>
           <ScratchpadSection botId={bot.id} />
           {advancedOpened ? (

@@ -1,20 +1,20 @@
-import { randomUUID } from "node:crypto";
 import type {
   AdapterContext,
   AgentRunRequest,
   AgentRuntime,
   AgentRuntimeEvent,
-  AgentSteeringMessage,
 } from "@rakazo/adapter-kit";
 import {
-  ModelSelectionSchema,
   ModelSelectionStatusSchema,
   QueueControlCommandSchema,
   type QueueControlResult,
 } from "@rakazo/contracts";
-import { DELEGATION_TOOL_NAMES } from "./builtin-tools.js";
+import type { AgentExecutionRequest } from "pi-fabric/agents";
+import { workerSessionCheckpoint } from "./pi-agent-snapshot.js";
 import { boundedExecutionEvidence } from "./pi-execution-evidence.js";
 import { applyManagedModelSelection } from "./pi-model-handoff.js";
+import { NativeAgents } from "./pi-native-agents.js";
+import { AgentsBridge } from "./pi-rpc-agents-bridge.js";
 import { ModelBridge } from "./pi-rpc-model-bridge.js";
 import { type AgentProcessHost, type JsonRecord, memoryAction, record } from "./pi-rpc-protocol.js";
 import { RunAuthority, ToolBridge } from "./pi-rpc-tool-bridge.js";
@@ -88,19 +88,87 @@ export class ManagedPiRuntime implements AgentRuntime {
     const authority = new RunAuthority(frozen, signal);
     if (request.session?.restore) {
       const restored = record(request.session.restore);
-      authority.rootState = { ...restored, rootParticipantId: request.runId };
-      for (const [id, value] of Object.entries(record(restored.participants ?? {}))) {
-        const participant = record(value);
-        authority.childSessions.set(id, {
-          ...participant,
-          parentParticipantId:
-            participant.parentParticipantId === restored.rootParticipantId
-              ? request.runId
-              : participant.parentParticipantId,
-        });
-      }
+      authority.rootState = { ...restored };
     }
-    const work = this.execute(frozen, context, authority, (event) => queue.push(event))
+    const agents = new NativeAgents(
+      authority,
+      (event) => queue.push(event),
+      async (child, execution, parentExecutionId) => {
+        let text = "";
+        let turns = 0;
+        let toolCalls = 0;
+        const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+        let updates = Promise.resolve();
+        await this.execute(
+          child,
+          context,
+          authority,
+          (event) => {
+            if (event.type === "text") {
+              text += event.text;
+              const progress = text;
+              updates = updates.then(() =>
+                authority.paused ? undefined : execution.emit({ type: "progress", text: progress }),
+              );
+              void updates.catch(() => undefined);
+            } else if (event.type !== "done") {
+              if (event.type === "execution")
+                event = {
+                  ...event,
+                  parentExecutionId: event.parentExecutionId ?? parentExecutionId,
+                };
+              if (event.type === "usage" || event.type === "tool") {
+                if (event.type === "usage") {
+                  usage.input += event.inputTokens;
+                  usage.output += event.outputTokens;
+                  turns++;
+                } else toolCalls++;
+                const progress = {
+                  type: "progress" as const,
+                  turns,
+                  toolCalls,
+                  usage: { ...usage },
+                };
+                updates = updates.then(() =>
+                  authority.paused ? undefined : execution.emit(progress),
+                );
+                void updates.catch(() => undefined);
+              }
+              if (authority.paused) authority.deferredEvents.push(event);
+              else queue.push(event);
+            }
+          },
+          agents,
+          execution,
+          () => agents.pollRoot?.() ?? Promise.resolve(),
+        ).catch((error: unknown) => {
+          // A suspended admission may not yet have initialized a worker. Cleanup
+          // has still completed; transport/cleanup failures must remain failures.
+          if (
+            !(
+              authority.paused &&
+              error instanceof Error &&
+              error.message === "Managed run is paused"
+            )
+          )
+            throw error;
+        });
+        await updates.catch((error: unknown) => {
+          if (!authority.paused) throw error;
+        });
+        return { status: authority.paused ? "paused" : "completed", text, usage };
+      },
+    );
+    const closeAgents = () => {
+      void agents.service.close().catch(() => undefined);
+    };
+    signal.addEventListener("abort", closeAgents, { once: true });
+    if (signal.aborted) closeAgents();
+    const work = this.execute(frozen, context, authority, (event) => queue.push(event), agents)
+      .finally(async () => {
+        signal.removeEventListener("abort", closeAgents);
+        await agents.service.close();
+      })
       .catch((error: unknown) => {
         if (
           !signal.aborted ||
@@ -125,14 +193,20 @@ export class ManagedPiRuntime implements AgentRuntime {
     context: Partial<AdapterContext> | undefined,
     authority: RunAuthority,
     emit: (event: AgentRuntimeEvent) => void,
-    depth = 0,
-    activeChildren = new Map<string, Promise<void>>(),
+    agents: NativeAgents,
+    execution?: AgentExecutionRequest,
     pollRoot?: () => Promise<void>,
   ): Promise<void> {
-    const signal = authority.signal;
+    const depth = execution?.depth ?? 0;
+    const signal = execution
+      ? AbortSignal.any([authority.signal, execution.signal])
+      : authority.signal;
     await authority.check();
     const scope = Object.freeze({
       runId: request.runId,
+      rootRunId: authority.request.runId,
+      leaseOwner: context?.runLease?.owner,
+      leaseFence: context?.runLease?.fence,
       threadId: request.threadId,
       botId: request.botId,
       spaceId: context?.spaceId ?? "",
@@ -162,206 +236,22 @@ export class ManagedPiRuntime implements AgentRuntime {
     let text = "";
     let bootstrapped = false;
     let rootPrompted = false;
-    const deferredChildEvents: AgentRuntimeEvent[] = [];
-    const persistParticipants = async () => {
-      if (authority.rootState && !authority.paused)
-        await authority.request.session?.save({
-          ...authority.rootState,
-          participants: Object.fromEntries(authority.childSessions),
-        });
-    };
-    const delegate = async (
-      args: Record<string, unknown>,
-      agentId: string,
-      delivery?: AgentSteeringMessage,
-    ): Promise<unknown> => {
-      if (!request.tools.some((tool) => tool.name === "run_subagent"))
-        throw new Error("Delegation is outside this participant's tool scope");
-      if (args.worktree === true)
-        return {
-          error:
-            "Automatic worktree creation is unavailable. Create it through the authorized shell tool, then delegate with its workspace-relative cwd.",
-        };
-      if (depth >= 3 || authority.childrenStarted >= 8)
-        throw new Error("Shared recursive subagent budget exceeded");
-      await authority.check();
-      const target = typeof args.participantId === "string" ? args.participantId : undefined;
-      let previous = target ? record(authority.childSessions.get(target) ?? {}) : undefined;
-      if (previous && previous.parentParticipantId !== request.runId)
-        throw new Error("Participant is outside this parent's authority");
-      if (target && authority.participants.has(target))
-        throw new Error("Participant is already active; use targeted steering");
-      const childId = target ?? `${authority.request.runId}-participant-${randomUUID()}`;
-      const requestedPlacement =
-        args.cwd !== undefined || args.worktreeId !== undefined
-          ? {
-              cwd: args.cwd as string | undefined,
-              worktreeId: args.worktreeId as string | undefined,
-            }
-          : (previous?.placement as AgentRunRequest["placement"]);
-      const explicitSelection = args.model !== undefined || args.thinking !== undefined;
-      if (explicitSelection && !request.resolveParticipantModel)
-        throw new Error("Worker model selection requires backend authorization");
-      let childModel =
-        request.resolveParticipantModel && args.model === undefined
-          ? await authority.serialize(() => request.resolveParticipantModel!(childId))
-          : undefined;
-      if (explicitSelection) {
-        const current = childModel ?? request.model;
-        const model =
-          typeof args.model === "string" ? args.model : `${current.provider}/${current.id}`;
-        const separator = model.indexOf("/");
-        if (separator < 1) throw new Error("Worker model must use provider/model identity");
-        const selected = ModelSelectionSchema.parse({
-          provider: model.slice(0, separator),
-          modelId: model.slice(separator + 1),
-          thinkingLevel: args.thinking ?? current.thinkingLevel ?? null,
-        });
-        childModel = await authority.serialize(() =>
-          request.resolveParticipantModel!(childId, selected),
-        );
-      }
-      let placement = request.placement;
-      let executeTool = request.executeTool;
-      if (requestedPlacement) {
-        if (!request.authorizeSubagentPlacement)
-          throw new Error("Explicit subagent placement requires backend authorization");
-        const authorized = await authority.serialize(() =>
-          request.authorizeSubagentPlacement!(requestedPlacement, childId),
-        );
-        placement = authorized.placement;
-        executeTool = authorized.executeTool;
-      }
-      await authority.check();
-      // Admission is atomic after authorization: no await between recheck and reservation.
-      signal.throwIfAborted();
-      if (authority.paused) throw new Error("Managed run is paused");
-      previous = target ? record(authority.childSessions.get(target) ?? {}) : undefined;
-      if (previous && previous.parentParticipantId !== request.runId)
-        throw new Error("Participant is outside this parent's authority");
-      if (activeChildren.has(childId) || authority.participants.has(childId))
-        throw new Error("Participant is already active; use targeted steering");
-      if (authority.childrenStarted >= 8)
-        throw new Error("Shared recursive subagent budget exceeded");
-      let resolveChild!: () => void;
-      let rejectChild!: (error: unknown) => void;
-      let childFailure: unknown;
-      const childCompletion = new Promise<void>((resolve, reject) => {
-        resolveChild = resolve;
-        rejectChild = reject;
-      });
-      void childCompletion.catch(() => undefined);
-      activeChildren.set(childId, childCompletion);
-      // Started attempts consume the run-wide budget even if persistence or startup fails.
-      authority.childrenStarted++;
-      const name = String(args.name ?? previous?.name ?? "helper").slice(0, 80);
-      const task = String(args.task ?? "");
-      let result = "";
-      authority.childSessions.set(childId, {
-        ...previous,
-        participantId: childId,
-        parentParticipantId: request.runId,
-        executionId: agentId,
-        name,
-        task,
-        placement,
-        status: "running",
-      });
+    const deferredChildEvents = authority.deferredEvents;
+    const tools = new ToolBridge(request, authority, emit, signal);
+    agents.bindings.set(request.runId, { request, tools });
+    const agentBridge = new AgentsBridge(async (action, args, waitSignal) => {
       try {
-        await persistParticipants();
-        emit({ type: "subagent", agentId: childId, name, task, status: "running" });
-        await this.execute(
-          {
-            ...request,
-            runId: childId,
-            model: childModel ?? request.model,
-            modelRouting: childModel ? undefined : request.modelRouting,
-            prompt: task,
-            sourceMessageId: delivery?.messageId ?? delivery?.id ?? request.sourceMessageId,
-            currentTurnImages: delivery?.images,
-            placement,
-            executeTool,
-            instructions: `${request.instructions}\nComplete the delegated task. Participant depth: ${depth + 1}. ${String(args.instructions ?? "")}`,
-            history: [],
-            tools: request.tools.filter(
-              (tool) =>
-                tool.name === "run_subagent" ||
-                (tool.name !== "manage_queue" && !DELEGATION_TOOL_NAMES.has(tool.name)),
-            ),
-            session: previous?.session
-              ? { restore: previous.session, save: async () => undefined }
-              : undefined,
-            claimSteering: request.claimParticipantSteering
-              ? (seen) => request.claimParticipantSteering!(childId, seen)
-              : undefined,
-            runtimeBoundary: request.runtimeBoundary,
-            // Least authority: delegated children never inherit host memory.
-            memory: undefined,
-            queueOnly: false,
-          },
-          context,
-          authority,
-          (event) => {
-            if (event.type === "text") {
-              result += event.text;
-              emit({
-                type: "subagent",
-                agentId: childId,
-                name,
-                task,
-                status: "running",
-                progress: result.slice(-800),
-              });
-            } else if (event.type !== "done") {
-              const childEvent =
-                event.type === "execution"
-                  ? { ...event, parentExecutionId: event.parentExecutionId ?? agentId }
-                  : event;
-              if (authority.paused) deferredChildEvents.push(childEvent);
-              else emit(childEvent);
-            }
-          },
-          depth + 1,
-          activeChildren,
-          pollRoot ?? pollFromChild,
-        );
-        authority.childSessions.set(childId, {
-          ...record(authority.childSessions.get(childId)),
-          status: authority.paused ? "paused" : "completed",
-          result: result.slice(0, 12000),
-        });
-        await persistParticipants();
-        if (!authority.paused)
-          emit({
-            type: "subagent",
-            agentId: childId,
-            name,
-            task,
-            status: "completed",
-            result: result.slice(0, 12000),
-          });
-        return {
-          participantId: childId,
-          status: authority.paused ? "paused" : "completed",
-          result: result.slice(0, 12000),
-        };
+        await authority.check();
+        if (!request.tools.some((tool) => tool.name === "run_subagent"))
+          throw new Error("Delegation is outside this participant's tool scope");
+        const result = await agents.dispatcher(request.runId)(action, args, waitSignal);
+        await authority.check();
+        return { result, paused: false };
       } catch (error) {
-        childFailure = error;
-        authority.childSessions.set(childId, {
-          ...record(authority.childSessions.get(childId)),
-          status: "failed",
-        });
-        await persistParticipants();
-        emit({ type: "subagent", agentId: childId, name, task, status: "failed" });
-        throw error;
-      } finally {
-        activeChildren.delete(childId);
-        if (childFailure || authority.paused)
-          rejectChild(childFailure ?? new Error("Participant paused"));
-        else resolveChild();
+        if (!authority.paused) throw error;
+        return { paused: true };
       }
-    };
-    const tools = new ToolBridge(request, authority, emit, delegate);
+    });
     const seen = new Set<string>();
     type BoundaryResult = Awaited<ReturnType<NonNullable<AgentRunRequest["runtimeBoundary"]>>>;
     let boundaryBusy = false;
@@ -375,13 +265,9 @@ export class ManagedPiRuntime implements AgentRuntime {
       while (target !== authority.request.runId) {
         if (visited.has(target)) return false;
         visited.add(target);
-        const participant = record(authority.childSessions.get(target) ?? {});
-        if (
-          participant.participantId !== target ||
-          typeof participant.parentParticipantId !== "string"
-        )
-          return false;
-        target = participant.parentParticipantId;
+        const participant = agents.entry(target)?.record;
+        if (!participant) return false;
+        target = participant.parentId;
       }
       return true;
     };
@@ -406,26 +292,24 @@ export class ManagedPiRuntime implements AgentRuntime {
               const target = message.participantId ?? authority.request.runId;
               if (!isScopedParticipant(target))
                 throw new Error("Participant is outside this session's authority");
-              if (message.placement) {
+              if (
+                message.placement &&
+                target !== request.runId &&
+                authority.workerBridges.has(target)
+              )
+                throw new Error("Cannot replace a live child placement");
+              if (message.placement && target === request.runId) {
                 if (!request.authorizeSubagentPlacement)
                   throw new Error("Queued placement authorization is unavailable");
                 const authorized = await authority.serialize(() =>
                   request.authorizeSubagentPlacement!(message.placement!, target),
                 );
-                if (target === request.runId) {
-                  request.executeTool = authorized.executeTool;
-                  request.placement = authorized.placement;
-                } else if (authority.participants.has(target))
-                  throw new Error("Cannot replace a live child placement");
+                request.executeTool = authorized.executeTool;
+                request.placement = authorized.placement;
               }
-              const targetPeer = authority.participants.get(target);
+              const targetPeer = authority.workerBridges.get(target);
               if (!targetPeer) {
-                const participant = record(authority.childSessions.get(target) ?? {});
-                await delegate(
-                  { participantId: target, name: participant.name, task: message.text },
-                  `${request.runId}:queued:${message.id}`,
-                  message,
-                );
+                await agents.deliver(target, message);
               } else {
                 await targetPeer.request(
                   "deliver",
@@ -439,6 +323,7 @@ export class ManagedPiRuntime implements AgentRuntime {
                   signal,
                 );
               }
+              await authority.check();
               if (target === request.runId) rootPrompted = true;
             },
             command: async (input, options): Promise<QueueControlResult> => {
@@ -458,48 +343,38 @@ export class ManagedPiRuntime implements AgentRuntime {
               if (command.kind === "participant-await") {
                 if (target === authority.request.runId)
                   return { outcome: "rejected", error: "Cannot await the current root" };
-                const completion = activeChildren.get(target);
-                if (completion) {
-                  // Keep the backend reservation pending but release the worker boundary to make progress.
-                  parkDispatch?.();
-                  try {
-                    await new Promise<void>((resolve, reject) => {
-                      const abort = () => {
-                        cleanup();
-                        reject(commandSignal.reason);
+                const participant = agents.entry(target)?.record;
+                if (!participant) return { outcome: "rejected", error: "Unknown participant" };
+                parkDispatch?.();
+                try {
+                  const result = await agents.service.wait(
+                    participant.parentId,
+                    target,
+                    commandSignal,
+                  );
+                  commandSignal.throwIfAborted();
+                  await authority.check();
+                  return result.status === "completed"
+                    ? { outcome: "completed" }
+                    : {
+                        outcome: "rejected",
+                        error: "Participant requires resume or reconciliation",
                       };
-                      const cleanup = () => commandSignal.removeEventListener("abort", abort);
-                      commandSignal.addEventListener("abort", abort, { once: true });
-                      if (commandSignal.aborted) {
-                        abort();
-                        return;
-                      }
-                      void completion.then(
-                        () => {
-                          cleanup();
-                          resolve();
-                        },
-                        (error) => {
-                          cleanup();
-                          reject(error);
-                        },
-                      );
-                    });
-                  } catch {
-                    commandSignal.throwIfAborted();
-                    return { outcome: "rejected", error: "Participant did not complete" };
-                  }
+                } catch {
+                  commandSignal.throwIfAborted();
+                  return { outcome: "rejected", error: "Participant did not complete" };
                 }
-                await authority.check();
-                commandSignal.throwIfAborted();
-                return record(authority.childSessions.get(target)).status === "completed"
-                  ? { outcome: "completed" }
-                  : { outcome: "rejected", error: "Participant requires resume or reconciliation" };
               }
-              const peer = authority.participants.get(target);
+              const peer = authority.workerBridges.get(target);
               if (!peer) return { outcome: "rejected", error: "Participant is not active" };
               commandSignal.throwIfAborted();
               try {
+                if (target !== authority.request.runId) {
+                  const participant = agents.entry(target)!.record;
+                  await agents.service.compact(participant.parentId, target, command.instructions);
+                  commandSignal.throwIfAborted();
+                  return { outcome: "completed" };
+                }
                 const result = record(
                   await peer.request(
                     "compact",
@@ -523,6 +398,7 @@ export class ManagedPiRuntime implements AgentRuntime {
             },
             pause: async () => {
               gateAbort.abort();
+              authority.gracefulPause = true;
               authority.paused = true;
               await bridge!.request("pause", {}, signal);
             },
@@ -553,6 +429,7 @@ export class ManagedPiRuntime implements AgentRuntime {
       const result = await dispatchBoundary("before_model");
       pendingRootResult = mergeBoundaryResults(pendingRootResult, result);
     };
+    if (!depth) agents.pollRoot = pollFromChild;
     const boundary = async (name: "before_model" | "settled" | "idle" | "paused") => {
       if (name !== "paused") await authority.check();
       if (pollRoot && bootstrapped && name === "before_model") await pollRoot();
@@ -561,6 +438,8 @@ export class ManagedPiRuntime implements AgentRuntime {
       if (!pollRoot) pendingRootResult = undefined;
       const steering =
         name === "before_model" ? ((await request.claimSteering?.([...seen])) ?? []) : [];
+      await authority.checkLease(false, name === "paused");
+      if (authority.paused) return { compact: false, state: result?.state, messages: [] };
       const messages = [...steering, ...(result?.messages ?? [])].filter(
         (item) => !seen.has(item.id),
       );
@@ -588,8 +467,21 @@ export class ManagedPiRuntime implements AgentRuntime {
     };
     const handle = async (message: JsonRecord): Promise<unknown> => {
       switch (message.operation) {
-        case "tool":
+        case "agents":
+          return agentBridge.invoke(message.data);
+        case "agents_cancel":
+          agentBridge.cancel(message.data);
+          return {};
+        case "tool": {
+          const input = record(message.data);
+          if (
+            tools.catalog.some(
+              (tool) => tool.handle === input.handle && tool.argumentKind === "run_subagent",
+            )
+          )
+            throw new Error("Delegation requires the native agents provider");
           return tools.invoke(message.data);
+        }
         case "model":
           return broker.stream(message.data, bridge!);
         case "model_cancel":
@@ -602,26 +494,37 @@ export class ManagedPiRuntime implements AgentRuntime {
         case "checkpoint": {
           // Save is deliberately allowed after the pause latch, but remains backend-fenced.
           signal.throwIfAborted();
-          if (depth) {
-            const participant = record(authority.childSessions.get(request.runId));
-            authority.childSessions.set(request.runId, { ...participant, session: message.data });
-            await persistParticipants();
+          if (execution) {
+            await execution.emit({
+              type: "checkpoint",
+              checkpoint: { session: message.data, placement: request.placement },
+            });
           } else {
+            if (authority.paused) await agents.service.suspend();
             authority.rootState = {
+              ...authority.rootState,
               ...record(message.data),
               rootParticipantId: request.runId,
-              participants: Object.fromEntries(authority.childSessions),
+              agents: agents.service.snapshot(),
+              pause: authority.gracefulPause ? { queue: "paused" } : undefined,
               runtimeExecutionEvidence: [
+                ...(authority.paused && Array.isArray(authority.rootState?.runtimeExecutionEvidence)
+                  ? authority.rootState.runtimeExecutionEvidence
+                  : []),
                 ...tools.pendingPauseEvents,
                 ...deferredChildEvents,
-              ].filter((event) => event.type === "execution"),
+              ]
+                .filter((event) => event.type === "execution")
+                .slice(-200),
             };
-            await request.session?.save(authority.rootState);
+            await agents.persist(true);
           }
           if (authority.paused) {
             await boundary("paused");
             tools.publishPause();
-            for (const event of deferredChildEvents.splice(0)) emit(event);
+            if (!execution) {
+              for (const event of deferredChildEvents.splice(0)) emit(event);
+            }
           }
           return { saved: true };
         }
@@ -737,7 +640,7 @@ export class ManagedPiRuntime implements AgentRuntime {
           throw new Error("Pi settled before readiness");
         }),
       ]);
-      authority.participants.set(request.runId, bridge);
+      authority.workerBridges.set(request.runId, bridge);
       const initial = await boundary("before_model");
       const history = request.history.filter(
         (item) => !initial.messages.some((steering) => steering.messageId === item.id),
@@ -753,8 +656,11 @@ export class ManagedPiRuntime implements AgentRuntime {
             history,
             initialMessageIds: initial.messages.map((item) => item.messageId),
             sourceMessageId: request.sourceMessageId,
-            restore: request.session?.restore,
-            tools: tools.catalog,
+            restore: request.session?.restore
+              ? workerSessionCheckpoint(request.session.restore)
+              : undefined,
+            tools: tools.catalog.filter((tool) => tool.argumentKind !== "run_subagent"),
+            agents: request.tools.some((tool) => tool.name === "run_subagent"),
             model: broker.metadata(),
             thinkingLevel: thinkingLevelFor(broker.model, request.model.thinkingLevel),
             memory: request.memory !== undefined,
@@ -789,7 +695,8 @@ export class ManagedPiRuntime implements AgentRuntime {
       await boundary("idle");
       if (request.queueOnly && !rootPrompted) {
         if (!depth) {
-          await Promise.all(activeChildren.values());
+          if (authority.paused) await agents.service.suspend();
+          else await agents.service.drain();
           await dispatchWork;
         }
         await bridge.request("finish", {}, signal);
@@ -812,7 +719,8 @@ export class ManagedPiRuntime implements AgentRuntime {
         );
       await settled;
       if (!depth) {
-        await Promise.all(activeChildren.values());
+        if (authority.paused) await agents.service.suspend();
+        else await agents.service.drain();
         await dispatchWork;
       }
       await authority.chain;
@@ -836,7 +744,9 @@ export class ManagedPiRuntime implements AgentRuntime {
       emit(text ? { type: "done", text } : { type: "done" });
     } finally {
       gateAbort.abort();
-      authority.participants.delete(request.runId);
+      agentBridge.close();
+      agents.bindings.delete(request.runId);
+      authority.workerBridges.delete(request.runId);
       clearTimeout(helloTimer);
       signal.removeEventListener("abort", abort);
       broker.stop();

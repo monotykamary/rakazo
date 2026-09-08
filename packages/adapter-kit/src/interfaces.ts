@@ -152,11 +152,77 @@ export interface SandboxProvider {
   releaseScreen?(computer: ComputerRef, context: AdapterContext): Promise<void>;
   stop(computer: ComputerRef, context: AdapterContext): Promise<void>;
   destroy(computer: ComputerRef, context: AdapterContext): Promise<void>;
+  /** Supervised long-lived project services; present only where the runtime supports them. */
+  services?: ComputerServicesCapability;
+}
+
+export interface ComputerServiceSpec {
+  /** Strict slug (validated in @rakazo/contracts) used as the supervisord group name. */
+  name: string;
+  /** Exact argv; never a shell line. */
+  argv: string[];
+  /** Workspace-relative directory the service runs from. */
+  cwd: string;
+  env: Record<string, string>;
+  /** Loopback ports inside the computer the service listens on. */
+  ports: number[];
+  /** Kept services hold the computer awake across idle sleep decisions. */
+  keepAlive: boolean;
+}
+
+export interface ComputerServiceInfo {
+  name: string;
+  status: "running" | "stopped" | "exited" | "fatal" | "unknown";
+  pid: number | null;
+  ports: number[];
+  keepAlive: boolean;
+  cwd: string;
+  /**
+   * Declaration-instance nonce from the computer's service metadata; changes
+   * on re-declaration so preview tokens can revoke removed/recreated services.
+   * Absent on computer images that predate revisions.
+   */
+  revision?: string;
+}
+
+export interface ComputerServicePreviewRequest {
+  name: string;
+  port: number;
+  method: "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path: string;
+  query: string;
+  contentType?: string;
+  bodyBase64?: string;
+}
+
+export interface ComputerServicePreviewResponse {
+  status: number;
+  contentType: string | null;
+  bodyBase64: string | null;
+  /** App-provided Location on redirects; the proxy rewrites or drops it. */
+  location?: string | null;
+}
+
+export interface ComputerServicesCapability {
+  list(
+    computer: ComputerRef,
+    context: AdapterContext,
+  ): Promise<{ supported: boolean; services: ComputerServiceInfo[] }>;
+  declare(computer: ComputerRef, spec: ComputerServiceSpec, context: AdapterContext): Promise<void>;
+  stop(computer: ComputerRef, name: string, context: AdapterContext): Promise<void>;
+  restart(computer: ComputerRef, name: string, context: AdapterContext): Promise<void>;
+  remove(computer: ComputerRef, name: string, context: AdapterContext): Promise<void>;
+  preview(
+    computer: ComputerRef,
+    request: ComputerServicePreviewRequest,
+    context: AdapterContext,
+  ): Promise<ComputerServicePreviewResponse>;
 }
 
 export interface ConnectorProvider {
   describe(): AdapterDescriptor<ConnectorCapabilities>;
-  discoverTools(context: AdapterContext): Promise<ConnectorTool[]>;
+  /** Full authorized schemas; omit for the provider's legacy discovery presentation. */
+  discoverTools(context: AdapterContext, options?: { catalog?: "full" }): Promise<ConnectorTool[]>;
   /** Resolve a lazy catalog call to its authoritative authorized tool before approval. */
   resolveCall?(
     call: ConnectorCall,

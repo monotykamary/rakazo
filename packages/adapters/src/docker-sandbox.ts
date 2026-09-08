@@ -7,6 +7,7 @@ import type {
   ComputerInput,
   ComputerObservation,
   ComputerRef,
+  ComputerServicesCapability,
   ControlLeaseRef,
   PageBrowserCommand,
   PageBrowserResult,
@@ -24,6 +25,7 @@ import {
   computerObservation,
   normalizeWorkspacePath,
 } from "./computer-support.js";
+import { createSupervisorServiceCapability } from "./project-services.js";
 import { readBodyCapped, withAbort } from "./web-ssrf.js";
 
 export const MAX_SANDBOX_ERROR_RESPONSE_BYTES = 8 * 1024;
@@ -91,14 +93,30 @@ function encodedFileResponseLimit(maxBytes: number | undefined): number {
   return Math.ceil(maxBytes / 3) * 4 + 1024;
 }
 
+export interface DockerSandboxFetchOptions {
+  /** Route supervisor calls through an injected transport (for example the machine tunnel). */
+  fetch?: typeof fetch;
+  /** Tunnel mode: the machine runner injects the local supervisor token, so no bearer leaves this process. */
+  omitAuthorization?: boolean;
+}
+
 export class DockerSandboxProvider implements SandboxProvider {
   private readonly supervisorToken: string;
+  private readonly supervisorFetch: typeof fetch;
+  readonly services: ComputerServicesCapability;
 
   constructor(
     private readonly supervisorUrl: string,
     supervisorToken?: string,
+    private readonly fetchOptions: DockerSandboxFetchOptions = {},
   ) {
     this.supervisorToken = supervisorToken ?? resolveSupervisorToken(process.env);
+    this.supervisorFetch = fetchOptions.fetch ?? fetch;
+    this.services = createSupervisorServiceCapability({
+      fetch: (input, init) => this.supervisorFetch(input, init),
+      url: (path) => this.url(path),
+      headers: (context, homeKey) => this.headers(context, homeKey),
+    });
   }
 
   describe() {
@@ -123,8 +141,17 @@ export class DockerSandboxProvider implements SandboxProvider {
 
   private headers(context: AdapterContext, botId?: string) {
     return {
-      authorization: `Bearer ${this.supervisorToken}`,
+      ...(this.fetchOptions.omitAuthorization
+        ? {}
+        : { authorization: `Bearer ${this.supervisorToken}` }),
       "x-rakazo-space-id": context.spaceId,
+      ...(context.runId ? { "x-rakazo-run-id": context.runId } : {}),
+      ...(context.runLease
+        ? {
+            "x-rakazo-lease-owner": context.runLease.owner,
+            "x-rakazo-lease-fence": String(context.runLease.fence),
+          }
+        : {}),
       ...outgoingCorrelationHeaders(),
       ...(botId ? { "x-rakazo-bot-id": botId } : {}),
       ...(context.botId ? { "x-rakazo-screen-id": context.botId } : {}),
@@ -137,7 +164,7 @@ export class DockerSandboxProvider implements SandboxProvider {
     request: { botId: string; homePath: string },
     context: AdapterContext,
   ): Promise<ComputerRef> {
-    const res = await fetch(this.url("/computers"), {
+    const res = await this.supervisorFetch(this.url("/computers"), {
       method: "POST",
       headers: { ...this.headers(context, request.botId), "content-type": "application/json" },
       body: JSON.stringify({
@@ -168,7 +195,7 @@ export class DockerSandboxProvider implements SandboxProvider {
     request: CommandRequest,
     context: AdapterContext,
   ): AsyncIterable<ProcessEvent> {
-    const res = await fetch(this.url(`/computers/${computer.id}/exec`), {
+    const res = await this.supervisorFetch(this.url(`/computers/${computer.id}/exec`), {
       method: "POST",
       headers: { ...this.headers(context, computer.botId), "content-type": "application/json" },
       body: JSON.stringify({
@@ -197,7 +224,7 @@ export class DockerSandboxProvider implements SandboxProvider {
     request: PageBrowserCommand,
     context: AdapterContext,
   ): Promise<PageBrowserResult> {
-    const res = await fetch(this.url(`/computers/${computer.id}/browser`), {
+    const res = await this.supervisorFetch(this.url(`/computers/${computer.id}/browser`), {
       method: "POST",
       headers: { ...this.headers(context, computer.botId), "content-type": "application/json" },
       body: JSON.stringify(request),
@@ -213,7 +240,7 @@ export class DockerSandboxProvider implements SandboxProvider {
     request: ScreenRequest,
     context: AdapterContext,
   ): Promise<ScreenSession> {
-    const res = await fetch(this.url(`/computers/${computer.id}/screen-mode`), {
+    const res = await this.supervisorFetch(this.url(`/computers/${computer.id}/screen-mode`), {
       method: "POST",
       headers: { ...this.headers(context, computer.botId), "content-type": "application/json" },
       body: JSON.stringify({
@@ -244,7 +271,7 @@ export class DockerSandboxProvider implements SandboxProvider {
     context: AdapterContext,
     controlToken?: string,
   ) {
-    const res = await fetch(this.url(`/computers/${computer.id}/screen-mode`), {
+    const res = await this.supervisorFetch(this.url(`/computers/${computer.id}/screen-mode`), {
       method: "POST",
       headers: { ...this.headers(context, computer.botId), "content-type": "application/json" },
       body: JSON.stringify({ interactive, controlToken }),
@@ -259,7 +286,7 @@ export class DockerSandboxProvider implements SandboxProvider {
     lease: ControlLeaseRef,
     context: AdapterContext,
   ): Promise<void> {
-    const res = await fetch(this.url(`/computers/${computer.id}/input`), {
+    const res = await this.supervisorFetch(this.url(`/computers/${computer.id}/input`), {
       method: "POST",
       headers: { ...this.headers(context, computer.botId), "content-type": "application/json" },
       body: JSON.stringify({ input, leaseId: lease.leaseId }),
@@ -272,7 +299,7 @@ export class DockerSandboxProvider implements SandboxProvider {
   }
 
   async observe(computer: ComputerRef, context: AdapterContext): Promise<ComputerObservation> {
-    const res = await fetch(this.url(`/computers/${computer.id}/observe`), {
+    const res = await this.supervisorFetch(this.url(`/computers/${computer.id}/observe`), {
       method: "POST",
       headers: this.headers(context, computer.botId),
       signal: context.signal,
@@ -300,7 +327,7 @@ export class DockerSandboxProvider implements SandboxProvider {
 
   async act(computer: ComputerRef, request: ComputerActionRequest, context: AdapterContext) {
     const actions = boundedComputerActions(request.actions);
-    const res = await fetch(this.url(`/computers/${computer.id}/actions`), {
+    const res = await this.supervisorFetch(this.url(`/computers/${computer.id}/actions`), {
       method: "POST",
       headers: { ...this.headers(context, computer.botId), "content-type": "application/json" },
       body: JSON.stringify({
@@ -344,7 +371,7 @@ export class DockerSandboxProvider implements SandboxProvider {
     context: AdapterContext,
   ): Promise<ComputerFileEntry[]> {
     const path = normalizeWorkspacePath(directory);
-    const res = await fetch(
+    const res = await this.supervisorFetch(
       this.url(`/computers/${computer.id}/files?path=${encodeURIComponent(path)}&mode=list`),
       { headers: this.headers(context, computer.botId), signal: context.signal },
     );
@@ -360,7 +387,7 @@ export class DockerSandboxProvider implements SandboxProvider {
   ) {
     const path = normalizeWorkspacePath(filePath);
     const maxBytes = options?.maxBytes;
-    const res = await fetch(
+    const res = await this.supervisorFetch(
       this.url(
         `/computers/${computer.id}/files?path=${encodeURIComponent(path)}&mode=read${maxBytes === undefined ? "" : `&maxBytes=${maxBytes}`}`,
       ),
@@ -379,7 +406,7 @@ export class DockerSandboxProvider implements SandboxProvider {
   }
 
   async writeFile(computer: ComputerRef, file: PortableFile, context: AdapterContext) {
-    const res = await fetch(this.url(`/computers/${computer.id}/files`), {
+    const res = await this.supervisorFetch(this.url(`/computers/${computer.id}/files`), {
       method: "POST",
       headers: { ...this.headers(context, computer.botId), "content-type": "application/json" },
       body: JSON.stringify({
@@ -414,7 +441,7 @@ export class DockerSandboxProvider implements SandboxProvider {
     const deadline = requestDeadline(SCREEN_RELEASE_TIMEOUT_MS, "sandbox screen release timed out");
     try {
       const res = await withAbort(
-        fetch(this.url(`/computers/${computer.id}/screen`), {
+        this.supervisorFetch(this.url(`/computers/${computer.id}/screen`), {
           method: "DELETE",
           headers: this.headers(context, computer.botId),
           signal: deadline.signal,
@@ -430,7 +457,7 @@ export class DockerSandboxProvider implements SandboxProvider {
   }
 
   async stop(computer: ComputerRef, context: AdapterContext): Promise<void> {
-    const res = await fetch(this.url(`/computers/${computer.id}/stop`), {
+    const res = await this.supervisorFetch(this.url(`/computers/${computer.id}/stop`), {
       method: "POST",
       headers: this.headers(context, computer.botId),
       signal: context.signal,
@@ -444,7 +471,7 @@ export class DockerSandboxProvider implements SandboxProvider {
   }
 
   async destroy(computer: ComputerRef, context: AdapterContext): Promise<void> {
-    const res = await fetch(this.url(`/computers/${computer.id}`), {
+    const res = await this.supervisorFetch(this.url(`/computers/${computer.id}`), {
       method: "DELETE",
       headers: this.headers(context, computer.botId),
       signal: context.signal,

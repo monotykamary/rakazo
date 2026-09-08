@@ -9,12 +9,13 @@ import {
   normalizeCreateBotProfile,
 } from "@rakazo/contracts";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { BotAvatar } from "../components/bot-avatar";
 import { ComputerModePicker } from "../components/computer-mode-picker";
 import { ModelSelectionControl } from "../components/ModelSelectionControl";
-import { type MobileBot, rpc } from "../lib/api";
+import { RunsOnPicker } from "../components/runs-on-picker";
+import { currentApiBase, type MobileBot, rpc } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { useMobileTokens } from "../lib/native";
 
@@ -34,6 +35,14 @@ export default function BotSettingsScreen() {
   const [description, setDescription] = useState("");
   const [color, setColor] = useState<string>(BOT_COLORS[0]);
   const [computerMode, setComputerMode] = useState<ComputerMode>("team");
+  const [machineAssigned, setMachineAssigned] = useState(false);
+  const onMachineChange = useCallback(
+    (machineId: string | null) => {
+      if (machineId !== null || machineAssigned) setComputerMode("dedicated");
+      setMachineAssigned(machineId !== null);
+    },
+    [machineAssigned],
+  );
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -203,7 +212,27 @@ export default function BotSettingsScreen() {
             />
           ))}
         </ScrollView>
-        <ComputerModePicker value={computerMode} onChange={setComputerMode} />
+        {!machineAssigned ? (
+          <ComputerModePicker value={computerMode} onChange={setComputerMode} />
+        ) : null}
+        {bot ? (
+          <RunsOnPicker
+            botId={bot.id}
+            apiBase={currentApiBase()}
+            onMachineChange={onMachineChange}
+          />
+        ) : null}
+        {bot ? (
+          <Pressable
+            onPress={() => router.push(`/bot-services?botId=${bot.id}`)}
+            accessibilityRole="button"
+            accessibilityLabel={t("Services")}
+          >
+            <Text style={{ color: tokens.primary, fontSize: 15, marginTop: 12 }}>
+              {t("Services")}
+            </Text>
+          </Pressable>
+        ) : null}
         {error ? <Text style={{ color: tokens.destructive, marginTop: 16 }}>{error}</Text> : null}
         <Pressable
           onPress={() => void save()}

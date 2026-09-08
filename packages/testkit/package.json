@@ -22,6 +22,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
+    "hono": "^4.9.7",
     "@types/pngjs": "6.0.5",
     "typescript": "^5.9.2",
     "vitest": "^4.1.10"

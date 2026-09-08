@@ -35,6 +35,7 @@ import {
   isLazyCatalogControlRoute,
   lazyCatalogTools,
   resolveCatalogCall,
+  uniquifyInstalledToolName,
 } from "./lazy-tool-catalog.js";
 import {
   assertSafeRemoteUrl,
@@ -111,8 +112,24 @@ export class InstalledConnectorProvider implements ConnectorProvider {
     };
   }
 
-  async discoverTools(context: AdapterContext): Promise<ConnectorTool[]> {
+  async discoverTools(
+    context: AdapterContext,
+    options?: { catalog?: "full" },
+  ): Promise<ConnectorTool[]> {
     const tools = await this.authorizedTools(context);
+    if (options?.catalog === "full") {
+      // Native MCP owns the public name; its private callback must not shadow a product builtin.
+      return disambiguateInstalledToolNames(
+        tools.map((tool) =>
+          tool.protocol === "mcp" && tool.route?.resourceId
+            ? {
+                ...tool,
+                name: uniquifyInstalledToolName(tool.route.resourceId, tool.route.toolName),
+              }
+            : tool,
+        ),
+      );
+    }
     if (tools.length <= DIRECT_TOOL_LIMIT) return tools;
     return lazyCatalogTools("installed", "installed", "API", catalogEntries(tools));
   }
@@ -163,6 +180,7 @@ export class InstalledConnectorProvider implements ConnectorProvider {
         });
         return remote.map((tool) => ({
           ...tool,
+          protocol: "mcp" as const,
           route: {
             connectorId: "installed",
             resourceId: install.id,

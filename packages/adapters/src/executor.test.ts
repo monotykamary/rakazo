@@ -8,6 +8,7 @@ import {
   loadCurrentTurnImages,
   missingTurnImagesInstruction,
   runNotificationsEnabled,
+  runProjectDiscoveryTool,
   selectBuiltinToolsForRun,
   settleSteeringAttachmentLoads,
   threadContextForRun,
@@ -94,6 +95,11 @@ describe("run tool selection", () => {
   it("exposes queue control only in a private user thread", () => {
     expect(toolNames("user")).toContain("manage_queue");
     expect(toolNames("user", "group")).not.toContain("manage_queue");
+  });
+
+  it("offers workspace project discovery to interactive runs", () => {
+    expect(toolNames("user")).toContain("discover_projects");
+    expect(toolNames("message", "group")).toContain("discover_projects");
   });
 
   it("keeps page browser tools without vision, and hides them without a graphical computer", () => {
@@ -1211,6 +1217,92 @@ description: Prepare standup notes
       provider: "openrouter",
       id: "deepseek/deepseek-v4-flash-0731",
       thinkingLevel: "high",
+    });
+  });
+});
+
+describe("discover_projects tool", () => {
+  it("can continue discovery inside one authorized subtree", async () => {
+    const probe = vi.fn(async () => ({ stdout: ".\t\tmain", stderr: "", code: 0 }));
+    const result = await runProjectDiscoveryTool(
+      probe,
+      { computerMode: "team", botId: "bot1" },
+      { directory: "shared/project" },
+    );
+    expect(probe.mock.calls).toHaveLength(1);
+    expect(result.roots).toEqual(["shared/project"]);
+    expect(result.projects[0]?.path).toBe("shared/project");
+    expect(result.limits.maxEntries).toBeGreaterThan(0);
+    await expect(
+      runProjectDiscoveryTool(
+        probe,
+        { computerMode: "team", botId: "bot1" },
+        { directory: "bots/other" },
+      ),
+    ).rejects.toThrow("outside");
+    expect(probe.mock.calls).toHaveLength(1);
+  });
+
+  it("does not report complete coverage after a failed scan", async () => {
+    const result = await runProjectDiscoveryTool(
+      async () => ({ stdout: "", stderr: "unavailable", code: 1 }),
+      { computerMode: "dedicated", botId: "bot1" },
+      { reference: "project" },
+    );
+    expect(result).toMatchObject({
+      truncated: true,
+      incompleteRoots: ["."],
+      resolution: { kind: "missing" },
+    });
+  });
+
+  const outputs = new Map<string | undefined, string>([
+    [undefined, "./app\tgit@github.com:acme/app.git\tmain\n./app-work\t\twork"],
+    ["bots/bot1", "./app\tgit@github.com:acme/app.git\tmain\n./app-work\t\twork"],
+    [
+      "shared",
+      "./tooling\thttps://user:token@example.com/acme/tooling.git\t\nRAKAZO_PROJECT_DISCOVERY_TRUNCATED\t\t",
+    ],
+  ]);
+  const execute = vi.fn(async (_argv: string[], cwd: string | undefined) => ({
+    stdout: outputs.get(cwd) ?? "",
+    stderr: "",
+    code: 0,
+  }));
+
+  it("merges approved roots, sanitizes remotes and reports truncation", async () => {
+    const payload = await runProjectDiscoveryTool(
+      execute,
+      { computerMode: "team", botId: "bot1" },
+      {},
+    );
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute.mock.calls[0]?.[1]).toBe("bots/bot1");
+    expect(execute.mock.calls[1]?.[1]).toBe("shared");
+    expect(execute.mock.calls[0]?.[0][2]).toContain("-name .git");
+    expect(payload.roots).toEqual(["bots/bot1", "shared"]);
+    expect(payload.projects).toEqual([
+      { path: "bots/bot1/app", name: "app", remote: "github.com:acme/app.git", branch: "main" },
+      { path: "bots/bot1/app-work", name: "app-work", remote: null, branch: "work" },
+      {
+        path: "shared/tooling",
+        name: "tooling",
+        remote: "https://example.com/acme/tooling.git",
+        branch: null,
+      },
+    ]);
+    expect(payload.truncated).toBe(true);
+  });
+
+  it("resolves an explicit reference deterministically", async () => {
+    const payload = await runProjectDiscoveryTool(
+      execute,
+      { computerMode: "dedicated", botId: "bot1" },
+      { reference: "app" },
+    );
+    expect(payload.resolution).toEqual({
+      kind: "resolved",
+      project: { path: "app", name: "app", remote: "github.com:acme/app.git", branch: "main" },
     });
   });
 });

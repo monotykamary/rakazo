@@ -36,27 +36,26 @@ try {
     const cwd = resolve(root, "..", source);
     const packageManifest = JSON.parse(readFileSync(resolve(cwd, "package.json"), "utf8"));
     // Builds and tests must be run before this command; never let pack trigger an implicit build.
-    const output = execFileSync(
-      "npm",
-      ["pack", "--ignore-scripts", "--json", "--pack-destination", staging],
-      {
-        cwd,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "inherit"],
-      },
-    );
-    const [packed] = JSON.parse(output);
-    for (const file of packed.files) {
+    const archivePath = resolve(staging, "snapshot.tgz");
+    execFileSync("bun", ["pm", "pack", "--ignore-scripts", "--filename", archivePath, "--quiet"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    const files = execFileSync("tar", ["-tzf", archivePath], { encoding: "utf8" })
+      .trim()
+      .split("\n");
+    for (const file of files) {
       if (
         /(^|\/)(\.env(?:\..*)?|auth\.json|models\.json|settings\.json|.*\.(?:pem|key|p12|pfx))$/.test(
-          file.path,
+          file,
         ) ||
-        /(^|\/)(\.git|node_modules|sessions)(\/|$)/.test(file.path)
+        /(^|\/)(\.git|node_modules|sessions)(\/|$)/.test(file)
       ) {
         throw new Error(`Refusing a sensitive or runtime-state package entry: ${source}`);
       }
     }
-    const bytes = readFileSync(resolve(staging, packed.filename));
+    const bytes = readFileSync(archivePath);
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     const filename = `${packageManifest.name.replaceAll("@", "").replaceAll("/", "-")}-${packageManifest.version}-${sha256.slice(0, 12)}.tgz`;
     const baseCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim();
@@ -67,7 +66,7 @@ try {
       sha256,
       baseCommit,
     });
-    renameSync(resolve(staging, packed.filename), resolve(staging, filename));
+    renameSync(archivePath, resolve(staging, filename));
     const dependency = `file:../../vendor/pi-kit/${filename}`;
     manifest.dependencies[packageManifest.name] = dependency;
     for (const consumer of consumers) {

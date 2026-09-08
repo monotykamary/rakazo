@@ -138,6 +138,25 @@ html[data-platform="darwin"] .titlebar {
   margin-bottom: 4px;
 }
 
+.setup-note,
+.server-guide {
+  color: var(--muted-foreground);
+  font-size: 13px;
+  margin: 12px 0;
+}
+
+.server-guide summary {
+  cursor: pointer;
+  color: var(--foreground);
+}
+
+.server-guide pre {
+  overflow-x: auto;
+  padding: 12px;
+  background: var(--muted);
+  border-radius: var(--radius);
+}
+
 .field-label {
   display: block;
   font-size: 12px;

@@ -31,7 +31,7 @@
     "@rakazo/db": "workspace:*",
     "@rakazo/logging": "workspace:*",
     "@rakazo/pi-kit": "workspace:*",
-    "pi-fabric": "file:../../vendor/pi-kit/pi-fabric-0.89.0-6f981b7f533a.tgz",
+    "pi-fabric": "file:../../vendor/pi-kit/pi-fabric-0.90.0-a4831b59cdc1.tgz",
     "pi-multiprovider": "file:../../vendor/pi-kit/pi-multiprovider-0.2.10-7f54b802745f.tgz",
     "chat": "4.39.0",
     "chat-adapter-lark": "0.3.1",

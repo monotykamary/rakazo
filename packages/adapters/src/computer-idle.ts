@@ -375,12 +375,37 @@ function findActiveRun(prisma: PrismaClient, computerId: string, statuses: reado
   });
 }
 
+/**
+ * Kept supervised services hold the computer awake: the container runtime is
+ * the source of truth, queried through the provider capability so this works
+ * identically for backend-local and machine-bound computers. Computers whose
+ * provider has no service runtime simply never report kept services.
+ */
+async function hasKeptServiceRunning(
+  sandbox: SandboxProvider,
+  computer: ReturnType<typeof toComputerRef>,
+  context: AdapterContext,
+): Promise<boolean> {
+  const services = sandbox.services;
+  if (!services) return false;
+  try {
+    const result = await services.list(computer, context);
+    return result.services.some((service) => service.keepAlive && service.status === "running");
+  } catch {
+    // Transport trouble is not evidence a kept service stopped; retry via busy.
+    return true;
+  }
+}
+
 async function hasActiveBackgroundWork(
   sandbox: SandboxProvider,
   computer: ReturnType<typeof toComputerRef>,
   context: AdapterContext,
   computerId: string,
 ): Promise<boolean> {
+  if (await hasKeptServiceRunning(sandbox, computer, context)) {
+    return true;
+  }
   if (sandbox.inspectBackgroundWork) {
     try {
       return (await sandbox.inspectBackgroundWork(computer, computerId, context)) !== "idle";

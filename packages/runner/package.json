@@ -1,0 +1,22 @@
+{
+  "name": "@rakazo/runner",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/cli.ts run",
+    "cli": "tsx src/cli.ts",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --root ../.. packages/runner/src"
+  },
+  "dependencies": {
+    "@rakazo/contracts": "workspace:*",
+    "@rakazo/core": "workspace:*",
+    "tsx": "^4.20.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.10"
+  }
+}

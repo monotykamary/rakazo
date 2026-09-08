@@ -154,7 +154,7 @@ export async function executeContactsJourney(
       runId: context.operationId,
       prompt: `Export the two synthetic contacts at ${EXPORT_FIXTURE_URL} and verify ${CONTACTS_PATH}.`,
       instructions:
-        "Use browser_navigate, inspect the page, and click the current refs one at a time. Only the local fixture is allowed. Call computer_observe once to check the screen. Use read_file to verify the CSV. Do not write the CSV yourself. Recover from temporary download errors by inspecting current state before retrying. Finish once the CSV is verified.",
+        "Use extensions.browser_navigate, inspect the page, and click the current refs one at a time. Only the local fixture is allowed. Call extensions.computer_observe once to check the screen. Use pi.read to verify the CSV. Do not write the CSV yourself. Recover from temporary download errors by inspecting current state before retrying. Finish once the CSV is verified.",
       history: [],
       model,
       tools: builtinAgentTools.filter((tool) => contactsToolNames.has(tool.name)),
@@ -211,7 +211,7 @@ export async function replayContactsRecording(
   }
 }
 
-/** The sealed worker exposes only fabric_exec; native tools are extension calls in code. */
+/** The sealed worker uses native core tools and captured product capabilities inside Fabric. */
 function fabricToolCall(
   id: string,
   name: string,
@@ -222,7 +222,10 @@ function fabricToolCall(
     id,
     name: "fabric_exec",
     arguments: {
-      code: `return await extensions.${name}(${JSON.stringify(args)});`,
+      code:
+        name === "read_file"
+          ? `return {content: await pi.read(${JSON.stringify(args)})};`
+          : `return await extensions.${name}(${JSON.stringify(args)});`,
       resultFormat: "json",
     },
   };

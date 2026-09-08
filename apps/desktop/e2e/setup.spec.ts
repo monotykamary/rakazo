@@ -81,7 +81,7 @@ test("first run asks whether to use a local or existing instance", async () => {
   await expect(setup.getByRole("heading", { name: "Welcome to Rakazo" })).toBeVisible();
   await expect(setup.getByText("Choose which server this app should use.")).toBeVisible();
   await expect(setup.getByText("This computer")).toBeVisible();
-  await expect(setup.getByText("Existing instance")).toBeVisible();
+  await expect(setup.getByText("Another server")).toBeVisible();
   await expect(setup.locator(".card")).toHaveCount(0);
 
   // A new instance is the default: the app runs the stack itself at the local address.
@@ -123,7 +123,7 @@ test("connecting to an existing instance verifies, saves, and opens it", async (
   app = await launch();
   const setup = await app.firstWindow();
 
-  await setup.getByRole("radio", { name: /Existing instance/ }).check();
+  await setup.getByRole("radio", { name: /Another server/ }).check();
   await expect(setup.locator("#panel-new")).toBeHidden();
 
   await setup.locator("#server-url").fill(serverUrl);
@@ -160,7 +160,7 @@ test("connecting to an existing instance verifies, saves, and opens it", async (
 test("Continue verifies and remembers the instance so setup does not run again", async () => {
   app = await launch();
   const setup = await app.firstWindow();
-  await setup.getByRole("radio", { name: /Existing instance/ }).check();
+  await setup.getByRole("radio", { name: /Another server/ }).check();
   await setup.locator("#server-url").fill(serverUrl);
   const firstRun = await Promise.all([
     app.waitForEvent("window"),
@@ -189,7 +189,7 @@ test("an unreachable address is reported instead of being saved", async () => {
   app = await launch();
   const setup = await app.firstWindow();
 
-  await setup.getByRole("radio", { name: /Existing instance/ }).check();
+  await setup.getByRole("radio", { name: /Another server/ }).check();
   await setup.locator("#server-url").fill(closedUrl);
   await setup.getByRole("button", { name: "Check connection" }).click();
 
@@ -222,7 +222,7 @@ test("an HTTP error document is not accepted after a healthy probe", async () =>
   try {
     app = await launch();
     const setup = await app.firstWindow();
-    await setup.getByRole("radio", { name: /Existing instance/ }).check();
+    await setup.getByRole("radio", { name: /Another server/ }).check();
     await setup.locator("#server-url").fill(`http://127.0.0.1:${address.port}`);
     await setup.getByRole("button", { name: "Continue" }).click();
 
@@ -257,7 +257,7 @@ test("a session-pending shell skeleton is not accepted as a ready app", async ()
   try {
     app = await launch();
     const setup = await app.firstWindow();
-    await setup.getByRole("radio", { name: /Existing instance/ }).check();
+    await setup.getByRole("radio", { name: /Another server/ }).check();
     await setup.locator("#server-url").fill(`http://127.0.0.1:${address.port}`);
     await setup.getByRole("button", { name: "Continue" }).click();
 
@@ -295,7 +295,7 @@ test("a post-session ready app mount is accepted", async () => {
   try {
     app = await launch();
     const setup = await app.firstWindow();
-    await setup.getByRole("radio", { name: /Existing instance/ }).check();
+    await setup.getByRole("radio", { name: /Another server/ }).check();
     await setup.locator("#server-url").fill(`http://127.0.0.1:${address.port}`);
     const appWindow = await Promise.all([
       app.waitForEvent("window"),
@@ -342,7 +342,7 @@ test("a shell mount before workspace bootstrap is not accepted", async () => {
   try {
     app = await launch();
     const setup = await app.firstWindow();
-    await setup.getByRole("radio", { name: /Existing instance/ }).check();
+    await setup.getByRole("radio", { name: /Another server/ }).check();
     await setup.locator("#server-url").fill(`http://127.0.0.1:${address.port}`);
     await setup.getByRole("button", { name: "Continue" }).click();
 
@@ -379,7 +379,7 @@ test("a session-ready marker without a route surface is not accepted", async () 
   try {
     app = await launch();
     const setup = await app.firstWindow();
-    await setup.getByRole("radio", { name: /Existing instance/ }).check();
+    await setup.getByRole("radio", { name: /Another server/ }).check();
     await setup.locator("#server-url").fill(`http://127.0.0.1:${address.port}`);
     await setup.getByRole("button", { name: "Continue" }).click();
 
@@ -400,7 +400,7 @@ test("a malformed address is rejected before anything is written", async () => {
   app = await launch();
   const setup = await app.firstWindow();
 
-  await setup.getByRole("radio", { name: /Existing instance/ }).check();
+  await setup.getByRole("radio", { name: /Another server/ }).check();
   await setup.locator("#server-url").fill("not a server");
   await setup.getByRole("button", { name: "Continue" }).click();
 
@@ -422,7 +422,7 @@ test("a generic web page is not accepted as a Rakazo server", async () => {
   try {
     app = await launch();
     const setup = await app.firstWindow();
-    await setup.getByRole("radio", { name: /Existing instance/ }).check();
+    await setup.getByRole("radio", { name: /Another server/ }).check();
     await setup.locator("#server-url").fill(`http://127.0.0.1:${address.port}`);
     await setup.getByRole("button", { name: "Continue" }).click();
 
@@ -453,7 +453,7 @@ test("the setup probe refuses redirects instead of following them", async () => 
   try {
     app = await launch();
     const setup = await app.firstWindow();
-    await setup.getByRole("radio", { name: /Existing instance/ }).check();
+    await setup.getByRole("radio", { name: /Another server/ }).check();
     await setup.locator("#server-url").fill(`http://127.0.0.1:${address.port}`);
     await setup.getByRole("button", { name: "Continue" }).click();
 
@@ -481,7 +481,7 @@ test("an unreachable saved server falls back to setup with a recovery message", 
   const setup = await app.firstWindow();
 
   await expect(setup.getByRole("heading", { name: "Welcome to Rakazo" })).toBeVisible();
-  await expect(setup.getByRole("radio", { name: /Existing instance/ })).toBeChecked();
+  await expect(setup.getByRole("radio", { name: /Another server/ })).toBeChecked();
   await expect(setup.locator("#server-url")).toHaveValue(closedUrl);
   await expect(setup.locator("#status")).toContainText("Could not reconnect to the saved server.");
   await setup.screenshot({

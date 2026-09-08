@@ -1,0 +1,136 @@
+# Machine node stack: one user-owned Linux machine paired to a Rakazo server.
+# Outbound-only: nothing here publishes a host port. The runner polls the paired
+# server and forwards validated commands to the local supervisor over an internal
+# network. The supervisor token is generated once on this machine and never
+# leaves it. Install from a reviewed checkout with infra/compose/install-machine.sh,
+# then pair with the rakazo-runner wrapper (infra/compose/rakazo-runner):
+#   rakazo-runner pair --server https://your-rakazo-server --code <rk_p_...>
+# The code comes from the web UI (machines.startPairing); it is single-use and expires.
+# The server origin is stored with the pairing credentials, so it is not compose config.
+name: rakazo-machine
+
+services:
+  runner:
+    image: ${RAKAZO_IMAGE:-ghcr.io/elie222/rakazo/app}:${RAKAZO_IMAGE_TAG:-local}
+    build:
+      context: ../..
+      dockerfile: infra/compose/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-}
+    # Start forwarding only once pairing credentials exist; `rakazo-runner pair`
+    # writes them into this volume and restarts this service when it is running.
+    command:
+      - sh
+      - -c
+      - 'until [ -f /data/runner/credentials.json ]; do sleep 5; done; exec bun run --filter @rakazo/runner start'
+    restart: unless-stopped
+    init: true
+    # Outbound HTTP cancels and journal flushes need time beyond the 10s default.
+    stop_grace_period: 30s
+    # Unprivileged: this process is the only home authority on the machine and
+    # must never create or chown model-chosen host paths as root.
+    user: "1000:1000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 512m
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      RAKAZO_SERVER_URL: ${RAKAZO_SERVER_URL:-}
+      RAKAZO_RUNNER_HOME: /data/runner
+      RAKAZO_DATA_DIR: /data
+      RAKAZO_SUPERVISOR_URL: http://supervisor:7091
+      RAKAZO_SUPERVISOR_TOKEN: ${SANDBOX_SUPERVISOR_TOKEN:?Set SANDBOX_SUPERVISOR_TOKEN (shared with the supervisor, never sent to the server)}
+      SANDBOX_SUPERVISOR_TOKEN: ${SANDBOX_SUPERVISOR_TOKEN}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      # Dedicated Rakazo home persistent root: bot homes live under /data/homes/<homeKey>
+      # created by this unprivileged runner. No arbitrary host directories are mounted.
+      - machinedata:/data
+    networks:
+      - agents
+
+  supervisor:
+    image: ${RAKAZO_IMAGE:-ghcr.io/elie222/rakazo/app}:${RAKAZO_IMAGE_TAG:-local}
+    build:
+      context: ../..
+      dockerfile: infra/compose/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-}
+    command: ["bun", "run", "--filter", "@rakazo/sandbox-supervisor", "start"]
+    restart: unless-stopped
+    init: true
+    user: root
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 512m
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      DATA_DIR: /data
+      SUPERVISOR_HOST: "0.0.0.0"
+      SUPERVISOR_PORT: "7091"
+      DOCKER_SOCKET: /var/run/docker.sock
+      RAKAZO_AGENT_IMAGE: ${RAKAZO_IMAGE:-ghcr.io/elie222/rakazo/app}:${RAKAZO_IMAGE_TAG:-local}
+      RAKAZO_COMPUTER_IMAGE: ${RAKAZO_COMPUTER_IMAGE:-rakazo/computer}:${RAKAZO_COMPUTER_IMAGE_TAG:-local}
+      SANDBOX_SUPERVISOR_TOKEN: ${SANDBOX_SUPERVISOR_TOKEN:?Set SANDBOX_SUPERVISOR_TOKEN}
+      # Accepted by the supervisor's resolveScreenNetworkMode for a containerized
+      # supervisor: screens get per-bot isolated networks, nothing is published.
+      SANDBOX_SCREEN_NETWORK: isolated
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - machinedata:/data
+    networks:
+      - agents
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7091/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # Presence services only: they make sure both images exist on the machine so the
+  # supervisor can run networkless Pi agent containers (NetworkMode none) and separate
+  # per-bot computer containers without building at command time.
+  agent:
+    image: ${RAKAZO_IMAGE:-ghcr.io/elie222/rakazo/app}:${RAKAZO_IMAGE_TAG:-local}
+    command: ["true"]
+    restart: "no"
+
+  computer:
+    image: ${RAKAZO_COMPUTER_IMAGE:-rakazo/computer}:${RAKAZO_COMPUTER_IMAGE_TAG:-local}
+    build:
+      context: ../sandboxes/computer
+    command: ["true"]
+    restart: "no"
+
+  # One targeted pass: fix the volume root and create the two fixed subdirectories
+  # the runner (uid 1000) owns. No recursive chown that could race the runner or
+  # sweep model-chosen homes under a root-owned ownership change.
+  data-init:
+    image: ${BUSYBOX_IMAGE:-busybox:1}
+    command:
+      - sh
+      - -c
+      - |
+        chown 1000:1000 /data
+        mkdir -p /data/runner /data/homes
+        chown 1000:1000 /data/runner /data/homes
+    restart: "no"
+    user: root
+    volumes:
+      - machinedata:/data
+
+volumes:
+  machinedata:
+
+networks:
+  agents:

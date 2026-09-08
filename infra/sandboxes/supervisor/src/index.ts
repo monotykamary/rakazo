@@ -45,6 +45,7 @@ import {
   xdotoolCommand,
 } from "./computer-spec.js";
 import { assertComputerHomeWritable } from "./home-ownership.js";
+import { registerServiceRoutes } from "./service-routes.js";
 import {
   assertRequestIdentity,
   attemptComputerControl,
@@ -154,6 +155,8 @@ app.use("/computers/*", async (c, next) => {
 });
 app.use("/computers", limitSupervisorRequestBody);
 app.use("/computers/*", limitSupervisorRequestBody);
+
+registerServiceRoutes(app, { managedContainer });
 
 app.post("/computers", async (c) => {
   const body = z

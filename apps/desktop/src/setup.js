@@ -6,6 +6,8 @@
   const serverUrl = document.getElementById("server-url");
   const panelNew = document.getElementById("panel-new");
   const panelExisting = document.getElementById("panel-existing");
+  const serverSwitchNotice = document.getElementById("server-switch-notice");
+  let savedServerUrl = null;
   const stackSection = document.getElementById("stack");
   const stackPhase = document.getElementById("stack-phase");
   const stackOutput = document.getElementById("stack-output");
@@ -62,8 +64,20 @@
     panelExisting.hidden = mode === "new";
     checkButton.hidden = mode === "new";
     if (mode !== "new") continueButton.textContent = "Continue";
+    syncSwitchNotice();
     setStatus("");
   }
+
+  function syncSwitchNotice() {
+    let sameOrigin = false;
+    try {
+      sameOrigin = new URL(serverUrl.value).origin === new URL(savedServerUrl).origin;
+    } catch {
+      // An incomplete address cannot establish continuity with the saved server.
+    }
+    serverSwitchNotice.hidden = selectedMode() === "new" || savedServerUrl === null || sameOrigin;
+  }
+  serverUrl.addEventListener("input", syncSwitchNotice);
 
   function isDockerPhase(phase) {
     return phase === "docker-missing" || phase === "docker-not-running";
@@ -229,6 +243,7 @@
       if (state === null) throw new Error("Setup is not active");
       defaultLocalUrl = state.defaultLocalUrl;
       if (state.saved !== null) {
+        savedServerUrl = state.saved.serverUrl;
         const modeInput = document.querySelector(`input[name="mode"][value="${state.saved.mode}"]`);
         if (modeInput !== null) modeInput.checked = true;
         if (state.saved.mode === "existing") serverUrl.value = state.saved.serverUrl;

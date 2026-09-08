@@ -48,6 +48,14 @@ export class ModelBridge {
       throw new Error("Invalid model stream identity");
     const context = record(input.context) as unknown as Context;
     if (!Array.isArray(context.messages)) throw new Error("Invalid model context");
+    // Compaction may disable tools entirely; every tool-enabled stream is Fabric-only.
+    if (
+      context.tools !== undefined &&
+      (!Array.isArray(context.tools) ||
+        context.tools.length > 1 ||
+        context.tools.some((tool) => record(tool).name !== "fabric_exec"))
+    )
+      throw new Error("Managed model tools must be exclusively fabric_exec");
     const supplied = record(input.options ?? {});
     this.seen.add(id);
     const controller = new AbortController();

@@ -13,15 +13,23 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { BotMemoryCallback } from "@rakazo/adapter-kit";
 import { resolvePiKit } from "@rakazo/pi-kit";
-import { memoryActionSchemas } from "pi-fabric/memory";
+import {
+  type AgentServiceDispatcher,
+  createAgentServiceClient,
+  createAgentsProvider,
+} from "pi-fabric/agents";
+import { createMemoryProvider } from "pi-fabric/memory";
+import type { FabricProvider } from "pi-fabric/protocol";
 import { createManagedFovea } from "./pi-managed-fovea.js";
+import { createManagedMcpProvider, type ManagedProxyTool } from "./pi-managed-mcp.js";
 import { managedMemoryProvider } from "./pi-managed-memory.js";
 import { createBrokerCall, managedCoreTools } from "./pi-managed-tools.js";
 import { manageModelVisibilityExtension } from "./pi-managed-visibility.js";
+import { MANAGED_RESERVED_TOOL_NAMES } from "./pi-tool-names.js";
 
 export interface ManagedKitOptions {
   instructions: string;
-  proxyTools: ToolDefinition[];
+  proxyTools: ManagedProxyTool[];
   restore?: unknown;
   checkpoint(): Promise<void>;
   activity(
@@ -31,6 +39,8 @@ export interface ManagedKitOptions {
   ): Promise<void>;
   /** Host-backed source memory authority for this run; absent keeps current-session recall. */
   hostMemory?: BotMemoryCallback;
+  /** Private caller-bound dispatch; Fabric owns agent state, schemas and lifecycle. */
+  agents?: AgentServiceDispatcher;
   /** Host-owned isolated scratch; production worker cwd is /work. Never a computer project. */
   scratchRoot?: string;
   getPlacement?(): { cwd: string; worktreeId?: string } | undefined;
@@ -60,153 +70,42 @@ interface SavedKit {
   graph?: unknown;
 }
 
-const isSchema = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === "object" && !Array.isArray(value);
-
-type MemoryAction = "recall" | "expand" | "sessions";
-const memoryActions: readonly MemoryAction[] = ["recall", "expand", "sessions"];
-// The pinned Fabric release is the single schema catalog: no local duplicate and no old-pin fallback.
-const fabricInputSchema = (action: MemoryAction): Record<string, unknown> =>
-  memoryActionSchemas[action].inputSchema as Record<string, unknown>;
-const requiredWithoutSource = (
-  schema: Record<string, unknown>,
-  properties: Record<string, unknown>,
-) =>
-  (Array.isArray(schema.required) ? schema.required : []).filter(
-    (name): name is string => typeof name === "string" && name !== "source" && name in properties,
-  );
-
-/** Proxies registered memory actions to the run's host authority; never a local session fallback. */
+/** The backend owns source authority; Fabric owns the descriptor and retrieval contract. */
 export function managedHostMemoryProvider(memory: BotMemoryCallback, stopped: () => boolean) {
-  // The host binds the memory source, so the public descriptor never requires it.
-  const actions = memoryActions.map((action) => {
-    const fabric = fabricInputSchema(action);
-    const properties = isSchema(fabric.properties)
-      ? (fabric.properties as Record<string, unknown>)
-      : {};
-    const required = requiredWithoutSource(fabric, properties);
-    return {
-      name: action,
-      description: "Exact recall from the host-authorized memory source for this run.",
-      inputSchema: {
-        ...fabric,
-        properties,
-        ...(required.length ? { required } : {}),
-        additionalProperties: false,
-      },
-      risk: "read",
-    };
-  });
-  return {
-    name: "memory",
-    description: "Host-authorized source memory recall.",
-    list: async () => actions,
-    describe: async (name: string) => actions.find((action) => action.name === name),
-    async invoke(name: string, args: Record<string, unknown>, ctx?: { signal?: AbortSignal }) {
+  return createMemoryProvider({
+    check: () => {
       if (stopped()) throw new Error("Managed execution paused");
-      if (!actions.some((action) => action.name === name)) throw new Error("Unknown memory action");
-      ctx?.signal?.throwIfAborted();
-      return memory({
-        action: name as MemoryAction,
-        args,
-        signal: ctx?.signal ?? new AbortController().signal,
-      });
     },
-  };
+    dispatch: (action, args, ctx) =>
+      memory({ action, args, signal: ctx.signal ?? new AbortController().signal }),
+  });
 }
 
-type ManagedMemoryProvider = {
-  name: string;
-  description: string;
-  list: () => Promise<
-    Array<{ name: string; description: string; inputSchema: Record<string, unknown>; risk: string }>
-  >;
-  describe: (
-    name: string,
-  ) => Promise<
-    | { name: string; description: string; inputSchema: Record<string, unknown>; risk: string }
-    | undefined
-  >;
-  invoke: (
-    name: string,
-    args: Record<string, unknown>,
-    ctx?: { signal?: AbortSignal },
-  ) => Promise<unknown>;
-};
-// Source-less pointers are current-runtime logical-session work; only explicit
-// session scope stays local. Everything else defaults to the host bot archive.
-const routesLocal = (action: string, args: Record<string, unknown>) => {
-  if (typeof args.source === "string") return false;
+const routesLocal = (action: string, args: Record<string, unknown>, source: string) => {
+  if (typeof args.source === "string") return args.source === source;
   if (action === "expand") return true;
   const scope = typeof args.scope === "string" ? args.scope : "";
-  if (scope === "session" || scope.startsWith("session:")) return true;
-  return typeof args.session === "string";
+  return scope === "session" || scope.startsWith("session:") || typeof args.session === "string";
 };
-const scopedSession = (args: Record<string, unknown>) => {
-  const scope = typeof args.scope === "string" ? args.scope : "";
-  return scope.startsWith("session:") ? { ...args, session: scope.slice("session:".length) } : args;
-};
-/** Host archive plus the preserved current-session engine; routing never reaches the filesystem. */
+
+/** Product routing only: both destinations use the same native Fabric memory contract. */
 export function hybridMemoryProvider(
-  host: ManagedMemoryProvider,
-  local: ManagedMemoryProvider,
-): ManagedMemoryProvider {
-  const schemaCache = new Map<MemoryAction, Promise<Record<string, unknown>>>();
-  // Fabric's canonical action schema merged with the live local provider descriptor's
-  // exact-session properties; `source` stays optional because the host binds it.
-  const schema = (action: MemoryAction) => {
-    let cached = schemaCache.get(action);
-    if (!cached) {
-      cached = (async () => {
-        const fabric = fabricInputSchema(action);
-        const localDescriptor = await local.describe(action);
-        const localProperties = isSchema(localDescriptor?.inputSchema.properties)
-          ? (localDescriptor.inputSchema.properties as Record<string, unknown>)
-          : {};
-        const properties = {
-          source: { type: "string" },
-          scope: { type: "string" },
-          ...localProperties,
-          ...(isSchema(fabric.properties) ? (fabric.properties as Record<string, unknown>) : {}),
-        };
-        const required = requiredWithoutSource(fabric, properties);
-        return {
-          type: "object",
-          properties,
-          ...(required.length ? { required } : {}),
-          additionalProperties: false,
-        };
-      })();
-      schemaCache.set(action, cached);
-    }
-    return cached;
-  };
-  const descriptor = async (action: MemoryAction) => ({
-    name: action,
-    description:
-      "Exact memory recall. Source addresses target the bot's host archive; session scope targets this logical session.",
-    inputSchema: await schema(action),
-    risk: "read",
+  host: FabricProvider,
+  local: FabricProvider & { sourceId: string },
+  currentSession: () => string | undefined = () => undefined,
+): FabricProvider {
+  return createMemoryProvider({
+    defaultSession: (args) =>
+      routesLocal("expand", args, local.sourceId) ? currentSession() : undefined,
+    dispatch: (action, args, ctx) =>
+      (routesLocal(action, args, local.sourceId) ? local : host).invoke(action, args, ctx),
   });
-  return {
-    name: "memory",
-    description: "Authorized exact memory: this logical session and the host-authorized archive.",
-    list: async () => Promise.all(memoryActions.map(descriptor)),
-    describe: (name: string) =>
-      memoryActions.includes(name as MemoryAction)
-        ? descriptor(name as MemoryAction)
-        : Promise.resolve(undefined),
-    invoke(name, args, ctx) {
-      if (!memoryActions.includes(name as MemoryAction)) return host.invoke(name, args, ctx);
-      return routesLocal(name, args)
-        ? local.invoke(name, scopedSession(args), ctx)
-        : host.invoke(name, args, ctx);
-    },
-  };
 }
 
 /** Process-scoped: the supervisor supplies a fresh isolated worker, never the backend process. */
 export async function createManagedKit(options: ManagedKitOptions): Promise<ManagedKit> {
+  if (options.proxyTools.some((tool) => MANAGED_RESERVED_TOOL_NAMES.has(tool.name)))
+    throw new Error("Managed callback collides with a reserved Fabric or core tool");
   const installation = resolvePiKit();
   const scratch = await mkdtemp(join(options.scratchRoot ?? process.cwd(), ".rakazo-kit-"));
   const agentDir = join(scratch, "agent");
@@ -253,6 +152,18 @@ export async function createManagedKit(options: ManagedKitOptions): Promise<Mana
     options.getPlacement?.(),
   );
   const core = managedCoreTools(call);
+  // Implementation callbacks stay private; native providers expose their one canonical API.
+  const privateCapabilities = new Set([
+    "read_file",
+    "write_file",
+    "edit_file",
+    "list_files",
+    "shell",
+    "run_subagent",
+  ]);
+  const productTools = options.proxyTools.filter(
+    (tool) => !privateCapabilities.has(tool.name) && tool.connector?.id !== "mcp",
+  );
   const eventBus = createEventBus();
   const provider = (
     name: string,
@@ -276,39 +187,35 @@ export async function createManagedKit(options: ManagedKitOptions): Promise<Mana
     invoke,
     ...(prepareArguments ? { prepareArguments } : {}),
   });
-  const delegate = options.proxyTools.find((tool) => tool.name === "run_subagent");
-  const localMemory = managedMemoryProvider(() => runtime);
+  const localMemory = managedMemoryProvider(() => runtime, { stopped: () => paused || disposed });
   const providers = [
     options.hostMemory
       ? hybridMemoryProvider(
           managedHostMemoryProvider(options.hostMemory, () => paused || disposed),
           localMemory,
+          () => runtime?.session.sessionManager.getSessionId(),
         )
       : localMemory,
-    ...["schema", "state", "mesh", "mcp"].map((name) =>
+    createManagedMcpProvider({
+      tools: options.proxyTools,
+      execute: (tool, args, signal) => call(tool.name, args, signal, context),
+    }),
+    ...["schema", "state", "mesh"].map((name) =>
       provider(name, [], async () => {
         throw new Error("Native provider unavailable in managed execution");
       }),
     ),
-    provider(
-      "agents",
-      delegate
-        ? [
-            {
-              name: "run",
-              description:
-                "Delegate a scoped task through the backend subagent authority. No local process, model credentials, or widened computer scope.",
-              inputSchema: delegate.parameters as Record<string, unknown>,
-              risk: "agent",
-            },
-          ]
-        : [],
-      async (name, args, ctx) => {
-        if (name !== "run") throw new Error("Only scoped agents.run is available");
-        return call("run_subagent", args, ctx.signal, ctx.extensionContext);
-      },
-      (_name, args) => ({ name: "helper", ...args }),
-    ),
+    options.agents
+      ? createAgentsProvider(
+          createAgentServiceClient(options.agents, {
+            steer: true,
+            compact: true,
+            resume: true,
+          }),
+        )
+      : provider("agents", [], async () => {
+          throw new Error("Agent delegation is outside this participant's authority");
+        }),
     provider(
       "compact",
       [
@@ -400,8 +307,7 @@ export async function createManagedKit(options: ManagedKitOptions): Promise<Mana
       {
         name: "rakazo-managed",
         factory: (pi) => {
-          for (const tool of [...core, ...options.proxyTools, ...graph.tools])
-            pi.registerTool(tool);
+          for (const tool of [...core, ...productTools, ...graph.tools]) pi.registerTool(tool);
           publishProviders();
           pi.on("session_start", (_event, ctx) => {
             context = ctx;
@@ -534,7 +440,7 @@ export async function createManagedKit(options: ManagedKitOptions): Promise<Mana
     resourceLoader,
     tools: [],
     activeTools: ["fabric_exec"],
-    unavailable: ["ambient-plugins", "native-mcp", "native-node", "native-mesh"],
+    unavailable: ["ambient-plugins", "ambient-mcp", "native-node", "native-mesh"],
     async initialize(value) {
       runtime = value;
       context = runtime.session.extensionRunner.createContext();

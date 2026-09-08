@@ -7,6 +7,7 @@ export * from "./dispatched-work.js";
 export * from "./events.js";
 export * from "./external-conversations.js";
 export * from "./groups.js";
+export * from "./machines.js";
 export * from "./memory-config.js";
 export * from "./messages.js";
 export * from "./messaging.js";

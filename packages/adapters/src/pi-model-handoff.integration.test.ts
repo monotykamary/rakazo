@@ -6,6 +6,10 @@ import type { AgentProcessHost } from "./pi-rpc-protocol.js";
 import { createRpcHarness } from "./pi-rpc-test-emulator.js";
 import { AsyncChannel, readJsonFrames } from "./pi-rpc-transport.js";
 
+const children = (state: any): any[] =>
+  state?.agents?.records.map((entry: any) => entry.record) ?? [];
+const childRecord = (state: any, id: string) => children(state).find((child) => child.id === id);
+
 function observer() {
   const commands: Array<{ type: string; modelId?: string; level?: string }> = [];
   let failCompact = false;
@@ -101,7 +105,7 @@ describe("real managed RPC model handoffs", () => {
       expect(JSON.stringify(results)).toContain("agents.handoff");
       expect(JSON.stringify(results)).toContain("agents.spawn");
       expect(JSON.stringify(results)).toContain("agents.run");
-      expect(Object.keys(saved.participants ?? {})).toHaveLength(0);
+      expect(children(saved)).toHaveLength(0);
     } finally {
       await h.close();
     }
@@ -115,13 +119,14 @@ describe("real managed RPC model handoffs", () => {
     try {
       await h.run({
         tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+        executeTool: async () => ({ ok: true }),
         session: {
           save: async (value) => {
             saved = value;
           },
         },
       });
-      const child = Object.values(saved.participants)[0] as any;
+      const child = children(saved)[0] as any;
       let delivered = false;
       await expect(
         h.run({
@@ -141,7 +146,7 @@ describe("real managed RPC model handoffs", () => {
             await control.deliver({
               id: "resume",
               messageId: "resume",
-              participantId: child.participantId,
+              participantId: child.id,
               text: "Resume",
             });
           },
@@ -149,7 +154,7 @@ describe("real managed RPC model handoffs", () => {
       ).rejects.toThrow("Delegation is outside");
       expect(h.host.starts).toBe(3);
       expect(h.host.reaped).toBe(3);
-      expect(saved.participants[child.participantId].session).toEqual(child.session);
+      expect(childRecord(saved, child.id).checkpoint.session).toEqual(child.checkpoint.session);
     } finally {
       await h.close();
     }
@@ -576,6 +581,7 @@ describe("real managed RPC model handoffs", () => {
     try {
       await h.run({
         tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+        executeTool: async () => ({ ok: true }),
         resolveParticipantModel,
         session: {
           save: async (value) => {
@@ -583,8 +589,8 @@ describe("real managed RPC model handoffs", () => {
           },
         },
       });
-      const child = Object.values(saved.participants)[0] as any;
-      expect(child.session.modelSelection.effective.modelId).toBe("worker-one");
+      const child = children(saved)[0] as any;
+      expect(child.checkpoint.session.modelSelection.effective.modelId).toBe("worker-one");
       expect(h.host.reaped).toBe(2);
       modelId = "worker-two";
       protocol.commands.length = 0;
@@ -594,6 +600,7 @@ describe("real managed RPC model handoffs", () => {
         prompt: "",
         queueOnly: true,
         tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+        executeTool: async () => ({ ok: true }),
         resolveParticipantModel,
         session: {
           restore: saved,
@@ -607,13 +614,13 @@ describe("real managed RPC model handoffs", () => {
           await control.deliver({
             id: "resume-worker",
             messageId: "resume-worker",
-            participantId: child.participantId,
+            participantId: child.id,
             text: "Continue worker",
           });
         },
       });
-      expect(identities).toEqual([child.participantId, child.participantId]);
-      expect(saved.participants[child.participantId].session.modelSelection.effective.modelId).toBe(
+      expect(identities).toEqual([child.id, child.id]);
+      expect(childRecord(saved, child.id).checkpoint.session.modelSelection.effective.modelId).toBe(
         "worker-two",
       );
       expect(h.requests.at(-1)).toMatchObject({ model: "worker-two", reasoning_effort: "high" });
@@ -630,6 +637,7 @@ describe("real managed RPC model handoffs", () => {
         prompt: "",
         queueOnly: true,
         tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+        executeTool: async () => ({ ok: true }),
         resolveParticipantModel,
         session: {
           restore: saved,
@@ -643,13 +651,13 @@ describe("real managed RPC model handoffs", () => {
           await control.deliver({
             id: "reset-worker",
             messageId: "reset-worker",
-            participantId: child.participantId,
+            participantId: child.id,
             text: "Continue with bot model",
           });
         },
       });
-      expect(identities).toEqual([child.participantId, child.participantId, child.participantId]);
-      expect(saved.participants[child.participantId].session.modelSelection.effective).toEqual({
+      expect(identities).toEqual([child.id, child.id, child.id]);
+      expect(childRecord(saved, child.id).checkpoint.session.modelSelection.effective).toEqual({
         provider: h.request.model.provider,
         modelId: h.request.model.id,
         thinkingLevel: "off",

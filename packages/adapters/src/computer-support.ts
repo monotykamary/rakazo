@@ -79,6 +79,20 @@ export function teamBotWorkspaceDirectory(botId: string): string {
   return path.posix.join("bots", normalizeWorkspacePath(botId));
 }
 
+/**
+ * Supervised services and change reviews must stay inside the requesting bot's
+ * own area (or the explicitly shared area) of a team computer; on dedicated
+ * computers any non-escaping workspace-relative path is allowed.
+ */
+export function assertServiceWorkspaceCwd(scope: string, botId: string, cwd: string): void {
+  const normalized = normalizeWorkspacePath(cwd);
+  if (scope !== "team") return;
+  const own = teamBotWorkspaceDirectory(botId);
+  if (normalized === own || normalized.startsWith(own + "/")) return;
+  if (normalized === "shared" || normalized.startsWith("shared/")) return;
+  throw new Error("service cwd must be inside your own bot area or shared/");
+}
+
 export function resolveBotWorkspacePath(
   scope: ComputerMode,
   botId: string,

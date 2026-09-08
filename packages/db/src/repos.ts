@@ -495,9 +495,13 @@ export function createRepos(prisma: PrismaClient) {
     async setBotComputer(actor: Actor, botId: string, mode: ComputerMode): Promise<Bot> {
       const bot = await prisma.bot.findFirst({
         where: { id: botId, spaceId: actor.spaceId, userId: actor.userId, temporary: false },
-        include: { computer: true },
+        include: { thread: true, computer: true },
       });
       if (!bot?.computer) throw new IsolationError();
+      if (bot.computer.scope === mode) return mapBot(bot);
+      if (bot.computer.kind === "machine" || bot.computer.machineId !== null) {
+        throw new Error("Machine placements require verified relocation");
+      }
       const computer = await ensureComputerRecord(prisma, {
         mode,
         spaceId: actor.spaceId,
@@ -506,7 +510,7 @@ export function createRepos(prisma: PrismaClient) {
         kind: bot.computer.kind,
       });
       const updated = await prisma.bot.update({
-        where: { id: botId },
+        where: { id: botId, computerId: bot.computer.id },
         data: { computerId: computer.id },
         include: { thread: true, computer: true },
       });

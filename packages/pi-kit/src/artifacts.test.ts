@@ -47,13 +47,13 @@ describe("distributable kit artifacts", () => {
     expect(Object.keys(packed.dependencies ?? {})).toEqual([]);
     expect(packed.devDependencies["@earendil-works/pi-coding-agent"]).toBe("0.85.1");
   });
-  it("ships portable memory as a public host entry", () => {
+  it.each(["memory", "mcp", "agents"])("ships native %s as a public host entry", (name) => {
     const entry = manifest.packages.find((item) => item.name === "pi-fabric")!;
     const archive = fileURLToPath(new URL(`vendor/pi-kit/${entry.filename}`, root));
     const packed = JSON.parse(
       execFileSync("tar", ["-xOzf", archive, "package/package.json"], { encoding: "utf8" }),
     );
-    const memory = packed.exports["./memory"];
+    const memory = packed.exports[`./${name}`];
     expect(memory.import).toMatch(/^\.\/dist\/.+\.js$/);
     expect(memory.types).toMatch(/^\.\/dist\/.+\.d\.ts$/);
     const files = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" }).split("\n");

@@ -213,6 +213,13 @@ describe("MCP connector session cache", () => {
       botId: "bot-1",
       signal: new AbortController().signal,
     } as never;
+    const full = await connector.discoverTools(context, { catalog: "full" });
+    expect(full).toHaveLength(30);
+    expect(full[29]).toMatchObject({
+      inputSchema: state.tools[29]!.inputSchema,
+      route: { connectorId: "mcp", resourceId: "server-1", toolName: "tool_29" },
+    });
+    expect(full.every((tool) => Boolean(tool.route?.resourceId))).toBe(true);
     const [search, load, execute] = await connector.discoverTools(context);
     const collect = async (call: Parameters<McpConnector["execute"]>[0]) => {
       const events: unknown[] = [];
@@ -343,6 +350,20 @@ describe("MCP connector session cache", () => {
     });
     expect(await collect(resolved!.call)).toMatchObject([{ type: "result" }]);
     expect(state.calls).toEqual(["tool_29"]);
+    const rawCall = {
+      tool: full[29]!.name,
+      args: { value: "raw" },
+      executionId: "raw",
+      route: full[29]!.route,
+    };
+    expect(await collect(rawCall)).toMatchObject([{ type: "result" }]);
+    prisma.botMcpServer.findMany.mockResolvedValue([]);
+    prisma.botMcpServer.findFirst.mockResolvedValue(null);
+    expect(await connector.discoverTools(context, { catalog: "full" })).toEqual([]);
+    expect(await collect(rawCall)).toEqual([
+      { type: "error", message: "MCP tool is not assigned to this bot" },
+    ]);
+    expect(state.calls).toEqual(["tool_29", "tool_29"]);
     await connector.close();
   });
 

@@ -763,6 +763,73 @@ export const builtinAgentTools: ConnectorTool[] = [
     },
   },
   {
+    name: "discover_projects",
+    description:
+      "List git repositories (including worktrees) in your authorized workspace folders with a bounded, read-only scan. Remote URLs are credential-sanitized; only Git metadata is read. Coverage can be truncated; use directory to explore a narrower subtree incrementally. Bind every piece of work explicitly with a returned path (cwd or project_path); you have no persistent working directory. With reference, resolves one project deterministically or reports ambiguity to clarify with the user.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        reference: {
+          type: "string",
+          description: "Optional project path, name, or remote URL to resolve in the same call.",
+        },
+        directory: {
+          type: "string",
+          description:
+            "Narrow a partial scan to this workspace-relative directory inside your bot area or shared area.",
+        },
+      },
+    },
+  },
+  {
+    name: "computer_services",
+    description:
+      "Manage supervised project services on your computer. list shows running services and their declared ports. declare starts a long-lived service from an exact argv (no shell), a workspace-relative cwd inside your own bot area or shared/, and the loopback ports it listens on; the user must have explicitly asked for this service. stop, restart, and remove control a declared service. changes returns a read-only git diff for review evidence. Only declare services the user requested; never start one as a side effect of setup.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list", "declare", "stop", "restart", "remove", "changes"],
+        },
+        name: {
+          type: "string",
+          description: "Service slug: lowercase letters, digits, hyphens, at most 64 chars.",
+        },
+        argv: {
+          type: "array",
+          items: { type: "string" },
+          description: "declare: exact command argv (1-32 entries); never a shell line.",
+        },
+        cwd: {
+          type: "string",
+          description:
+            "declare/changes: workspace-relative project directory inside your bot area or shared/.",
+        },
+        env: {
+          type: "object",
+          description: "declare: extra environment variables for the service.",
+          additionalProperties: { type: "string" },
+        },
+        ports: {
+          type: "array",
+          items: { type: "number" },
+          description: "declare: loopback ports inside the computer the service listens on.",
+        },
+        keep_alive: {
+          type: "boolean",
+          description: "declare: keep the computer awake while this service runs.",
+        },
+        paths: {
+          type: "array",
+          items: { type: "string" },
+          description: "changes: optional pathspecs to narrow the diff.",
+        },
+      },
+      required: ["action"],
+    },
+  },
+  {
     name: "dispatch_work",
     description:
       "Queue a complete one-off project task in a hidden temporary worker and return its durable receipt immediately. Work survives this conversation ending and backend restart. Results and failures return here automatically. Use separate project/worktree paths for independent work; overlapping writes are queued. This does not create a reusable bot or grant new computer access.",

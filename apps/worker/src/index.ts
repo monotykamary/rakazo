@@ -9,6 +9,9 @@ import {
   createCloudAgentConnection,
   createConnectorStack,
   createJobReconciler,
+  createMachineFetch,
+  createMachineRouting,
+  createMachinesService,
   createMessagingContextLoader,
   createPostgresReconciliationLeadership,
   createRunExecutor,
@@ -42,7 +45,13 @@ import {
   SupervisorAgentProcessHost,
 } from "@rakazo/adapters";
 import { resolveEncryptionKey, resolveSupervisorToken } from "@rakazo/core";
-import { createDb, createThreadEvents } from "@rakazo/db";
+import {
+  createDb,
+  createPrismaMachineStore,
+  createThreadEvents,
+  machineScopeFromTunnelRequest,
+  sweepExpiredMachineCommands,
+} from "@rakazo/db";
 import { SERVICE_NAMES } from "@rakazo/logging";
 import { createRootLogger } from "@rakazo/logging/axiom";
 import { MarkdownMemoryStore } from "@rakazo/memory";
@@ -61,22 +70,12 @@ async function main() {
   const events = createThreadEvents(prisma, realtime, {
     runSecretWriter: createRunSecretWriter(secrets),
   });
-  const runtime =
-    process.env.AGENT_RUNTIME === "scripted"
-      ? new ScriptedAgentRuntime()
-      : new PiAgentRuntime({
-          host: process.env.SANDBOX_SUPERVISOR_TOKEN
-            ? new SupervisorAgentProcessHost({
-                baseUrl: process.env.SANDBOX_SUPERVISOR_URL ?? "http://127.0.0.1:7091",
-                token: resolveSupervisorToken(process.env),
-              })
-            : undefined,
-        });
+  const machines = createMachinesService({ store: createPrismaMachineStore(prisma) });
   const dataDir = process.env.DATA_DIR ?? "./data";
   // Same resolver the API uses, so both processes agree on provider, model and key.
   const { key: deploymentModelKey } = resolveDeploymentModel();
   const sandboxProvider = resolveSandboxProvider(process.env);
-  const sandbox = createRunSandbox(sandboxProvider, {
+  const fallbackSandbox = createRunSandbox(sandboxProvider, {
     supervisorUrl: process.env.SANDBOX_SUPERVISOR_URL ?? "http://127.0.0.1:7091",
     supervisorToken: sandboxProvider === "docker" ? resolveSupervisorToken(process.env) : undefined,
     e2bApiKey: process.env.E2B_API_KEY,
@@ -88,6 +87,25 @@ async function main() {
     dataDir,
     prisma,
   });
+  const machineRouting = createMachineRouting({
+    prisma,
+    machineFetch: (machineId) =>
+      createMachineFetch(machines, machineId, {
+        scopeResolver: (info) => machineScopeFromTunnelRequest(prisma, { ...info, machineId }),
+      }),
+    fallbackSandbox,
+    fallbackHost: process.env.SANDBOX_SUPERVISOR_TOKEN
+      ? new SupervisorAgentProcessHost({
+          baseUrl: process.env.SANDBOX_SUPERVISOR_URL ?? "http://127.0.0.1:7091",
+          token: resolveSupervisorToken(process.env),
+        })
+      : undefined,
+  });
+  const sandbox = machineRouting.sandbox;
+  const runtime =
+    process.env.AGENT_RUNTIME === "scripted"
+      ? new ScriptedAgentRuntime()
+      : new PiAgentRuntime({ host: machineRouting.host });
   const mcpOAuth = new McpOAuthBroker(prisma, secrets);
   const mcp = new McpConnector(
     prisma,
@@ -185,7 +203,10 @@ async function main() {
     jobs,
     events,
     leadership: createPostgresReconciliationLeadership(pool),
-    reconcileCloudAgents: () => reconcileCloudAgents({ prisma, jobs, cloudAgent }),
+    reconcileCloudAgents: async () => {
+      await sweepExpiredMachineCommands(prisma);
+      await reconcileCloudAgents({ prisma, jobs, cloudAgent });
+    },
   });
   reconciler.start();
 

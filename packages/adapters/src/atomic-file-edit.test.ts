@@ -69,12 +69,7 @@ function bridgeFixture(path: string, override?: AgentRunRequest["executeTool"]) 
   };
   const authority = new RunAuthority(request, new AbortController().signal);
   const core = (run: AgentRunRequest) => {
-    const bridge = new ToolBridge(
-      run,
-      authority,
-      (event) => events.push(event),
-      async () => undefined,
-    );
+    const bridge = new ToolBridge(run, authority, (event) => events.push(event));
     const proxy: ToolDefinition = {
       name: "edit_file",
       label: "edit",
@@ -352,6 +347,8 @@ describe("authorized atomic file edit", () => {
       "edit_file",
       expect.objectContaining({ path: "worktrees/child/source.txt" }),
       "effect",
+      undefined,
+      undefined,
     );
     expect(() => placed("edit_file", { path: "../escape" }, "effect")).toThrow("placement");
   });

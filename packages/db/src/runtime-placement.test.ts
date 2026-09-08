@@ -44,7 +44,7 @@ describe("server-owned queue placement", () => {
       (await captureQueuePlacement(tx as unknown as Prisma.TransactionClient, scope)).projectPath,
     ).toBe("projects/other");
   });
-  it("does not manufacture a cwd when no project was authorized", async () => {
+  it("resolves a fresh bot's unbound queue rows to the authorized root computer", async () => {
     const tx = {
       bot: {
         findFirst: vi.fn().mockResolvedValue({ computer: { id: "computer", homeKey: "home" } }),
@@ -52,10 +52,59 @@ describe("server-owned queue placement", () => {
       runtimePlacement: { findUnique: vi.fn().mockResolvedValue(null) },
     };
     const captured = await captureQueuePlacement(tx as unknown as Prisma.TransactionClient, scope);
-    expect(captured).toMatchObject({ kind: "unbound", projectPath: null, worktreePath: null });
+    expect(captured).toMatchObject({
+      kind: "unbound",
+      computerId: "computer",
+      projectPath: null,
+      worktreePath: null,
+    });
     await expect(
       assertQueuePlacementComputer(tx as unknown as PrismaClient, scope, captured),
-    ).rejects.toThrow("no validated project");
+    ).resolves.toBeUndefined();
+  });
+
+  it("holds queued rows when the bot's computer changed before dispatch", async () => {
+    const tx = {
+      bot: {
+        findFirst: vi.fn().mockResolvedValue({ computer: { id: "computer", homeKey: "home" } }),
+      },
+      runtimePlacement: { findUnique: vi.fn().mockResolvedValue(null) },
+    };
+    const captured = await captureQueuePlacement(tx as unknown as Prisma.TransactionClient, scope);
+    const prisma = {
+      bot: { findFirst: vi.fn().mockResolvedValue(null) },
+    } as unknown as PrismaClient;
+    await expect(assertQueuePlacementComputer(prisma, scope, captured)).rejects.toThrow(
+      "computer changed",
+    );
+  });
+
+  it("dispatches a computerless queued row only while the bot still has no computer", async () => {
+    const prisma = {
+      bot: { findFirst: vi.fn().mockResolvedValue({ id: "bot" }) },
+    } as unknown as PrismaClient;
+    await expect(
+      assertQueuePlacementComputer(prisma, scope, {
+        version: 1,
+        kind: "none",
+        computerId: null,
+        homeKey: null,
+        projectPath: null,
+        worktreePath: null,
+        revision: 0,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertQueuePlacementComputer(prisma, scope, {
+        version: 1,
+        kind: "unbound",
+        computerId: null,
+        homeKey: null,
+        projectPath: null,
+        worktreePath: null,
+        revision: 0,
+      }),
+    ).resolves.toBeUndefined();
   });
   it("requires provider path authorization and a live lease before setting placement", async () => {
     const tx = {

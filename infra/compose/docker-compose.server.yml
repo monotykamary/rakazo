@@ -1,0 +1,29 @@
+# Overlay for docker-compose.images.yml; only Caddy publishes public listeners.
+services:
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2@sha256:df7f1c2fb114453b951de51a98efc010db1655a92c2e86be6706714e2417a78d}
+    restart: unless-stopped
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    pids_limit: 128
+    mem_limit: 256m
+    environment:
+      RAKAZO_HOST: ${RAKAZO_HOST:?Set RAKAZO_HOST}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    tmpfs: [/tmp]
+    networks: [app]
+    depends_on:
+      web:
+        condition: service_started
+volumes:
+  caddydata:
+  caddyconfig:

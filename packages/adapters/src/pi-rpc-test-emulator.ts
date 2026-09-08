@@ -15,6 +15,14 @@ export async function createRpcHarness(
     tool?: { name: string; args: Record<string, unknown> };
   } = {},
 ) {
+  const nativeRef: Record<string, string> = {
+    read_file: "pi.read",
+    write_file: "pi.write",
+    edit_file: "pi.edit",
+    list_files: "pi.ls",
+    shell: "pi.bash",
+    run_subagent: "agents.run",
+  };
   const requests: Array<Record<string, any>> = [];
   const server = createServer(async (req, res) => {
     let raw = "";
@@ -57,7 +65,7 @@ export async function createRpcHarness(
                 options.tool.name === "fabric_exec"
                   ? options.tool.args
                   : {
-                      code: `return await extensions.${options.tool.name}(${JSON.stringify(options.tool.args)});`,
+                      code: `return await tools.call({ref:${JSON.stringify(nativeRef[options.tool.name] ?? `extensions.${options.tool.name}`)},args:${JSON.stringify(options.tool.args)}});`,
                     },
               ),
             },

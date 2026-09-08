@@ -13,6 +13,8 @@ export interface AdapterContext {
   userId: string;
   botId?: string;
   runId?: string;
+  /** Captured backend execution lease; never supplied by a model or client. */
+  runLease?: { owner: string; fence: number };
   /** Opaque fence for releasing a graphical screen without tearing down its replacement. */
   screenLeaseId?: string;
   /** When releasing a screen after cancel, also stop orphaned browser work on that screen. */
@@ -177,6 +179,8 @@ export interface SandboxCapabilities {
 }
 
 export interface ConnectorTool {
+  /** Authoritative discovery provenance; omitted for non-MCP product connectors. */
+  protocol?: "mcp";
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
@@ -399,7 +403,7 @@ export interface AgentRunRequest {
   /** Managed execution state is separate from product history and takeover checkpoints. */
   session?: { restore?: unknown; save(state: unknown): Promise<void> };
   /** Revalidate the live run lease before effects and model requests. */
-  assertActive?: (boundary?: { effects: boolean }) => Promise<void | "pause">;
+  assertActive?: (boundary?: { effects: boolean; checkpoint?: boolean }) => Promise<void | "pause">;
   /** Backend-owned queue; callbacks must persist reservations before returning delivery. */
   runtimeBoundary?: (
     boundary: "before_model" | "settled" | "idle" | "paused",
@@ -432,6 +436,8 @@ export interface AgentRunRequest {
     args: Record<string, unknown>,
     executionId: string,
     route?: ConnectorRoute,
+    /** Participant cancellation narrows the root run signal; it never grants authority. */
+    signal?: AbortSignal,
   ) => Promise<unknown>;
   /** Atomically claim durable user steering at the runtime's next safe turn boundary. */
   claimSteering?: (seenIds: string[]) => Promise<AgentSteeringMessage[]>;

@@ -15,6 +15,25 @@ import {
 } from "./action-approval.js";
 
 describe("toolRequiresApproval", () => {
+  it("requires explicit service mutation approval but lets discovery and inspection stay read-only", () => {
+    for (const action of ["declare", "stop", "restart", "remove", undefined]) {
+      expect(toolRequiresApproval("computer_services", false, { action })).toBe(true);
+      expect(toolRequiresExplicitApproval("computer_services", { action })).toBe(true);
+      expect(
+        unattendedTriggerToolRequiresApproval("webhook", "computer_services", false, { action }),
+      ).toBe(true);
+    }
+    for (const action of ["list", "changes"]) {
+      expect(toolRequiresApproval("computer_services", false, { action })).toBe(false);
+      expect(toolRequiresExplicitApproval("computer_services", { action })).toBe(false);
+      expect(
+        unattendedTriggerToolRequiresApproval("webhook", "computer_services", false, { action }),
+      ).toBe(false);
+    }
+    expect(unattendedTriggerToolRequiresApproval("webhook", "discover_projects", false)).toBe(
+      false,
+    );
+  });
   it("requires approval for consequential builtins and destination writes", () => {
     expect(toolRequiresApproval("destination.write", false)).toBe(true);
     expect(toolRequiresApproval("destination.write", true)).toBe(true);

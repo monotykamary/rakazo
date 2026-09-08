@@ -49,7 +49,10 @@ export async function runComputerReplay(
     id,
     name: "fabric_exec",
     arguments: {
-      code: `return await extensions.${name}(${JSON.stringify(args)});`,
+      code:
+        name === "read_file"
+          ? `return {content: await pi.read(${JSON.stringify(args)})};`
+          : `return await extensions.${name}(${JSON.stringify(args)});`,
       resultFormat: "json",
     },
   });
@@ -200,6 +203,10 @@ function lastToolResult(
         ? content.map((part: { text?: string }) => part.text ?? "").join("")
         : "";
   const envelope = JSON.parse(text) as Record<string, unknown>;
+  if (expectedId === "read-csv") {
+    assert.equal(typeof envelope.content, "string", "Native read must return the file text");
+    return envelope;
+  }
   assert.equal(envelope.isError, false, `Tool ${expectedId} failed: ${text}`);
   assert.equal(typeof envelope.text, "string", "Fabric must preserve the tool text");
   return JSON.parse(envelope.text as string) as Record<string, unknown>;

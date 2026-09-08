@@ -14,6 +14,64 @@ import {
 } from "./installed-connectors.js";
 
 describe("OpenAPI connector import", () => {
+  it.each(["lookup", "read_file", "browser_navigate", "fabric_exec"])(
+    "isolates native MCP callback %s without changing its authorized backend route",
+    async (toolName) => {
+      const install = {
+        id: "mcp-install",
+        kind: "mcp",
+        name: "Fixture MCP",
+        source: "https://connectors.example.test/mcp",
+        secretId: null,
+        createdAt: new Date(0),
+        config: { preset: "custom", auth: { type: "none" } },
+      };
+      const fetch = vi.fn(async (_input: unknown, init?: RequestInit) => {
+        if (init?.method !== "POST") return new Response(null, { status: 405 });
+        const message = JSON.parse(String(init.body));
+        if (message.id === undefined) return new Response(null, { status: 204 });
+        const result =
+          message.method === "initialize"
+            ? {
+                protocolVersion: "2025-11-25",
+                capabilities: { tools: {} },
+                serverInfo: { name: "fixture", version: "1" },
+              }
+            : {
+                tools: [
+                  {
+                    name: toolName,
+                    description: "Fixture lookup",
+                    inputSchema: { type: "object", properties: {} },
+                  },
+                ],
+              };
+        return Response.json({ jsonrpc: "2.0", id: message.id, result });
+      });
+      const prisma = { capabilityInstall: { findMany: vi.fn().mockResolvedValue([install]) } };
+      const provider = new InstalledConnectorProvider(prisma as never, {} as never, {
+        fetch: fetch as never,
+        resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }],
+      });
+      const tools = await provider.discoverTools(
+        {
+          spaceId: "space",
+          userId: "user",
+          operationId: "discovery",
+          traceId: "trace",
+          signal: new AbortController().signal,
+        },
+        { catalog: "full" },
+      );
+      expect(tools).toHaveLength(1);
+      expect(tools[0]).toMatchObject({
+        name: `installed__mcp-install__${toolName}`,
+        protocol: "mcp",
+        route: { connectorId: "installed", resourceId: "mcp-install", toolName },
+      });
+      expect(fetch).toHaveBeenCalled();
+    },
+  );
   it("uses the bounded catalog for a real large installed OpenAPI source", async () => {
     const install = {
       id: "api-1",
@@ -47,6 +105,13 @@ describe("OpenAPI connector import", () => {
       signal: new AbortController().signal,
     } as never;
 
+    const full = await provider.discoverTools(context, { catalog: "full" });
+    expect(full).toHaveLength(21);
+    expect(full.every((tool) => tool.protocol === undefined)).toBe(true);
+    expect(full[20]).toMatchObject({
+      inputSchema: install.config.operations[20]!.inputSchema,
+      route: { connectorId: "installed", resourceId: "api-1", toolName: "operation_20" },
+    });
     const [search, load, execute] = await provider.discoverTools(context);
 
     expect([search!.name, load!.name, execute!.name]).toEqual([

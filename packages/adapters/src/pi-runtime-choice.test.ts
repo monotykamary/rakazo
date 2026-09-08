@@ -59,7 +59,6 @@ describe("Pi choice asks", () => {
       input,
       new RunAuthority(input, new AbortController().signal),
       (event) => events.push(event),
-      async () => undefined,
     );
     try {
       await expect(async () =>

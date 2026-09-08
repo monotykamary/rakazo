@@ -595,13 +595,16 @@ export class ConnectorRegistry implements ConnectorProvider {
     };
   }
 
-  async discoverTools(context: AdapterContext): Promise<ConnectorTool[]> {
+  async discoverTools(
+    context: AdapterContext,
+    options?: { catalog?: "full" },
+  ): Promise<ConnectorTool[]> {
     const discovered: ConnectorTool[] = [];
     const used = new Set<string>();
     const providerTools = await Promise.all(
       [...this.providers].map(async ([connectorId, provider]) => {
         try {
-          return [connectorId, await provider.discoverTools(context)] as const;
+          return [connectorId, await provider.discoverTools(context, options)] as const;
         } catch (error) {
           getLogger().error("connector discovery failed", sanitizeComposioError(error), {
             "connector.id": connectorId,

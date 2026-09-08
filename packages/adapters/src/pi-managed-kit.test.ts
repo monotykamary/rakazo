@@ -11,9 +11,15 @@ import {
   SettingsManager,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import {
+  AgentService,
+  type AgentServiceDispatcher,
+  createAgentServiceHandler,
+} from "pi-fabric/agents";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { safeSnapshotPath } from "./pi-managed-fovea.js";
 import { createManagedKit, type ManagedKit } from "./pi-managed-kit.js";
+import type { ManagedProxyTool } from "./pi-managed-mcp.js";
 import { createBrokerCall, managedCoreTools, textResult } from "./pi-managed-tools.js";
 
 // A coding harness may itself be a scoped Fabric child. Do not inherit its tool restrictions
@@ -27,6 +33,12 @@ const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
+it("rejects callbacks that replace the Fabric execution tool before initializing the kit", async () => {
+  await expect(
+    harness([proxy("fabric_exec", async () => textResult("unexpected"))]),
+  ).rejects.toThrow("reserved");
+});
+
 const model: Model<Api> = {
   id: "offline",
   name: "offline",
@@ -51,9 +63,10 @@ const proxy = (
   execute,
 });
 async function harness(
-  proxies: ToolDefinition[],
+  proxies: ManagedProxyTool[],
   extra: {
     restore?: unknown;
+    agents?: AgentServiceDispatcher;
     manager?: SessionManager;
     now?: () => number;
     getPlacement?: () => { cwd: string; worktreeId?: string };
@@ -72,6 +85,7 @@ async function harness(
   kit = await createManagedKit({
     instructions: "Use Fabric through authorized tools only.",
     proxyTools: proxies,
+    agents: extra.agents,
     scratchRoot: root,
     activity,
     checkpoint,
@@ -149,15 +163,22 @@ describe("managed Pi kit", () => {
         .handler("reset", runtime.session.extensionRunner.createContext() as never),
     ).rejects.toThrow("Rakazo model settings");
   }, 60000);
-  it("captures all core operations in real Fabric and delegates only through authorized proxies", async () => {
+  it("captures canonical tools and runs native agents through the authorized port", async () => {
     const read = vi.fn(async () => textResult(JSON.stringify({ content: "authorized source" })));
     const write = vi.fn(async () => textResult(JSON.stringify({ ok: true })));
-    const delegate = vi.fn(async () => textResult("scoped child complete"));
-    const { exec, runtime, activity } = await harness([
-      proxy("read_file", read),
-      proxy("write_file", write, { path: Type.String(), content: Type.String() }),
-      proxy("run_subagent", delegate, { name: Type.String(), task: Type.String() }),
-    ]);
+    const delegate = vi.fn(async () => ({
+      status: "completed" as const,
+      text: "scoped child complete",
+    }));
+    const service = new AgentService({ rootId: "root", port: { execute: delegate } });
+    cleanups.push(() => service.close());
+    const { exec, runtime, activity } = await harness(
+      [
+        proxy("read_file", read),
+        proxy("write_file", write, { path: Type.String(), content: Type.String() }),
+      ],
+      { agents: createAgentServiceHandler(service, "root") },
+    );
     expect(runtime.session.agent.state.tools.map((tool) => tool.name)).toEqual(["fabric_exec"]);
     const result = await exec(
       'const read = await pi.read("notes.txt"); await pi.write("out.txt", read); const child = await agents.run({task:"review"}); return {read, child};',
@@ -176,6 +197,53 @@ describe("managed Pi kit", () => {
     expect(activity).toHaveBeenCalled();
     const denied = await exec('return await tools.call({ref:"schema.commit", args:{}});');
     expect(JSON.stringify(denied)).toMatch(/unknown|not found|unavailable/i);
+  }, 60000);
+
+  it("keeps private implementation callbacks out of discovery and resists tool reactivation", async () => {
+    const denied = vi.fn(async () => textResult("must not execute"));
+    const { kit, exec, runtime } = await harness(
+      ["read_file", "write_file", "edit_file", "list_files", "shell", "run_subagent"].map((name) =>
+        proxy(name, denied),
+      ),
+    );
+    const result = await exec(`
+      const aliases = ["read_file", "write_file", "edit_file", "list_files", "shell", "run_subagent"];
+      const exposed = [];
+      for (const name of aliases) {
+        try { await tools.describe({ref: "extensions." + name}); exposed.push(name); } catch {}
+      }
+      if (exposed.length) throw new Error("Duplicate callbacks: " + exposed.join(","));
+      return "PRIVATE_CALLBACKS_HIDDEN";
+    `);
+    expect(JSON.stringify(result)).toContain("PRIVATE_CALLBACKS_HIDDEN");
+    runtime.session.setActiveToolsByName(["read", "fabric_exec"]);
+    await kit.beforeModel();
+    expect(runtime.session.agent.state.tools.map((tool) => tool.name)).toEqual(["fabric_exec"]);
+    expect(denied).not.toHaveBeenCalled();
+  }, 60000);
+
+  it("discovers and invokes a large authorized MCP catalog through native Fabric only", async () => {
+    const execute = vi.fn(async (_id: string, _args: unknown) =>
+      textResult(JSON.stringify({ answer: "offline MCP" })),
+    );
+    const tools: ManagedProxyTool[] = Array.from({ length: 24 }, (_, index) => ({
+      ...proxy(`mcp__fixture__tool_${index}`, execute, { value: Type.String() }),
+      connector: { id: "mcp", resourceId: "fixture-source", toolName: `tool_${index}` },
+    }));
+    const { exec, runtime } = await harness(tools);
+    const result = await exec(`
+      const catalog = await tools.list({provider:"mcp", limit:50});
+      if (catalog.length !== 24) throw new Error("Incomplete native MCP catalog");
+      const target = catalog.find(item => item.ref.endsWith(".tool_23"));
+      if (!target) throw new Error("Missing native tool");
+      const duplicates = await tools.list({provider:"extensions", query:"mcp__", limit:50});
+      if (duplicates.length) throw new Error("Duplicate MCP aliases");
+      return await tools.call({ref:target.ref, args:{value:"hello"}});
+    `);
+    expect(JSON.stringify(result)).toContain("offline MCP");
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute.mock.calls[0]?.[1]).toEqual({ value: "hello" });
+    expect(runtime.session.agent.state.tools.map((tool) => tool.name)).toEqual(["fabric_exec"]);
   }, 60000);
 
   it("acknowledges manual compaction only after durable intent and actual deterministic completion", async () => {

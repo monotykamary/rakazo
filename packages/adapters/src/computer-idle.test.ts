@@ -64,6 +64,31 @@ describe("sandbox idle", () => {
     expect(harness.computer.id).not.toBe(harness.computer.providerRef);
   });
 
+  it("does not suspend a computer while an explicitly kept service is running", async () => {
+    const harness = idleHarness({ keptServiceRunning: true });
+
+    await sleepComputerIfIdle(harness.deps, harness.computer.id);
+
+    expect(harness.home.commit).not.toHaveBeenCalled();
+    expect(harness.sandbox.stop).not.toHaveBeenCalled();
+    expect(harness.jobs.enqueue).toHaveBeenCalledOnce();
+  });
+
+  it("suspends normally when the service runtime reports nothing kept", async () => {
+    const harness = idleHarness();
+    (
+      harness.sandbox as unknown as {
+        services: { list: () => Promise<{ supported: boolean; services: unknown[] }> };
+      }
+    ).services = {
+      list: async () => ({ supported: true, services: [] }),
+    };
+
+    await sleepComputerIfIdle(harness.deps, harness.computer.id);
+
+    expect(harness.sandbox.stop).toHaveBeenCalledOnce();
+  });
+
   it("fails closed when the provider cannot inspect background work", async () => {
     const harness = idleHarness({ backgroundWorkProbeCode: 2 });
 
@@ -456,6 +481,7 @@ function idleHarness(
     backgroundWorkProbeFailed?: boolean;
     exportError?: Error;
     providerBackgroundWorkStatus?: "active" | "idle" | "unknown";
+    keptServiceRunning?: boolean;
   } = {},
 ) {
   const backgroundWorkProbeCodes = [...(options.backgroundWorkProbeCodes ?? [])];
@@ -500,6 +526,25 @@ function idleHarness(
     },
   };
   const sandbox = {
+    ...(options.keptServiceRunning
+      ? {
+          services: {
+            list: vi.fn().mockResolvedValue({
+              supported: true,
+              services: [
+                {
+                  name: "web",
+                  status: "running",
+                  pid: 42,
+                  ports: [3000],
+                  keepAlive: true,
+                  cwd: "/home/rakazo/app",
+                },
+              ],
+            }),
+          },
+        }
+      : {}),
     execute: vi.fn(async function* () {
       const code = backgroundWorkProbeCodes.shift() ?? options.backgroundWorkProbeCode ?? 1;
       if (code === 1 && !options.backgroundWorkProbeFailed) {

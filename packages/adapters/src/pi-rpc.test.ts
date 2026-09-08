@@ -41,7 +41,7 @@ async function emulator(options: { quiet?: boolean; toolArgs?: Record<string, un
             function: {
               name: input.tools[0].function.name,
               arguments: JSON.stringify({
-                code: `return await extensions.read_file(${JSON.stringify(options.toolArgs ?? { path: "notes.txt" })});`,
+                code: `return await pi.read(${JSON.stringify(options.toolArgs ?? { path: "notes.txt" })});`,
               }),
             },
           },
@@ -131,6 +131,7 @@ describe("managed Pi RPC", () => {
       { path: "notes.txt" },
       expect.stringContaining("test-run:"),
       undefined,
+      expect.any(AbortSignal),
     ]);
     expect(
       events
@@ -248,12 +249,7 @@ describe("managed Pi RPC", () => {
       return approvalPausedToolResult();
     };
     const authority = new RunAuthority(input, new AbortController().signal);
-    const bridge = new ToolBridge(
-      input,
-      authority,
-      () => undefined,
-      async () => undefined,
-    );
+    const bridge = new ToolBridge(input, authority, () => undefined);
     const results = await Promise.allSettled([
       bridge.invoke({
         handle: bridge.catalog[0]!.handle,

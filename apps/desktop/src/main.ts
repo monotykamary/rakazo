@@ -606,7 +606,7 @@ function installApplicationMenu() {
   const stopStack: Electron.MenuItemConstructorOptions = {
     id: "stop-local-stack",
     label: "Stop Local Stack",
-    // The stack keeps running after quit (bots are always on); this is the explicit off switch.
+    // Quitting leaves local containers running, but sleeping the host pauses them.
     click: () => {
       if (currentSetup?.mode === "new") void localStack.stop();
     },

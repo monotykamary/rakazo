@@ -97,20 +97,25 @@ export async function setRuntimePlacement(
   });
 }
 
-/** A queued project may differ from the live conversation's project, but never from its authorized computer. */
+/**
+ * A queued row may differ from the live conversation's project, but never from its
+ * authorized computer. An unbound placement captured with a computer is the authorized
+ * root-workspace binding: queued work resolves there at dispatch without a manual project
+ * pick. A placement whose computer changed is held — explicit rebinding only.
+ */
 export async function assertQueuePlacementComputer(
   prisma: PrismaClient,
   scope: Scope,
   placement: QueuePlacement,
 ): Promise<void> {
-  if (placement.kind === "unbound")
-    throw new Error("Queued intent has no validated project placement");
+  const computerId = placement.computerId;
   const bot = await prisma.bot.findFirst({
     where: {
       id: scope.botId,
       spaceId: scope.spaceId,
       archivedAt: null,
-      computerId: placement.computerId,
+      // A row without a computer only ever dispatches while the bot still has none.
+      ...(computerId ? { computerId } : { computerId: null }),
       ...(placement.homeKey ? { computer: { homeKey: placement.homeKey } } : {}),
     },
     select: { id: true },

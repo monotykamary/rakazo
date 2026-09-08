@@ -189,6 +189,7 @@ model Space {
   botSecrets BotSecret[]
   externalConversations       ExternalConversation[]
   agentSecrets                AgentSecret[]
+  machines                    Machine[]
 
   @@unique([id, organizationId])
   @@index([organizationId, createdAt])
@@ -991,8 +992,11 @@ model Computer {
   updatedAt               DateTime                 @updatedAt
   bots                    Bot[]
   executionLeases         ComputerExecutionLease[]
+  machineId               String?
+  machine                 Machine?                 @relation(fields: [machineId], references: [id], onDelete: SetNull)
 
   @@index([spaceId, scope])
+  @@index([machineId])
   @@map("computers")
 }
 
@@ -1342,6 +1346,67 @@ model ExternalMessage {
   @@unique([externalConversationId, providerEventId])
   @@index([status, nextAttemptAt])
   @@map("external_messages")
+}
+
+/// A user-owned always-on computer (laptop/server) that runs bots for its space.
+/// Credentials are stored hashed; pairing codes are single-use and expire.
+model Machine {
+  id              String    @id @default(cuid())
+  spaceId         String
+  space           Space     @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  userId          String
+  name            String
+  /// pending | paired | revoked
+  status          String    @default("pending")
+  pairingCodeHash String?
+  pairingExpiresAt DateTime?
+  credentialHash  String?
+  lastSeenAt      DateTime?
+  version         String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  commands        MachineCommand[]
+  computers       Computer[]
+
+  @@index([spaceId, userId, updatedAt])
+  @@index([pairingCodeHash])
+  @@index([credentialHash])
+  @@map("machines")
+}
+
+/// Durable reverse-supervisor tunnel mailbox. The server enqueues exactly one
+/// command per tunnel HTTP request; the machine runner claims each at most once
+/// and posts a single result. Timed-out callers tombstone their command.
+model MachineCommand {
+  id                  String    @id @default(cuid())
+  machineId           String
+  machine             Machine   @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  method              String
+  path                String
+  query               String    @default("")
+  bodyBase64          String?
+  contentType         String?
+  headersJson         String    @default("{}")
+  scopeKind           String
+  scopeSpaceId        String?
+  scopeRunId          String?
+  scopeBotId          String?
+  scopeComputerId     String?
+  scopeLeaseOwner     String?
+  scopeLeaseFence     Int?
+  /// pending | claimed | completed | expired | failed | aborted
+  status              String    @default("pending")
+  responseStatus      Int?
+  responseContentType String?
+  responseBodyBase64  String?
+  createdAt           DateTime  @default(now())
+  expiresAt           DateTime
+  claimedAt           DateTime?
+  updatedAt           DateTime  @updatedAt
+
+  @@index([machineId, status, createdAt])
+  @@index([expiresAt])
+  @@map("machine_commands")
 }
 
 model AgentSecret {

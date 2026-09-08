@@ -186,6 +186,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@hono/node-server": "^1.19.1",
+        "@rakazo/contracts": "workspace:*",
         "@rakazo/core": "workspace:*",
         "@rakazo/logging": "workspace:*",
         "dockerode": "^4.0.7",
@@ -261,7 +262,7 @@
         "koffi": "^2.9.0",
         "nodemailer": "^7.0.11",
         "pg": "^8.16.3",
-        "pi-fabric": "file:../../vendor/pi-kit/pi-fabric-0.89.0-6f981b7f533a.tgz",
+        "pi-fabric": "file:../../vendor/pi-kit/pi-fabric-0.90.0-a4831b59cdc1.tgz",
         "pi-multiprovider": "file:../../vendor/pi-kit/pi-multiprovider-0.2.10-7f54b802745f.tgz",
         "sendblue": "3.16.1",
         "sharp": "^0.35.3",
@@ -399,12 +400,26 @@
         "@earendil-works/pi-coding-agent": "0.85.1",
         "@earendil-works/pi-tui": "0.85.1",
         "@monotykamary/pi-retry": "file:../../vendor/pi-kit/monotykamary-pi-retry-0.8.6-ac70784e6bb9.tgz",
-        "pi-fabric": "file:../../vendor/pi-kit/pi-fabric-0.89.0-6f981b7f533a.tgz",
+        "pi-fabric": "file:../../vendor/pi-kit/pi-fabric-0.90.0-a4831b59cdc1.tgz",
         "pi-fovea": "file:../../vendor/pi-kit/pi-fovea-0.22.1-b8a01161c936.tgz",
         "pi-hide-providers": "file:../../vendor/pi-kit/pi-hide-providers-0.1.18-d26f6fc7825e.tgz",
         "pi-multiprovider": "file:../../vendor/pi-kit/pi-multiprovider-0.2.10-7f54b802745f.tgz",
         "pi-queue-steer-factory": "file:../../vendor/pi-kit/pi-queue-steer-factory-0.16.2-7d5a12d3688f.tgz",
         "typebox": "1.3.10",
+      },
+      "devDependencies": {
+        "@types/node": "^24.3.0",
+        "typescript": "^5.9.2",
+        "vitest": "^4.1.10",
+      },
+    },
+    "packages/runner": {
+      "name": "@rakazo/runner",
+      "version": "0.1.0",
+      "dependencies": {
+        "@rakazo/contracts": "workspace:*",
+        "@rakazo/core": "workspace:*",
+        "tsx": "^4.20.5",
       },
       "devDependencies": {
         "@types/node": "^24.3.0",
@@ -428,6 +443,7 @@
       "devDependencies": {
         "@playwright/test": "^1.55.0",
         "@types/pngjs": "6.0.5",
+        "hono": "^4.9.7",
         "typescript": "^5.9.2",
         "vitest": "^4.1.10",
       },
@@ -1462,6 +1478,8 @@
     "@rakazo/mobile": ["@rakazo/mobile@workspace:apps/mobile"],
 
     "@rakazo/pi-kit": ["@rakazo/pi-kit@workspace:packages/pi-kit"],
+
+    "@rakazo/runner": ["@rakazo/runner@workspace:packages/runner"],
 
     "@rakazo/sandbox-supervisor": ["@rakazo/sandbox-supervisor@workspace:infra/sandboxes/supervisor"],
 
@@ -3341,7 +3359,7 @@
 
     "pgpass": ["pgpass@1.0.5", "", { "dependencies": { "split2": "4.2.0" } }, "sha512-FdW9r/jQZhSeohs1Z3sI1yxFQNFvMcnmfuj4WBMUTxOrAyLMaTcE1aAMBiTlbMNaXvBCQuVi0R7hd8udDSP7ug=="],
 
-    "pi-fabric": ["pi-fabric@../../vendor/pi-kit/pi-fabric-0.89.0-6f981b7f533a.tgz", { "dependencies": { "@earendil-works/pi-ai": "0.85.1", "@jitl/quickjs-singlefile-mjs-release-sync": "^0.32.0", "@shikijs/langs": "4.4.3", "@shikijs/themes": "4.4.3", "cross-spawn": "^7.0.6", "diff": "^9.0.0", "mcporter": "^0.12.3", "quickjs-emscripten-core": "^0.32.0", "shiki": "4.4.3", "typebox": "1.3.8", "typescript": "^6.0.3", "yaml": "^2.9.0" }, "optionalDependencies": { "@pydantic/monty": "0.0.23" }, "peerDependencies": { "@earendil-works/pi-coding-agent": ">=0.80.6", "@earendil-works/pi-tui": ">=0.80.6" } }, "sha512-14kduLP/JjiA3MlKleTKEpRIGMACvYiChzxIZZrVm0j5dSFD7yllKbR1Sa39+3zoHZIx42QinGeLLu+k0uJTQg=="],
+    "pi-fabric": ["pi-fabric@../../vendor/pi-kit/pi-fabric-0.90.0-a4831b59cdc1.tgz", { "dependencies": { "@earendil-works/pi-ai": "0.85.1", "@jitl/quickjs-singlefile-mjs-release-sync": "^0.32.0", "@shikijs/langs": "4.4.3", "@shikijs/themes": "4.4.3", "cross-spawn": "^7.0.6", "diff": "^9.0.0", "mcporter": "^0.12.3", "quickjs-emscripten-core": "^0.32.0", "shiki": "4.4.3", "typebox": "1.3.8", "typescript": "^6.0.3", "yaml": "^2.9.0" }, "optionalDependencies": { "@pydantic/monty": "0.0.23" }, "peerDependencies": { "@earendil-works/pi-coding-agent": ">=0.80.6", "@earendil-works/pi-tui": ">=0.80.6" } }, "sha512-Oh1GOThWOxnFOe6DMbS5XVcaMwSTwWjvGhMXS4LT4mQXygYrbD2taJSo0AH2jW/xnuX6p92yVai4aTzRH3zrpA=="],
 
     "pi-fovea": ["pi-fovea@../../vendor/pi-kit/pi-fovea-0.22.1-b8a01161c936.tgz", { "optionalDependencies": { "@ast-grep/cli": "^0.45.3" }, "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*", "typebox": "*" }, "optionalPeers": ["@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"], "bin": { "fovea": "dist/cli.mjs" } }, "sha512-Ie+OZr3GdOq2xoTe7P1Zo8eaKu4BWRG+pe4Rpi61tCIkj1JOJgSlID3VCsJ5NHkQHFTCiIsqJOodx7f9ydce/g=="],
 

@@ -74,6 +74,7 @@ import {
 import { ProductEventSchema } from "./events.js";
 import { ExecutionInspectInputSchema, ExecutionInspectionSchema } from "./execution.js";
 import { Id, IsoDate } from "./ids.js";
+import { MachineAssignmentSchema, MachinePairingSchema, MachineSchema } from "./machines.js";
 import {
   ModelRoutingGetInputSchema,
   ModelRoutingSchema,
@@ -93,6 +94,15 @@ import {
 } from "./queue.js";
 import { RunsListOutputSchema } from "./runs.js";
 import { SearchQueryOutputSchema } from "./search.js";
+import {
+  SERVICE_NAME_PATTERN,
+  ServiceChangesInputSchema,
+  ServiceChangesOutputSchema,
+  ServiceDeclareInputSchema,
+  ServiceListOutputSchema,
+  ServicePreviewUrlInputSchema,
+  ServicePreviewUrlOutputSchema,
+} from "./services.js";
 import { WorkReceiptSchema } from "./work.js";
 
 const botId = z.object({ botId: Id });
@@ -183,6 +193,35 @@ export const appContract = {
     status: oc.output(ServerUpdateStatusSchema),
     check: oc.input(ServerUpdateRequestSchema).output(ServerUpdateCheckSchema),
     apply: oc.input(ServerUpdateRequestSchema).output(ServerUpdateRunSchema),
+  },
+  machines: {
+    list: oc.output(z.array(MachineSchema)),
+    startPairing: oc
+      .input(z.object({ name: z.string().trim().min(1).max(80) }))
+      .output(MachinePairingSchema),
+    cancelPairing: oc.input(z.object({ pairingId: Id })).output(z.object({ ok: z.literal(true) })),
+    revoke: oc.input(z.object({ machineId: Id })).output(z.object({ ok: z.literal(true) })),
+    remove: oc.input(z.object({ machineId: Id })).output(z.object({ ok: z.literal(true) })),
+    assignment: oc.input(z.object({ botId: Id })).output(MachineAssignmentSchema),
+    assign: oc
+      .input(z.object({ botId: Id, machineId: z.string().nullable() }))
+      .output(MachineAssignmentSchema),
+  },
+  /** Supervised project services on a bot's computer (workbench). */
+  services: {
+    list: oc.input(z.object({ botId: Id })).output(ServiceListOutputSchema),
+    declare: oc.input(ServiceDeclareInputSchema).output(z.object({ ok: z.literal(true) })),
+    stop: oc
+      .input(z.object({ botId: Id, name: z.string().regex(SERVICE_NAME_PATTERN) }))
+      .output(z.object({ ok: z.literal(true) })),
+    restart: oc
+      .input(z.object({ botId: Id, name: z.string().regex(SERVICE_NAME_PATTERN) }))
+      .output(z.object({ ok: z.literal(true) })),
+    remove: oc
+      .input(z.object({ botId: Id, name: z.string().regex(SERVICE_NAME_PATTERN) }))
+      .output(z.object({ ok: z.literal(true) })),
+    changes: oc.input(ServiceChangesInputSchema).output(ServiceChangesOutputSchema),
+    previewUrl: oc.input(ServicePreviewUrlInputSchema).output(ServicePreviewUrlOutputSchema),
   },
   models: {
     getVisibility: oc.output(ModelVisibilitySchema),

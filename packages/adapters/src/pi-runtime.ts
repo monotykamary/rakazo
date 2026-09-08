@@ -9,7 +9,7 @@ import {
   Type,
 } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import type { AgentRunRequest, AgentToolExecutionResult, ConnectorTool } from "@rakazo/adapter-kit";
+import type { AgentRunRequest, ConnectorTool } from "@rakazo/adapter-kit";
 import { getLogger } from "@rakazo/logging";
 import { PiRuntimeCredentialStore, toOAuthCredential } from "./pi-credentials.js";
 import { registerLocalProvider } from "./pi-local-provider.js";
@@ -18,6 +18,7 @@ import {
   registerOpenAiCompatibleCatalog,
   registerOpenAiCompatibleRuntime,
 } from "./pi-openai-compatible-provider.js";
+import { MANAGED_RESERVED_TOOL_NAMES } from "./pi-tool-names.js";
 
 // Built on first use, not at module load: entry points call loadRootEnv() after
 // their imports, and ESM hoists those imports, so module-level env reads here
@@ -63,25 +64,6 @@ export function toPiImages(images: AgentRunRequest["currentTurnImages"]) {
     data: Buffer.from(image.data).toString("base64"),
     mimeType: image.mimeType,
   }));
-}
-
-function configuredOpenRouterModel(id: string): Model<"openai-completions"> {
-  // A configured model can intentionally be newer than Pi's static catalog. Keep
-  // pricing conservative, but enable reasoning: unknown OpenRouter endpoints
-  // (e.g. gemini-3.7-flash before the snapshot catches up) often mandate it, and
-  // thinkingLevel "off" becomes effort "none" which those endpoints reject.
-  return {
-    id,
-    name: id,
-    api: "openai-completions",
-    provider: "openrouter",
-    baseUrl: "https://openrouter.ai/api/v1",
-    reasoning: true,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 16_384,
-    maxTokens: 4_096,
-  };
 }
 
 export function modelsForRequest(
@@ -183,11 +165,12 @@ export function normalizeAgentToolNames(tools: readonly ConnectorTool[]): string
   const reservedValidNames = new Set(
     tools.filter((tool) => isProviderSafeAgentToolName(tool.name)).map((tool) => tool.name),
   );
-  const usedNames = new Set<string>();
+  const usedNames = new Set<string>(MANAGED_RESERVED_TOOL_NAMES);
 
   return tools.map((tool) => {
     const base = normalizeAgentToolName(tool.name);
-    const originalIsValid = isProviderSafeAgentToolName(tool.name);
+    const originalIsValid =
+      isProviderSafeAgentToolName(tool.name) && !MANAGED_RESERVED_TOOL_NAMES.has(tool.name);
     let candidate = base;
 
     if (usedNames.has(candidate) || (!originalIsValid && reservedValidNames.has(candidate))) {
@@ -351,28 +334,6 @@ function isComputerScreenshotMessage(
   );
 }
 
-function isAgentToolExecutionResult(result: unknown): result is AgentToolExecutionResult {
-  if (
-    !result ||
-    typeof result !== "object" ||
-    (result as { kind?: unknown }).kind !== "agent_tool_result" ||
-    !("content" in result)
-  ) {
-    return false;
-  }
-  const content = (result as { content?: unknown }).content;
-  return (
-    Array.isArray(content) &&
-    content.every(
-      (item) =>
-        item &&
-        typeof item === "object" &&
-        ((item as { type?: unknown }).type === "text" ||
-          (item as { type?: unknown }).type === "image"),
-    )
-  );
-}
-
 export function jsonSchemaParameters(schema: Record<string, unknown>) {
   const properties = (schema.properties ?? {}) as Record<string, unknown>;
   const required = new Set(Array.isArray(schema.required) ? schema.required.map(String) : []);
@@ -423,30 +384,6 @@ function jsonField(spec: unknown): ReturnType<typeof Type.String> {
   return Type.String();
 }
 
-function summarizeToolResult(result: unknown) {
-  try {
-    const text = JSON.stringify(result);
-    if (!text) return "ok";
-    return text.length > 12_000 ? `${text.slice(0, 12_000)}…` : text;
-  } catch {
-    return "ok";
-  }
-}
-
-function assistantText(message: unknown): string {
-  if (!message || typeof message !== "object" || !("content" in message)) return "";
-  const content = (message as { content?: unknown }).content;
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((part) =>
-      part && typeof part === "object" && "type" in part && part.type === "text" && "text" in part
-        ? String(part.text)
-        : "",
-    )
-    .join("");
-}
-
 function sanitizeSensitiveText(message: string) {
   return message
     .replace(/sk-or-v1-[a-zA-Z0-9]+/g, "[redacted]")
@@ -476,10 +413,6 @@ function redactActivityUrl(value: unknown): string {
     // Never echo unparsed input — it may still contain userinfo/secrets.
     return "[invalid URL]";
   }
-}
-
-function sanitizeError(message: string) {
-  return sanitizeSensitiveText(message);
 }
 
 export function reliableStreamOptions(

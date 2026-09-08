@@ -1,4 +1,9 @@
-import type { AgentRunRequest, ConnectorCall, ConnectorTool } from "@rakazo/adapter-kit";
+import type {
+  AdapterContext,
+  AgentRunRequest,
+  ConnectorCall,
+  ConnectorTool,
+} from "@rakazo/adapter-kit";
 import type { ActionApprovalRule } from "@rakazo/core";
 import { approvalEffectKey } from "@rakazo/core/node/approval-effect-key";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +11,15 @@ import { isApprovalPausedResult } from "./approval-effect.js";
 import { runAutoReviewJudge } from "./auto-review.js";
 import { createRunExecutor } from "./executor.js";
 import { catalogEntries, resolveCatalogCall } from "./lazy-tool-catalog.js";
+
+const { runtimeSave } = vi.hoisted(() => ({
+  runtimeSave: vi.fn(async (_state: unknown) => undefined),
+}));
+vi.mock("@rakazo/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@rakazo/db")>()),
+  createRuntimeSession: async () => ({ restore: undefined, save: runtimeSave }),
+  captureQueuePlacement: async () => ({ kind: "none" as const }),
+}));
 
 vi.mock("./computer-lifecycle.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./computer-lifecycle.js")>()),
@@ -36,6 +50,7 @@ function fixture({
   rules = [] as ActionApprovalRule[],
   autoReview = false,
   trigger = "user",
+  managed = false,
 } = {}) {
   const tool: ConnectorTool = {
     name,
@@ -91,6 +106,7 @@ function fixture({
   const prisma = {
     user: { findUnique: vi.fn(async () => ({ modelVisibility: { hide: [] } })) },
     dispatchedWork: { count: vi.fn(async () => 0) },
+    premoveQueue: { findUnique: vi.fn(async () => null) },
     run: {
       findUnique: vi.fn(async () => run),
       findUniqueOrThrow: vi.fn(async () => run),
@@ -135,12 +151,14 @@ function fixture({
     actionAutoReviewPreference: { findUnique: vi.fn(async () => ({ enabled: autoReview })) },
     externalEffect,
   };
+  if (managed)
+    Object.assign(prisma, { $transaction: async (work: (tx: unknown) => unknown) => work(prisma) });
   const pauseRunForInput = vi.fn(async () => {
     run.status = "waiting_input";
     return true;
   });
   const finalizeRun = vi.fn(async () => ({ continuationRunId: null }));
-  const execute = vi.fn(async function* (call: ConnectorCall) {
+  const execute = vi.fn(async function* (call: ConnectorCall, _context: AdapterContext) {
     yield { type: "result" as const, data: { item: call.args.id } };
   });
   let calls = [{ args: { id: "item-1" }, executionId: "call-1" }];
@@ -158,7 +176,10 @@ function fixture({
   });
   const executor = createRunExecutor({
     prisma,
-    runtime: { describe: () => ({ capabilities: { scripted: false } }), run: runtimeRun },
+    runtime: {
+      describe: () => ({ id: managed ? "pi" : "fixture", capabilities: { scripted: false } }),
+      run: runtimeRun,
+    },
     connector: {
       discoverTools: async () =>
         catalog
@@ -186,16 +207,21 @@ function fixture({
     effects,
     results,
     execute,
+    runtimeRun,
+    renewLease: prisma.run.updateMany,
     pauseRunForInput,
     setCalls(next: typeof calls) {
       calls = next;
     },
-    async run() {
+    async run({ allowFailure = false } = {}) {
       run.status = "queued";
       await executor.continueRun(run.id, "worker-1");
       expect(runtimeRun).toHaveBeenCalled();
       expect(prisma.attempt.update).not.toHaveBeenCalled();
-      expect(finalizeRun).not.toHaveBeenCalledWith(expect.objectContaining({ outcome: "failed" }));
+      if (!allowFailure)
+        expect(finalizeRun).not.toHaveBeenCalledWith(
+          expect.objectContaining({ outcome: "failed" }),
+        );
     },
   };
 }
@@ -203,6 +229,104 @@ function fixture({
 describe("connector read-only metadata and approval enforcement", () => {
   beforeEach(() => {
     vi.mocked(runAutoReviewJudge).mockReset();
+    runtimeSave.mockClear();
+  });
+
+  it("allows only fenced checkpoint publication while an approval is pending", async () => {
+    const f = fixture({
+      managed: true,
+      rules: [{ effect: "require_approval", matchKind: "tool", matchValue: "demo_get_item" }],
+    });
+    let verified = false;
+    f.runtimeRun.mockImplementation(async function* (request) {
+      const result = await request.executeTool!("demo_get_item", { id: "item-1" }, "approval");
+      expect(isApprovalPausedResult(result)).toBe(true);
+      expect(request.session).toBeDefined();
+      expect(f.pauseRunForInput).not.toHaveBeenCalled();
+      await expect(request.assertActive!({ effects: false })).rejects.toThrow("paused");
+      await expect(request.assertActive!({ effects: true, checkpoint: true })).rejects.toThrow(
+        "paused",
+      );
+      await expect(
+        request.assertActive!({ effects: false, checkpoint: true }),
+      ).resolves.toBeUndefined();
+      await request.session!.save({ checkpoint: "before approval" });
+      expect(runtimeSave).toHaveBeenCalledOnce();
+      expect(f.pauseRunForInput).toHaveBeenCalledOnce();
+      // Cleanup acknowledgments after commit cannot write again or reopen effects.
+      await expect(
+        request.assertActive!({ effects: false, checkpoint: true }),
+      ).resolves.toBeUndefined();
+      await request.session!.save({ checkpoint: "too late" });
+      expect(runtimeSave).toHaveBeenCalledOnce();
+      await expect(request.assertActive!({ effects: false })).rejects.toThrow("paused");
+      verified = true;
+      yield { type: "done" as const, text: "" };
+    });
+    await f.run();
+    expect(verified).toBe(true);
+  });
+
+  it("still rejects a pending approval checkpoint when its lease is lost", async () => {
+    const f = fixture({
+      managed: true,
+      rules: [{ effect: "require_approval", matchKind: "tool", matchValue: "demo_get_item" }],
+    });
+    let verified = false;
+    f.runtimeRun.mockImplementation(async function* (request) {
+      const result = await request.executeTool!("demo_get_item", { id: "item-1" }, "approval");
+      expect(isApprovalPausedResult(result)).toBe(true);
+      f.renewLease.mockResolvedValueOnce({ count: 0 });
+      await expect(request.assertActive!({ effects: false, checkpoint: true })).rejects.toThrow(
+        "lease was lost",
+      );
+      expect(runtimeSave).not.toHaveBeenCalled();
+      expect(f.pauseRunForInput).not.toHaveBeenCalled();
+      verified = true;
+      yield { type: "done" as const, text: "" };
+    });
+    await f.run({ allowFailure: true });
+    expect(verified).toBe(true);
+    expect(runtimeSave).not.toHaveBeenCalled();
+    expect(f.pauseRunForInput).not.toHaveBeenCalled();
+  });
+
+  it("propagates participant cancellation to an in-flight connector without cancelling the root", async () => {
+    const f = fixture();
+    const stop = new AbortController();
+    let began!: (signal: AbortSignal) => void;
+    const started = new Promise<AbortSignal>((resolve) => {
+      began = resolve;
+    });
+    f.execute.mockImplementation(async function* (_call, context) {
+      began(context.signal);
+      await new Promise<void>((_resolve, reject) => {
+        context.signal.addEventListener("abort", () => reject(new Error("participant stopped")), {
+          once: true,
+        });
+      });
+    });
+    let verified = false;
+    f.runtimeRun.mockImplementation(async function* (request) {
+      const pending = request.executeTool!(
+        "demo_get_item",
+        { id: "item-1" },
+        "call",
+        undefined,
+        stop.signal,
+      );
+      const signal = await started;
+      expect(signal.aborted).toBe(false);
+      stop.abort();
+      await pending.catch(() => undefined);
+      expect(signal.aborted).toBe(true);
+      await expect(request.assertActive!({ effects: false })).resolves.toBeUndefined();
+      verified = true;
+      yield { type: "done" as const, text: "Done" };
+    });
+    await f.run();
+    expect(verified).toBe(true);
+    expect(f.execute).toHaveBeenCalledOnce();
   });
 
   it.each(["shell", "write_file"])(
