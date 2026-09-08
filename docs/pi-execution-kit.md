@@ -1,5 +1,10 @@
 # Managed Pi execution kit
 
+This document describes `AGENT_RUNTIME=pi`, the managed isolation boundary.
+[Trusted-local development](local-development.md) uses `AGENT_RUNTIME=pi-local`
+and the user's native Pi installation instead. Its host authority is explicit;
+it does not claim the isolation, sealed tools or provider brokering described here.
+
 Rakazo keeps a continuous conversation per bot. Isolated Pi coding-agent RPC workers own execution context; Rakazo owns authorization, credentials, durable user intent, and external-effect reconciliation. Workers may stop or restart without replacing the logical conversation.
 
 ## Architecture

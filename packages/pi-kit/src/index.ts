@@ -6,7 +6,7 @@ export const PI_RUNTIME_VERSION = "0.85.1";
 
 /** Reviewed together; never resolve floating extension versions at session startup. */
 export const PI_KIT_PACKAGES = [
-  { name: "pi-fabric", version: "0.90.0", entry: "pi-fabric", extensions: ["dist/index.js"] },
+  { name: "pi-fabric", version: "0.90.1", entry: "pi-fabric", extensions: ["dist/index.js"] },
   { name: "pi-fovea", version: "0.22.1", entry: "pi-fovea/ops", extensions: ["src/index.ts"] },
   {
     name: "pi-queue-steer-factory",

@@ -10,7 +10,12 @@
     "bun": "1.4.2"
   },
   "scripts": {
-    "dev": "turbo dev --filter=@rakazo/api --filter=@rakazo/worker --filter=@rakazo/web --filter=@rakazo/sandbox-supervisor",
+    "dev": "node scripts/dev.mjs",
+    "dev:services": "turbo dev --env-mode=loose --filter=@rakazo/api --filter=@rakazo/worker --filter=@rakazo/web",
+    "dev:managed": "turbo dev --env-mode=loose --filter=@rakazo/api --filter=@rakazo/worker --filter=@rakazo/web --filter=@rakazo/sandbox-supervisor",
+    "dev:pi": "node scripts/dev.mjs --pi",
+    "dev:kit": "node scripts/dev.mjs --setup-kit --install-pi --install-kit",
+    "test:dev": "vitest run packages/testkit/src/dev-bootstrap.test.ts",
     "build": "turbo build",
     "check": "turbo check",
     "lint": "biome check .",

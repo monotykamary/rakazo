@@ -1,6 +1,7 @@
 import {
   resolveCloudAgentProvider,
   resolveDeploymentModel,
+  resolveLocalPiRuntimeOptions,
   resolveSandboxProvider,
 } from "@rakazo/adapters";
 import {
@@ -33,6 +34,7 @@ export interface AppEnv {
   cloudAgentSpaceId: string | undefined;
   cursorApiKey: string | undefined;
   agentRuntime: string;
+  localPi: { command: string; cwd: string; sessionDir: string } | null;
   deploymentModelKey: string | undefined;
   e2bApiKey: string | undefined;
   daytonaApiKey: string | undefined;
@@ -94,6 +96,11 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   const sandboxProvider = resolveSandboxProvider(source);
   const cloudAgentProvider = resolveCloudAgentProvider(source);
   const deploymentModel = resolveDeploymentModel(source);
+  const localPi = resolveLocalPiRuntimeOptions(source, source.DATA_DIR ?? "./data");
+  const apiHost = source.API_HOST ?? "127.0.0.1";
+  if (localPi && !isLoopbackHost(apiHost)) {
+    throw new Error("AGENT_RUNTIME=pi-local requires API_HOST to be a loopback host");
+  }
   const updaterUrl = optional(source.RAKAZO_UPDATER_URL);
   const updaterToken = optional(source.RAKAZO_UPDATER_TOKEN);
   return {
@@ -104,7 +111,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     authUrl: source.BETTER_AUTH_URL ?? source.WEB_ORIGIN ?? "http://127.0.0.1:5173",
     webOrigin: source.WEB_ORIGIN ?? "http://127.0.0.1:5173",
     apiUrl: source.API_URL ?? "http://127.0.0.1:3100",
-    apiHost: source.API_HOST ?? "127.0.0.1",
+    apiHost,
     signupsEnabled: source.SIGNUPS_ENABLED,
     signupAllowlist: source.SIGNUP_ALLOWLIST,
     encryptionKey: resolveEncryptionKey(source),
@@ -121,6 +128,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     cloudAgentSpaceId: optional(source.CLOUD_AGENT_SPACE_ID),
     cursorApiKey: optional(source.CURSOR_API_KEY),
     agentRuntime: source.AGENT_RUNTIME ?? "pi",
+    localPi,
     // Provider, model and key resolve together: see resolveDeploymentModel.
     deploymentModelKey: deploymentModel.key,
     e2bApiKey: source.E2B_API_KEY,
@@ -174,6 +182,10 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     updaterToken,
     imageTag: optional(source.RAKAZO_IMAGE_TAG),
   };
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
 }
 
 function required(source: NodeJS.ProcessEnv, key: string): string {

@@ -50,6 +50,14 @@ function fixture(deploymentModelKey?: string) {
     ),
   };
   const executor = createRunExecutor({
+    runtime: {
+      describe: () => ({
+        id: "pi",
+        contractVersion: "1",
+        adapterVersion: "0.1.0",
+        capabilities: { streaming: true, compaction: true, tools: true },
+      }),
+    },
     prisma,
     secretStore,
     deploymentModelKey,

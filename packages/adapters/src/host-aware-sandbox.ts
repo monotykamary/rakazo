@@ -27,7 +27,8 @@ export function createRunSandbox(
   if (kind === "desktop") {
     return new DesktopSandboxProvider({
       root: opts.dataDir,
-      hostRoots: [homedir()],
+      trustedWorkspaceRoot: opts.trustedWorkspaceRoot,
+      hostRoots: opts.trustedWorkspaceRoot ? undefined : [homedir()],
     });
   }
   const primary = createSandboxProvider(kind, opts);

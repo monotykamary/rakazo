@@ -84,6 +84,7 @@ import {
   type ComputerStatus,
   type McpServer,
   type Me,
+  type ModelCatalogEntry,
   ModelHiddenError,
   OPENAI_COMPATIBLE_PROVIDER_ID,
   type SpaceNavigation,
@@ -225,6 +226,36 @@ import {
 const MAX_COMPUTER_TEXT_FILE_BYTES = 2 * 1024 * 1024;
 const THREAD_MESSAGE_PAGE_SIZE = 100;
 const EXPORT_MESSAGE_PAGE_SIZE = 500;
+
+const LOCAL_PI_CATALOG_ENTRY = {
+  provider: "pi-local",
+  providerName: "Pi",
+  id: "default",
+  label: "Pi configured model",
+  billing: "Uses the model configured in local Pi.",
+} satisfies ModelCatalogEntry;
+
+function deploymentModelFor(deps: RouterDeps) {
+  return deps.env.agentRuntime === "pi-local" || deps.env.deploymentModelKey
+    ? { provider: deps.env.defaultProvider, model: deps.env.defaultModel }
+    : null;
+}
+
+function assertLocalPiActor(deps: RouterDeps, actor: Actor): void {
+  if (deps.env.agentRuntime === "pi-local" && !actor.isDeploymentOwner) {
+    throw new ORPCError("FORBIDDEN", {
+      message: "Local Pi is available only to the deployment owner",
+    });
+  }
+}
+
+function runtimeCatalog(deps: RouterDeps): ModelCatalogEntry[] {
+  return [
+    ...listPiCatalog(),
+    scriptedCatalogEntry,
+    ...(deps.env.agentRuntime === "pi-local" ? [LOCAL_PI_CATALOG_ENTRY] : []),
+  ];
+}
 
 async function reconcilePendingConnections(
   prisma: PrismaClient,
@@ -513,6 +544,7 @@ export function createRouter(deps: RouterDeps) {
 
   const authed = os.use(async ({ context, next }) => {
     if (!context.actor) throw new ORPCError("UNAUTHORIZED");
+    assertLocalPiActor(deps, context.actor);
     return next({ context: { ...context, actor: context.actor } });
   });
   const machines =
@@ -792,19 +824,9 @@ export function createRouter(deps: RouterDeps) {
       setVisibility: authed.models.setVisibility.handler(({ context, input }) =>
         setOwnerModelVisibility(deps.prisma, context.actor, input),
       ),
-      listForVisibility: authed.models.listForVisibility.handler(async () => [
-        ...listPiCatalog(),
-        scriptedCatalogEntry,
-      ]),
+      listForVisibility: authed.models.listForVisibility.handler(async () => runtimeCatalog(deps)),
       getSelection: authed.models.getSelection.handler(({ context, input }) =>
-        getModelSelection(
-          deps.prisma,
-          context.actor,
-          input,
-          deps.env.deploymentModelKey
-            ? { provider: deps.env.defaultProvider, model: deps.env.defaultModel }
-            : null,
-        ),
+        getModelSelection(deps.prisma, context.actor, input, deploymentModelFor(deps)),
       ),
       setWorkerSelection: authed.models.setWorkerSelection.handler(({ context, input }) =>
         setWorkerModelSelection(
@@ -817,9 +839,7 @@ export function createRouter(deps: RouterDeps) {
               context.actor,
               selection.provider,
             );
-            const deployment = deps.env.deploymentModelKey
-              ? { provider: deps.env.defaultProvider, model: deps.env.defaultModel }
-              : null;
+            const deployment = deploymentModelFor(deps);
             if (
               !credential &&
               !matchesDeploymentModel(selection.provider, selection.modelId, deployment)
@@ -833,6 +853,18 @@ export function createRouter(deps: RouterDeps) {
               : null;
             if (credential && !secret)
               throw new ORPCError("BAD_REQUEST", { message: "Model connection unavailable" });
+            if (
+              !credential &&
+              deps.env.agentRuntime === "pi-local" &&
+              matchesDeploymentModel(selection.provider, selection.modelId, deployment)
+            ) {
+              if (selection.thinkingLevel !== null) {
+                throw new ORPCError("BAD_REQUEST", {
+                  message: "The Pi configured model controls its own reasoning level",
+                });
+              }
+              return;
+            }
             try {
               const connection =
                 credential && secret
@@ -864,9 +896,7 @@ export function createRouter(deps: RouterDeps) {
               });
             }
           },
-          deps.env.deploymentModelKey
-            ? { provider: deps.env.defaultProvider, model: deps.env.defaultModel }
-            : null,
+          deploymentModelFor(deps),
         ),
       ),
       getRouting: authed.models.getRouting.handler(({ context, input }) =>
@@ -876,7 +906,7 @@ export function createRouter(deps: RouterDeps) {
         setModelRouting(deps.prisma, context.actor, input, listPiCatalog()),
       ),
       list: authed.models.list.handler(({ context }) =>
-        visibleModelCatalog(deps.prisma, context.actor, [...listPiCatalog(), scriptedCatalogEntry]),
+        visibleModelCatalog(deps.prisma, context.actor, runtimeCatalog(deps)),
       ),
       credentials: authed.models.credentials.handler(async ({ context }) => {
         const rows = await deps.prisma.userModelCredential.findMany({
@@ -1127,9 +1157,7 @@ export function createRouter(deps: RouterDeps) {
           const deploymentPin = matchesDeploymentModel(
             input.modelProvider,
             input.modelId,
-            deps.env.deploymentModelKey
-              ? { provider: deps.env.defaultProvider, model: deps.env.defaultModel }
-              : null,
+            deploymentModelFor(deps),
           );
           if (!credential && !deploymentPin) {
             throw new ORPCError("BAD_REQUEST", { message: "Connect that model provider first" });
@@ -2701,9 +2729,9 @@ export function createRouter(deps: RouterDeps) {
       save: authed.skills.save.handler(async ({ context, input }) =>
         taughtSkills.save(context.actor, input.skillId, input.name),
       ),
-      testRun: authed.skills.testRun.handler(async ({ context, input }) =>
-        taughtSkills.testRun(context.actor, input.skillId, input.prompt),
-      ),
+      testRun: authed.skills.testRun.handler(async ({ context, input }) => {
+        return taughtSkills.testRun(context.actor, input.skillId, input.prompt);
+      }),
       remove: authed.skills.remove.handler(async ({ context, input }) =>
         taughtSkills.remove(context.actor, input.skillId),
       ),
@@ -4620,13 +4648,18 @@ export function createRouter(deps: RouterDeps) {
       assignment: authed.machines.assignment.handler(async ({ context, input }) =>
         machineAssignment(deps.prisma, context.actor, input),
       ),
-      assign: authed.machines.assign.handler(async ({ context, input }) =>
-        assignBotMachine(
+      assign: authed.machines.assign.handler(async ({ context, input }) => {
+        if (deps.env.agentRuntime === "pi-local" && input.machineId !== null) {
+          throw new ORPCError("BAD_REQUEST", {
+            message: "Local Pi cannot run on a remote machine assignment",
+          });
+        }
+        return assignBotMachine(
           { ...deps, defaultComputerKind: deps.sandbox.describe().id },
           context.actor,
           input,
-        ),
-      ),
+        );
+      }),
     },
     services: {
       list: authed.services.list.handler(async ({ context, input }) =>
@@ -4957,7 +4990,7 @@ async function modelSetup(deps: RouterDeps, actor: Actor) {
     findDefaultModelCredential(deps.prisma, actor),
     deps.prisma.deploymentSettings.findUnique({ where: { id: "default" } }),
   ]);
-  const hasDeployment = Boolean(deps.env.deploymentModelKey);
+  const hasDeployment = Boolean(deploymentModelFor(deps));
   return {
     credential,
     settings,

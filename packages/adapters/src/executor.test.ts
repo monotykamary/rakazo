@@ -856,7 +856,17 @@ description: Prepare standup notes
         updateMany,
       },
     } as unknown as PrismaClient;
-    const executor = createRunExecutor({ prisma } as Parameters<typeof createRunExecutor>[0]);
+    const executor = createRunExecutor({
+      prisma,
+      runtime: {
+        describe: () => ({
+          id: "scripted",
+          contractVersion: "1",
+          adapterVersion: "0.1.0",
+          capabilities: { streaming: true, compaction: false, tools: true, scripted: true },
+        }),
+      },
+    } as unknown as Parameters<typeof createRunExecutor>[0]);
 
     await executor.continueRun("run-1", "worker-1");
 
@@ -889,9 +899,18 @@ description: Prepare standup notes
         })),
       },
     } as unknown as PrismaClient;
-    const executor = createRunExecutor({ prisma, jobs: { enqueue } } as unknown as Parameters<
-      typeof createRunExecutor
-    >[0]);
+    const executor = createRunExecutor({
+      prisma,
+      runtime: {
+        describe: () => ({
+          id: "scripted",
+          contractVersion: "1",
+          adapterVersion: "0.1.0",
+          capabilities: { streaming: true, compaction: false, tools: true, scripted: true },
+        }),
+      },
+      jobs: { enqueue },
+    } as unknown as Parameters<typeof createRunExecutor>[0]);
 
     await executor.continueRun("run-1", "worker-1");
 
@@ -1057,6 +1076,14 @@ description: Prepare standup notes
     } as unknown as PrismaClient;
     const executor = createRunExecutor({
       prisma,
+      runtime: {
+        describe: () => ({
+          id: "pi",
+          contractVersion: "1",
+          adapterVersion: "0.1.0",
+          capabilities: { streaming: true, compaction: true, tools: true },
+        }),
+      },
       secretStore: { load: vi.fn(() => "fake-model-key"), put: vi.fn() },
     } as unknown as Parameters<typeof createRunExecutor>[0]);
 
@@ -1115,6 +1142,14 @@ description: Prepare standup notes
     } as unknown as PrismaClient;
     const executor = createRunExecutor({
       prisma,
+      runtime: {
+        describe: () => ({
+          id: "pi",
+          contractVersion: "1",
+          adapterVersion: "0.1.0",
+          capabilities: { streaming: true, compaction: true, tools: true },
+        }),
+      },
       secretStore: { load: vi.fn(() => "fake-model-key"), put: vi.fn() },
       deploymentModelKey: "deployment-openrouter-key",
     } as unknown as Parameters<typeof createRunExecutor>[0]);
@@ -1161,6 +1196,14 @@ description: Prepare standup notes
     } as unknown as PrismaClient;
     const executor = createRunExecutor({
       prisma,
+      runtime: {
+        describe: () => ({
+          id: "pi",
+          contractVersion: "1",
+          adapterVersion: "0.1.0",
+          capabilities: { streaming: true, compaction: true, tools: true },
+        }),
+      },
       secretStore: { load: vi.fn(() => "fake-model-key"), put: vi.fn() },
       // PI_DEFAULT_PROVIDER is unset here, so this key belongs to OpenRouter.
       deploymentModelKey: "deployment-openrouter-key",
@@ -1204,6 +1247,14 @@ description: Prepare standup notes
     } as unknown as PrismaClient;
     const executor = createRunExecutor({
       prisma,
+      runtime: {
+        describe: () => ({
+          id: "pi",
+          contractVersion: "1",
+          adapterVersion: "0.1.0",
+          capabilities: { streaming: true, compaction: true, tools: true },
+        }),
+      },
       secretStore: { load: vi.fn(() => "fake-model-key"), put: vi.fn() },
     } as unknown as Parameters<typeof createRunExecutor>[0]);
 

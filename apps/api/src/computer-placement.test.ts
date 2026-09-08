@@ -49,6 +49,7 @@ function fixture(kind = "machine", scope = "dedicated") {
   const client = createRouterClient(
     createRouter({
       prisma,
+      env: { agentRuntime: "scripted" },
       secrets: {},
       sandbox: {},
       home: {},

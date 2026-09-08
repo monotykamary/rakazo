@@ -197,4 +197,50 @@ describe("loadEnv", () => {
     ).toBe(false);
     expect(loadEnv({ ...base, NODE_ENV: "development" }).nodeEnv).toBe("development");
   });
+
+  it("loads an explicitly trusted loopback local Pi without a model credential", () => {
+    const env = loadEnv({
+      ...base,
+      AGENT_RUNTIME: "pi-local",
+      RAKAZO_TRUST_LOCAL_PI: "1",
+      RAKAZO_PI_COMMAND: " custom-pi ",
+      RAKAZO_PI_CWD: "/tmp/trusted-checkout",
+      DATA_DIR: "/tmp/rakazo-data",
+      SANDBOX_PROVIDER: "desktop",
+      API_HOST: "localhost",
+      OPENROUTER_API_KEY: "must-not-be-used",
+    });
+    expect(env).toMatchObject({
+      agentRuntime: "pi-local",
+      sandboxProvider: "desktop",
+      apiHost: "localhost",
+      defaultProvider: "pi-local",
+      defaultModel: "default",
+      deploymentModelKey: undefined,
+      localPi: {
+        command: "custom-pi",
+        cwd: "/tmp/trusted-checkout",
+        sessionDir: "/tmp/rakazo-data/pi-sessions",
+      },
+    });
+    expect(env.sandboxSupervisorToken).toBeUndefined();
+  });
+
+  it.each([
+    [{ RAKAZO_TRUST_LOCAL_PI: undefined }, /RAKAZO_TRUST_LOCAL_PI=1/],
+    [{ SANDBOX_PROVIDER: "docker" }, /SANDBOX_PROVIDER=desktop/],
+    [{ RAKAZO_PI_CWD: "relative/checkout" }, /RAKAZO_PI_CWD.*absolute/],
+    [{ API_HOST: "0.0.0.0" }, /API_HOST.*loopback/],
+  ] as const)("rejects unsafe local Pi configuration %#", (override, expected) => {
+    expect(() =>
+      loadEnv({
+        ...base,
+        AGENT_RUNTIME: "pi-local",
+        RAKAZO_TRUST_LOCAL_PI: "1",
+        RAKAZO_PI_CWD: "/tmp/trusted-checkout",
+        SANDBOX_PROVIDER: "desktop",
+        ...override,
+      }),
+    ).toThrow(expected);
+  });
 });

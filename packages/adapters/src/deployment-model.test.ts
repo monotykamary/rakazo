@@ -20,4 +20,15 @@ describe("resolveDeploymentModel", () => {
       resolveDeploymentModel({ OPENROUTER_API_KEY: "or-key", PI_DEFAULT_PROVIDER: "anthropic" }),
     ).toEqual({ provider: "anthropic", model: "claude-sonnet-5", key: undefined });
   });
+
+  it("uses Pi configured defaults without inventing a deployment key", () => {
+    expect(
+      resolveDeploymentModel({
+        AGENT_RUNTIME: "pi-local",
+        PI_DEFAULT_PROVIDER: "anthropic",
+        PI_DEFAULT_MODEL: "ignored",
+        ANTHROPIC_API_KEY: "must-not-leak",
+      }),
+    ).toEqual({ provider: "pi-local", model: "default", key: undefined });
+  });
 });

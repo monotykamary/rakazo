@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { ComputerRef, SandboxProvider } from "@rakazo/adapter-kit";
@@ -20,9 +20,13 @@ const ctx = {
 
 describe("host-aware sandbox", () => {
   const hostRoot = mkdtempSync(path.join(tmpdir(), "rakazo-host-root-"));
+  const localProject = mkdtempSync(path.join(tmpdir(), "rakazo-local-project-"));
+  const localData = mkdtempSync(path.join(tmpdir(), "rakazo-local-data-"));
 
   afterAll(() => {
     rmSync(hostRoot, { recursive: true, force: true });
+    rmSync(localProject, { recursive: true, force: true });
+    rmSync(localData, { recursive: true, force: true });
   });
 
   afterEach(() => vi.restoreAllMocks());
@@ -134,6 +138,63 @@ describe("host-aware sandbox", () => {
     }
     expect(code).toBe(0);
     await desktop.destroy(computer, ctx);
+  });
+
+  it("binds product file tools to local Pi cwd without importing, exporting, or marking it", async () => {
+    const sandbox = createRunSandbox("desktop", {
+      dataDir: localData,
+      trustedWorkspaceRoot: localProject,
+    });
+    const computer = await sandbox.provision(
+      {
+        botId: "local-bot",
+        homePath: "/unused",
+        providerRef: path.join(localData, "desktop-computers", "local-bot"),
+        providerKind: "desktop",
+      },
+      ctx,
+    );
+
+    expect(computer).toMatchObject({
+      botId: "local-bot",
+      kind: "desktop",
+      providerRef: realpathSync(localProject),
+      fresh: false,
+    });
+    expect(sandbox.describe().capabilities).toMatchObject({ graphical: false, snapshots: false });
+
+    await sandbox.writeFile(
+      computer,
+      {
+        path: "native.txt",
+        content: new TextEncoder().encode("written through product tools"),
+      },
+      ctx,
+    );
+    expect(readFileSync(path.join(localProject, "native.txt"), "utf8")).toBe(
+      "written through product tools",
+    );
+    expect(new TextDecoder().decode(await sandbox.readFile(computer, "native.txt", ctx))).toBe(
+      "written through product tools",
+    );
+
+    const exported = [];
+    for await (const file of sandbox.exportWorkspace(computer, ctx)) exported.push(file);
+    expect(exported).toEqual([]);
+    await sandbox.importWorkspace(
+      computer,
+      (async function* () {
+        yield { path: "restored.txt", content: new TextEncoder().encode("must not appear") };
+      })(),
+      ctx,
+    );
+    expect(existsSync(path.join(localProject, "restored.txt"))).toBe(false);
+
+    await sandbox.stop(computer, ctx);
+    await sandbox.destroy(computer, ctx);
+    expect(existsSync(localProject)).toBe(true);
+    expect(existsSync(path.join(localProject, "native.txt"))).toBe(true);
+    expect(existsSync(path.join(localProject, ".stopped"))).toBe(false);
   });
 
   it("only switches docker deployments onto this Mac", () => {

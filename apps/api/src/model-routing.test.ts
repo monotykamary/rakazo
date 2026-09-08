@@ -54,6 +54,7 @@ describe("model routing settings", () => {
     const client = createRouterClient(
       createRouter({
         prisma,
+        env: { agentRuntime: "pi" },
         secrets: {},
         sandbox: {},
         home: {},
@@ -120,6 +121,7 @@ describe("model routing settings", () => {
     const client = createRouterClient(
       createRouter({
         prisma: f.prisma,
+        env: { agentRuntime: "pi" },
         secrets: {},
         sandbox: {},
         home: {},

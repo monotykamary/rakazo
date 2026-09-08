@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AdapterContext, JobPublisher, SandboxProvider } from "@rakazo/adapter-kit";
@@ -196,6 +196,26 @@ describe("computer recovery preserves live work", () => {
       ).toBe("live work");
     },
   );
+
+  it("persists the trusted local Pi workspace without restoring the managed home", async () => {
+    const { deps, row, root } = await fixture("desktop");
+    const trustedWorkspace = await mkdtemp(path.join(tmpdir(), "rakazo-trusted-workspace-"));
+    roots.push(trustedWorkspace);
+    deps.sandbox = new DesktopSandboxProvider({ root, trustedWorkspaceRoot: trustedWorkspace });
+
+    const reconnected = await provisionComputer(deps, row.id, context);
+
+    expect(row).toMatchObject({
+      state: "running",
+      providerRef: reconnected.providerRef,
+      kind: "desktop",
+    });
+    expect(reconnected).toMatchObject({
+      providerRef: await realpath(trustedWorkspace),
+      fresh: false,
+    });
+    expect(await deps.sandbox.listFiles(reconnected, "", context)).toEqual([]);
+  });
 
   it("restores the checkpoint when a desktop workspace is actually absent after restart", async () => {
     const { deps, row, root, first } = await fixture("desktop");

@@ -106,6 +106,7 @@ describe("model setup gate", () => {
   }) {
     const prisma = {
       user: {
+        findUnique: vi.fn().mockResolvedValue({ modelVisibility: { hide: [] } }),
         findUniqueOrThrow: vi.fn().mockResolvedValue({
           email: "user@rakazo.test",
           name: "Test User",
@@ -127,8 +128,8 @@ describe("model setup gate", () => {
       prisma,
       env: {
         agentRuntime: options.agentRuntime,
-        defaultProvider: "openrouter",
-        defaultModel: "test-model",
+        defaultProvider: options.agentRuntime === "pi-local" ? "pi-local" : "openrouter",
+        defaultModel: options.agentRuntime === "pi-local" ? "default" : "test-model",
         deploymentModelKey: options.deploymentModelKey,
         webOrigin: "http://127.0.0.1:5173",
         screenProxySecret: "fake-test-secret",
@@ -196,6 +197,46 @@ describe("model setup gate", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       json: expect.objectContaining({ needsModel: false }),
+    });
+  });
+
+  it("uses local Pi onboarding and model listing without a duplicate credential", async () => {
+    const { actor, handler } = modelGateDeps({ agentRuntime: "pi-local" });
+
+    const me = await call(handler, actor, "me", null);
+    expect(me.status).toBe(200);
+    await expect(me.json()).resolves.toEqual({
+      json: expect.objectContaining({
+        needsModel: false,
+        defaultProvider: "pi-local",
+        defaultModel: "default",
+      }),
+    });
+
+    const models = await call(handler, actor, "models/list", null);
+    expect(models.status).toBe(200);
+    await expect(models.json()).resolves.toEqual({
+      json: expect.arrayContaining([
+        expect.objectContaining({ provider: "pi-local", id: "default" }),
+      ]),
+    });
+  });
+
+  it("rejects every authenticated RPC for non-owners while local Pi is active", async () => {
+    const { actor, handler } = modelGateDeps({ agentRuntime: "pi-local" });
+    const response = await call(
+      handler,
+      { ...actor, userId: "other-user", isDeploymentOwner: false },
+      "me",
+      null,
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      json: expect.objectContaining({
+        code: "FORBIDDEN",
+        message: "Local Pi is available only to the deployment owner",
+      }),
     });
   });
 

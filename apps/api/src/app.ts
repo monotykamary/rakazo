@@ -12,6 +12,7 @@ import type {
   TransactionalEmailProvider,
 } from "@rakazo/adapter-kit";
 import {
+  type AgentProcessHost,
   applyMessagingOutboundStatus,
   ChatSdkMessagingSurface,
   type ComposioProvider,
@@ -43,6 +44,7 @@ import {
   isPipedreamEnabled,
   LocalAgentHomeStore,
   LocalArtifactStore,
+  LocalPiRuntime,
   McpConnector,
   McpOAuthBroker,
   messagingPlatformsFromEnv,
@@ -82,7 +84,7 @@ import {
 } from "@rakazo/logging";
 import { requestLogging } from "@rakazo/logging/hono";
 import { MarkdownMemoryStore } from "@rakazo/memory";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { type AppEnv, loadEnv } from "./env.js";
 import { mountMachineRunnerRoutes } from "./machines.js";
@@ -106,6 +108,19 @@ import {
 import { mountVoiceHttpRoutes } from "./voice.js";
 import { mountWebhookHttpRoutes } from "./webhook.js";
 
+export const LOCAL_PI_EXTERNAL_EFFECTS_MESSAGE =
+  "External host effects are disabled while local Pi is active.";
+
+export function mountLocalPiExternalEffectBlocks(app: Hono): void {
+  const blocked = (c: Context) => c.json({ error: LOCAL_PI_EXTERNAL_EFFECTS_MESSAGE }, 403);
+  app.all("/api/preview/:token", blocked);
+  app.all("/api/preview/:token/*", blocked);
+  app.post("/api/v1/bots/:botId/webhook", blocked);
+  app.post("/api/v1/bots/:botId/github", blocked);
+  app.all("/api/v1/messaging/webhook/:provider", blocked);
+  app.post("/api/v1/phone/webhook", blocked);
+}
+
 export interface AppHandles {
   app: Hono;
   prisma: PrismaClient;
@@ -119,6 +134,20 @@ export interface AppHandles {
   executor: ReturnType<typeof createRunExecutor>;
   runtime: AgentRuntime;
   stop: () => Promise<void>;
+}
+
+export function createConfiguredAgentRuntime(
+  env: Pick<AppEnv, "agentRuntime" | "localPi">,
+  managedHost: AgentProcessHost,
+): AgentRuntime {
+  if (env.agentRuntime === "scripted") return new ScriptedAgentRuntime();
+  if (env.agentRuntime === "pi-local") {
+    if (!env.localPi) {
+      throw new Error("AGENT_RUNTIME=pi-local requires validated local Pi configuration");
+    }
+    return new LocalPiRuntime(env.localPi);
+  }
+  return new PiAgentRuntime({ host: managedHost });
 }
 
 export async function createApp(
@@ -209,6 +238,7 @@ export async function createApp(
       boxApiKey: env.boxApiKey,
       boxApiUrl: env.boxApiUrl,
       dataDir: env.dataDir,
+      trustedWorkspaceRoot: env.localPi?.cwd,
       prisma,
     });
   const machineRouting = createMachineRouting({
@@ -285,11 +315,7 @@ export async function createApp(
   await connector.start();
   void stack.composio?.warmDirectory().catch(() => undefined);
   void pipedream?.warmDirectory?.().catch(() => undefined);
-  const runtime =
-    runtimeOverride ??
-    (env.agentRuntime === "scripted"
-      ? new ScriptedAgentRuntime()
-      : new PiAgentRuntime({ host: machineRouting.host }));
+  const runtime = runtimeOverride ?? createConfiguredAgentRuntime(env, machineRouting.host);
   const notifications = new ExpoPushProvider(env.dataDir);
   const auth = createAuth(prisma, {
     secret: env.authSecret,
@@ -359,6 +385,8 @@ export async function createApp(
     secretStore: secrets,
     secretHttp: remoteConnectors,
     deploymentModelKey: env.deploymentModelKey,
+    deploymentModel: { provider: env.defaultProvider, model: env.defaultModel },
+    localPiCwd: env.localPi?.cwd,
     dataDir: env.dataDir,
     notifications,
     jobs,
@@ -444,7 +472,9 @@ export async function createApp(
   app.use("*", requestLogging(logger));
   mountApiRequestBodyLimits(app);
   // Token-only opaque-origin previews own their CORS; never inherit API credentials.
-  mountServicePreviewRoutes(app, { prisma, sandbox, previewSecret: env.screenProxySecret });
+  // Local Pi points this provider at user files, so bearer links cannot proxy host effects.
+  if (env.agentRuntime === "pi-local") mountLocalPiExternalEffectBlocks(app);
+  else mountServicePreviewRoutes(app, { prisma, sandbox, previewSecret: env.screenProxySecret });
   app.use(
     "*",
     cors({
@@ -505,7 +535,9 @@ export async function createApp(
     if (actor) enrichLogContext({ "user.id": actor.userId, "space.id": actor.spaceId });
     return actor;
   });
-  mountWebhookHttpRoutes(app, { prisma, secrets, events, jobs });
+  if (env.agentRuntime !== "pi-local") {
+    mountWebhookHttpRoutes(app, { prisma, secrets, events, jobs });
+  }
   // Shared with stop so a shutdown during retry delays does not restart polling.
   let messagingStopped = false;
   let clearMessagingRetryDelay: (() => void) | undefined;
@@ -517,7 +549,7 @@ export async function createApp(
   /** Constructed even before start() succeeds so stop() can cancel in-flight startup. */
   let teamChatBridgeInstance: TeamChatBridge | undefined;
   const pendingTeamChatInbound = new PendingTeamChatInbound();
-  if (messaging) {
+  if (messaging && env.agentRuntime !== "pi-local") {
     const inboundDeps = {
       prisma,
       events,

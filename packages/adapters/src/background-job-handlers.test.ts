@@ -108,6 +108,14 @@ describe("createBackgroundJobHandlers", () => {
     } as unknown as PrismaClient;
     const executor = createRunExecutor({
       prisma,
+      runtime: {
+        describe: () => ({
+          id: "pi",
+          contractVersion: "1",
+          adapterVersion: "0.1.0",
+          capabilities: { streaming: true, compaction: true, tools: true },
+        }),
+      },
       deploymentModelKey: "deployment-key",
     } as Parameters<typeof createRunExecutor>[0]);
 
@@ -141,6 +149,14 @@ describe("createBackgroundJobHandlers", () => {
     } as unknown as PrismaClient;
     const executor = createRunExecutor({
       prisma,
+      runtime: {
+        describe: () => ({
+          id: "pi",
+          contractVersion: "1",
+          adapterVersion: "0.1.0",
+          capabilities: { streaming: true, compaction: true, tools: true },
+        }),
+      },
     } as Parameters<typeof createRunExecutor>[0]);
 
     await expect(

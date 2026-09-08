@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { constants } from "node:fs";
+import { constants, realpathSync, statSync } from "node:fs";
 import {
   lstat,
   mkdir,
@@ -60,8 +60,27 @@ interface DesktopBox {
 
 export class DesktopSandboxProvider implements SandboxProvider {
   readonly boxes = new Map<string, DesktopBox>();
+  private readonly trustedWorkspaceRoot: string | undefined;
 
-  constructor(private readonly opts: { root?: string; hostRoots?: string[] } = {}) {}
+  constructor(
+    private readonly opts: {
+      root?: string;
+      hostRoots?: string[];
+      trustedWorkspaceRoot?: string;
+    } = {},
+  ) {
+    if (!opts.trustedWorkspaceRoot) return;
+    if (!path.isAbsolute(opts.trustedWorkspaceRoot)) {
+      throw new Error("Trusted desktop workspace root must be absolute");
+    }
+    try {
+      const root = realpathSync(opts.trustedWorkspaceRoot);
+      if (!statSync(root).isDirectory()) throw new Error("not a directory");
+      this.trustedWorkspaceRoot = root;
+    } catch {
+      throw new Error("Trusted desktop workspace root must be an existing directory");
+    }
+  }
 
   describe() {
     return {
@@ -71,7 +90,7 @@ export class DesktopSandboxProvider implements SandboxProvider {
       capabilities: {
         graphical: false,
         pty: true,
-        snapshots: true,
+        snapshots: !this.trustedWorkspaceRoot,
         takeover: false,
         persistentHome: true,
         multiScreen: false,
@@ -83,28 +102,34 @@ export class DesktopSandboxProvider implements SandboxProvider {
     request: { botId: string; homePath: string },
     _context: AdapterContext,
   ): Promise<ComputerRef> {
-    const home = path.resolve(
-      this.opts.root ?? path.join(process.cwd(), "data"),
-      "desktop-computers",
-      request.botId,
-    );
-    const existing = [...this.boxes.values()].find(
-      (box) => box.ref.botId === request.botId || box.home === home,
-    );
+    const home =
+      this.trustedWorkspaceRoot ??
+      path.resolve(
+        this.opts.root ?? path.join(process.cwd(), "data"),
+        "desktop-computers",
+        request.botId,
+      );
+    const id = `desktop-${request.botId}`;
+    const existing =
+      this.boxes.get(id) ??
+      (!this.trustedWorkspaceRoot
+        ? [...this.boxes.values()].find(
+            (box) => box.ref.botId === request.botId || box.home === home,
+          )
+        : undefined);
     if (existing) {
       existing.running = true;
       return { ...existing.ref, fresh: false };
     }
-    const id = `desktop-${request.botId}`;
-    // Recursive mkdir returns undefined when the directory already exists. This
-    // survives adapter/process restarts and distinguishes live files from a new home.
-    const created = await mkdir(home, { recursive: true });
+    // A trusted workspace is existing user data, never a newly managed home.
+    // Managed desktop homes retain their existing create/reconnect behavior.
+    const created = this.trustedWorkspaceRoot ? undefined : await mkdir(home, { recursive: true });
     const ref: ComputerRef = {
       id,
       botId: request.botId,
       kind: "desktop",
       providerRef: home,
-      fresh: created !== undefined,
+      fresh: this.trustedWorkspaceRoot ? false : created !== undefined,
     };
     this.boxes.set(id, {
       ref,
@@ -244,6 +269,7 @@ export class DesktopSandboxProvider implements SandboxProvider {
   }
 
   async *exportWorkspace(computer: ComputerRef): AsyncIterable<PortableFile> {
+    if (this.trustedWorkspaceRoot) return;
     const box = this.requiredBox(computer);
     yield* walkDesktopWorkspace(box.home, "");
   }
@@ -253,6 +279,7 @@ export class DesktopSandboxProvider implements SandboxProvider {
     files: AsyncIterable<PortableFile>,
     _context: AdapterContext,
   ) {
+    if (this.trustedWorkspaceRoot) return;
     for await (const file of files) await this.writeFile(computer, file);
   }
 
@@ -269,12 +296,12 @@ export class DesktopSandboxProvider implements SandboxProvider {
     const box = this.boxFor(computer);
     if (box) this.boxes.delete(box.ref.id);
     this.boxes.delete(computer.id);
-    if (box && this.opts.root) {
+    if (box && this.opts.root && !this.trustedWorkspaceRoot) {
       await writeFile(path.join(box.home, ".stopped"), new Date().toISOString(), "utf8").catch(
         () => undefined,
       );
     }
-    if (box && !this.opts.root) {
+    if (box && !this.opts.root && !this.trustedWorkspaceRoot) {
       await rm(box.home, { recursive: true, force: true }).catch(() => undefined);
     }
   }
@@ -283,12 +310,18 @@ export class DesktopSandboxProvider implements SandboxProvider {
     const existing = this.boxes.get(computer.id);
     if (existing) return existing;
     for (const box of this.boxes.values()) {
-      if (box.ref.botId === computer.botId || box.home === computer.providerRef) return box;
+      if (
+        box.ref.botId === computer.botId ||
+        (!this.trustedWorkspaceRoot && box.home === computer.providerRef)
+      )
+        return box;
     }
     if (!computer.providerRef) return undefined;
+    const home = path.resolve(computer.providerRef);
+    if (this.trustedWorkspaceRoot && home !== this.trustedWorkspaceRoot) return undefined;
     const box: DesktopBox = {
       ref: computer,
-      home: path.resolve(computer.providerRef),
+      home,
       running: true,
       screen: "ready",
     };

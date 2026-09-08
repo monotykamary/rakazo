@@ -20,6 +20,8 @@ export interface SandboxProviderOptions {
   boxApiKey?: string;
   boxApiUrl?: string;
   dataDir?: string;
+  /** Explicit host workspace used only by the trusted local Pi composition. */
+  trustedWorkspaceRoot?: string;
 }
 
 function missingRemoteKey(provider: "e2b" | "daytona" | "box", envName: string): SandboxProvider {
@@ -60,6 +62,7 @@ export function createSandboxProvider(kind: string, opts: SandboxProviderOptions
     case "desktop":
       return new DesktopSandboxProvider({
         root: opts.dataDir,
+        trustedWorkspaceRoot: opts.trustedWorkspaceRoot,
       });
     case "fake":
       return new FakeSandboxProvider();

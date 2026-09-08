@@ -83,43 +83,28 @@ the `https://` address.
 
 ## Local development (source checkout)
 
-You need Node.js 24.x or 26+, Bun 1.4.2, and Docker. Bun manages packages;
-Node still runs Pi and the development tools. See [workspace installation](docs/workspace-install.md).
+Use Node.js 24.x or 26+, Bun 1.4.2, and Apple `container` with Mocker on macOS.
+Bun manages packages; Node runs Pi and the app services.
 
 ```bash
-git clone https://github.com/elie222/rakazo.git
-cd rakazo
-cp .env.example .env
-```
-
-Set `BETTER_AUTH_SECRET`, `ENCRYPTION_KEY`, and `SCREEN_PROXY_SECRET` in `.env` to independent
-long random values. Docker sandboxes also need a dedicated `SANDBOX_SUPERVISOR_TOKEN`. You can
-also set `OPENROUTER_API_KEY`, or connect a supported model provider during onboarding.
-
-Managed app catalogs are optional. Set `COMPOSIO_API_KEY` for Composio, or the
-`PIPEDREAM_CLIENT_ID`, `PIPEDREAM_CLIENT_SECRET`, and `PIPEDREAM_PROJECT_ID` trio for Pipedream
-Connect. Users can add an HTTPS MCP server, Treg endpoint, or OpenAPI JSON document from
-**Integrations** without enabling either managed catalog. Connector credentials are encrypted on the
-server and are never returned by the API.
-
-Treg is usage-metered. Self-hosters supply their own Treg token; operators embedding Treg in a
-hosted product should review [Treg's integration terms](https://treg.to/integrate.md), which require
-a written agreement for hosted resale.
-
-```bash
-docker compose --env-file .env -f infra/compose/docker-compose.yml up postgres -d
 bun install --frozen-lockfile
-bun run db:generate
-bun run db:migrate
-bun run sandbox:build
 bun run dev
 ```
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173), create an account, connect a model, and create
-your first bot.
+Approve trusted-local execution on first use. The bootstrap creates missing private
+configuration, starts persistent PostgreSQL with Mocker, applies migrations, and runs
+web, API and worker watchers. It uses your existing Pi configuration and credentials,
+not a Docker-isolated replacement. If Pi is missing, it offers a pinned local install.
+This mode grants host access and is restricted to the deployment owner.
 
-For deployment, provider selection, backups, and upgrades, see the
-[self-hosting guide](./docs/self-host.md).
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Existing Pi installations and
+databases are preserved; Ctrl+C does not delete database storage. No hosted vendor
+is required to boot. A fresh Pi installation still needs `/login` and `/model` setup.
+
+See [local development](docs/local-development.md) for trust, configuration, native
+computer limitations and managed-mode startup; [workspace installation](docs/workspace-install.md)
+for dependency details. Managed deployments continue to use the
+[self-hosting guide](docs/self-host.md) and their existing sandbox configuration.
 
 ## Desktop and mobile
 
@@ -136,7 +121,7 @@ server. **This computer** installs and starts the published images with Docker C
 files as `infra/compose/install-images.sh`) under the app's data directory, so Docker Desktop,
 OrbStack, or Docker Engine must be installed; the app links to them when it is not. Installed
 builds pin the image tag to their own version; unpackaged builds pull `edge`. Developers running
-`bun run dev` should pick **Existing instance** with `http://127.0.0.1:5173` instead. Public servers
+`bun run dev` should pick **Another server** with `http://127.0.0.1:5173` instead. Public servers
 must use HTTPS; HTTP is accepted only for loopback and private LAN addresses (not link-local). The
 app verifies Rakazo's health endpoint before saving, and later launches go straight to that
 instance. The stack keeps running after the app quits; **Stop Local Stack** in the application

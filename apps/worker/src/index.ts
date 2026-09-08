@@ -29,6 +29,7 @@ import {
   isPipedreamEnabled,
   LocalAgentHomeStore,
   LocalArtifactStore,
+  LocalPiRuntime,
   McpConnector,
   McpOAuthBroker,
   messagingEnvFromProcess,
@@ -39,6 +40,7 @@ import {
   pipedreamConfigFromEnv,
   reconcileCloudAgents,
   resolveDeploymentModel,
+  resolveLocalPiRuntimeOptions,
   resolveSandboxProvider,
   ScriptedAgentRuntime,
   SpaceMemoryProviderResolver,
@@ -73,7 +75,9 @@ async function main() {
   const machines = createMachinesService({ store: createPrismaMachineStore(prisma) });
   const dataDir = process.env.DATA_DIR ?? "./data";
   // Same resolver the API uses, so both processes agree on provider, model and key.
-  const { key: deploymentModelKey } = resolveDeploymentModel();
+  const deploymentModel = resolveDeploymentModel();
+  const { key: deploymentModelKey } = deploymentModel;
+  const localPi = resolveLocalPiRuntimeOptions(process.env, dataDir);
   const sandboxProvider = resolveSandboxProvider(process.env);
   const fallbackSandbox = createRunSandbox(sandboxProvider, {
     supervisorUrl: process.env.SANDBOX_SUPERVISOR_URL ?? "http://127.0.0.1:7091",
@@ -85,6 +89,7 @@ async function main() {
     boxApiKey: process.env.BOX_API_KEY,
     boxApiUrl: process.env.BOX_API_URL ?? process.env.BOX_BASE_URL,
     dataDir,
+    trustedWorkspaceRoot: localPi?.cwd,
     prisma,
   });
   const machineRouting = createMachineRouting({
@@ -105,7 +110,9 @@ async function main() {
   const runtime =
     process.env.AGENT_RUNTIME === "scripted"
       ? new ScriptedAgentRuntime()
-      : new PiAgentRuntime({ host: machineRouting.host });
+      : localPi
+        ? new LocalPiRuntime(localPi)
+        : new PiAgentRuntime({ host: machineRouting.host });
   const mcpOAuth = new McpOAuthBroker(prisma, secrets);
   const mcp = new McpConnector(
     prisma,
@@ -173,6 +180,8 @@ async function main() {
     ].filter(Boolean),
     secretStore: secrets,
     deploymentModelKey,
+    deploymentModel,
+    localPiCwd: localPi?.cwd,
     dataDir,
     notifications: new ExpoPushProvider(dataDir),
     jobs,
