@@ -26,7 +26,7 @@ function prismaStub(overrides: {
 
 const fetchByMachine = vi.fn(
   (machineId: string) =>
-    (async (input: string | URL | Request, init?: RequestInit) =>
+    (async (_input: string | URL | Request, _init?: RequestInit) =>
       Response.json({ id: "container-1", resumed: false, machineId })) as unknown as Response,
 );
 
@@ -72,6 +72,13 @@ describe("createMachineRouting", () => {
     );
     expect(created.id).toBe("c2");
     expect(fallback.provision).toHaveBeenCalled();
+    await expect(routing.sandbox.services!.list(created, context)).resolves.toEqual({
+      supported: false,
+      services: [],
+    });
+    await expect(routing.sandbox.services!.stop(created, "app", context)).rejects.toThrow(
+      "does not support supervised services",
+    );
   });
 
   it("throws an isolation error for an unassigned bot without a fallback sandbox", async () => {

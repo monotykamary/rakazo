@@ -1,7 +1,8 @@
 import type { JobPublisher, JobWorkerHost } from "@rakazo/adapter-kit";
 import { loadRootEnv } from "@rakazo/core/node/load-root-env";
 
-loadRootEnv();
+// A managed local worker uses the exact environment snapshot authenticated at boot.
+if (process.env.RAKAZO_DEV_WORKER_IPC !== "1") loadRootEnv();
 
 import {
   ChatSdkMessagingSurface,
@@ -13,6 +14,7 @@ import {
   createMachineRouting,
   createMachinesService,
   createMessagingContextLoader,
+  createOfficeMovePool,
   createPostgresReconciliationLeadership,
   createRunExecutor,
   createRunSandbox,
@@ -39,6 +41,7 @@ import {
   PostgresRealtimeFanout,
   pipedreamConfigFromEnv,
   reconcileCloudAgents,
+  reconcileOfficeMoveIntents,
   resolveDeploymentModel,
   resolveLocalPiRuntimeOptions,
   resolveSandboxProvider,
@@ -64,6 +67,7 @@ async function main() {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) throw new Error("DATABASE_URL is required");
   const { prisma, pool } = createDb(databaseUrl);
+  const officeMovePool = createOfficeMovePool(databaseUrl);
   const realtime = new PostgresRealtimeFanout({
     connectionString: process.env.REALTIME_DATABASE_URL ?? databaseUrl,
     publisher: pool,
@@ -159,7 +163,9 @@ async function main() {
   const artifacts = new LocalArtifactStore(dataDir);
   const inMemoryJobs = process.env.WAKEUP_DRIVER === "memory" ? new InMemoryJobQueue() : undefined;
   const jobs: JobPublisher = inMemoryJobs ?? new GraphileJobPublisher(databaseUrl);
-  const jobHost: JobWorkerHost = inMemoryJobs ?? new GraphileJobWorkerHost(databaseUrl);
+  const managedDevWorker = process.env.RAKAZO_DEV_WORKER_IPC === "1" && !!process.send;
+  const jobHost: JobWorkerHost =
+    inMemoryJobs ?? new GraphileJobWorkerHost(databaseUrl, { noHandleSignals: managedDevWorker });
   // One provider instance so emulator launches and polls share the same Map.
   const cloudAgent = createCloudAgentConnection();
   const executor = createRunExecutor({
@@ -198,6 +204,14 @@ async function main() {
     home,
     jobs,
     events,
+    officeMove: {
+      prisma,
+      jobs,
+      sandbox,
+      home,
+      pool: officeMovePool,
+      defaultComputerKind: sandboxProvider,
+    },
     workerId: process.pid.toString(),
     runtime,
     secretStore: secrets,
@@ -212,6 +226,7 @@ async function main() {
     jobs,
     events,
     leadership: createPostgresReconciliationLeadership(pool),
+    reconcileOfficeMoves: () => reconcileOfficeMoveIntents({ prisma, jobs }),
     reconcileCloudAgents: async () => {
       await sweepExpiredMachineCommands(prisma);
       await reconcileCloudAgents({ prisma, jobs, cloudAgent });
@@ -219,26 +234,40 @@ async function main() {
   });
   reconciler.start();
 
-  let stopping = false;
-  const stop = async () => {
-    if (stopping) return;
-    stopping = true;
-    try {
-      await reconciler.stop();
-      await jobHost.stop();
-      await jobs.close();
-      await realtime.close();
-      await connector.stop();
-      await mcp.close();
-      await prisma.$disconnect().catch(() => undefined);
-      await pool.end().catch(() => undefined);
-    } finally {
-      await logger.flush({ timeoutMs: 2_000 });
-    }
-  };
+  let stopping: Promise<void> | undefined;
+  const stop = () =>
+    (stopping ??= (async () => {
+      try {
+        await reconciler.stop();
+        // Graphile waits for handlers even after its helper abort timer fires.
+        // dev-worker-graphile.test.ts exercises the installed runner across that timeout.
+        await jobHost.stop();
+        await officeMovePool.end();
+        await jobs.close();
+        await realtime.close();
+        await connector.stop();
+        await mcp.close();
+        await prisma.$disconnect().catch(() => undefined);
+        await pool.end().catch(() => undefined);
+      } finally {
+        await logger.flush({ timeoutMs: 2_000 });
+      }
+    })());
   process.once("SIGTERM", () => void stop());
   process.once("SIGINT", () => void stop());
 
+  // The local dev manager owns this entire host, not individual Pi children.
+  if (managedDevWorker) {
+    process.on("message", (message: unknown) => {
+      if ((message as { type?: string })?.type === "dev-worker:drain") {
+        void stop().then(
+          () => process.exit(0),
+          () => process.send?.({ type: "dev-worker:drain-failed" }),
+        );
+      }
+    });
+    process.send?.({ type: "dev-worker:ready" });
+  }
   logger.info("worker ready");
 }
 

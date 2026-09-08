@@ -27,6 +27,8 @@ import { createBrokerCall, managedCoreTools } from "./pi-managed-tools.js";
 import { manageModelVisibilityExtension } from "./pi-managed-visibility.js";
 import { MANAGED_RESERVED_TOOL_NAMES } from "./pi-tool-names.js";
 
+import { buildRakazoGuidance, RAKAZO_SKILL_PATH, withRakazoSkillRead } from "./rakazo-guidance.js";
+
 export interface ManagedKitOptions {
   instructions: string;
   proxyTools: ManagedProxyTool[];
@@ -151,7 +153,7 @@ export async function createManagedKit(options: ManagedKitOptions): Promise<Mana
     state.graph,
     options.getPlacement?.(),
   );
-  const core = managedCoreTools(call);
+  const core = managedCoreTools(await withRakazoSkillRead(call, () => paused || disposed));
   // Implementation callbacks stay private; native providers expose their one canonical API.
   const privateCapabilities = new Set([
     "read_file",
@@ -291,7 +293,7 @@ export async function createManagedKit(options: ManagedKitOptions): Promise<Mana
     noThemes: true,
     noContextFiles: true,
     additionalExtensionPaths: [installation.extensionPaths[3]!, installation.extensionPaths[5]!],
-    systemPrompt: options.instructions,
+    additionalSkillPaths: [RAKAZO_SKILL_PATH],
     extensionFactories: [
       {
         name: "fabric-managed",
@@ -368,16 +370,23 @@ export async function createManagedKit(options: ManagedKitOptions): Promise<Mana
     );
   const resourceLoader: ResourceLoader = {
     getExtensions: () => loader.getExtensions(),
-    getSkills: () => ({ skills: [], diagnostics: [] }),
+    getSkills: () => loader.getSkills(),
     getPrompts: () => ({ prompts: [], diagnostics: [] }),
     getThemes: () => ({ themes: [], diagnostics: [] }),
     getAgentsFiles: () => ({ agentsFiles: [] }),
-    getSystemPrompt: () => options.instructions,
+    getSystemPrompt: () => undefined,
     getSystemPromptSource: () => undefined,
-    getAppendSystemPrompt: () => [],
+    getAppendSystemPrompt: () =>
+      [
+        options.instructions,
+        buildRakazoGuidance({
+          exposedToolNames: productTools.map((tool) => tool.name),
+          fabricAvailable: true,
+        }),
+      ].filter(Boolean),
     getAppendSystemPromptSources: () => [],
     // SDK always publishes extension resource suggestions while binding. The managed
-    // catalog deliberately ignores them: no host skill paths or project resources enter prompts.
+    // catalog ignores suggestions: only the explicitly bundled Rakazo skill is allowed.
     extendResources: () => undefined,
     reload: async () => {
       throw new Error("Managed reload requires a new isolated worker");

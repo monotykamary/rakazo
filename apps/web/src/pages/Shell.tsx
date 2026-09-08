@@ -356,6 +356,7 @@ export function ShellPage() {
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [panel, setPanel] = useState<Panel>(null);
+  const officePromptPending = useRef(false);
   const [threadInspector, setThreadInspector] = useState<ThreadInspectorTarget | null>(null);
   const [peerConversation, setPeerConversation] = useState<{
     botId?: string;
@@ -1901,12 +1902,14 @@ export function ShellPage() {
     setPendingAttachments((current) => current.filter((item) => item.id !== attachment.id));
   }, []);
   const sendMessage = useCallback(
-    async (text: string, mentions: ComposerMention[] = []) => {
-      const initialBotTarget = activeBotId.current;
-      const initialGroupTarget = activeGroupId.current;
+    async (text: string, mentions: ComposerMention[] = [], promptBotId?: string) => {
+      const initialBotTarget = promptBotId ?? activeBotId.current;
+      const initialGroupTarget = promptBotId ? undefined : activeGroupId.current;
       if ((!initialBotTarget && !initialGroupTarget) || sending) return;
       const originThreadKey = initialGroupTarget ?? initialBotTarget;
-      const attachments = attachmentsForThread(pendingAttachments, originThreadKey);
+      const attachments = promptBotId
+        ? []
+        : attachmentsForThread(pendingAttachments, originThreadKey);
       const plan = resolveComposerSendPlan({
         text,
         mentions,
@@ -1996,7 +1999,7 @@ export function ShellPage() {
             text: trimmed || undefined,
             mentions: plan.mentionPayload.length ? plan.mentionPayload : undefined,
             artifactIds: artifactIds.length ? artifactIds : undefined,
-            replyToMessageId: activeReplyTarget?.id,
+            replyToMessageId: promptBotId ? undefined : activeReplyTarget?.id,
           });
           if (activeBotId.current === botTarget) {
             updateSnapshot((current) =>
@@ -2013,11 +2016,13 @@ export function ShellPage() {
           }
         }
         dropDelayedSetup();
-        setReplyTarget(null);
-        revokePendingAttachmentPreviews(attachments);
-        setPendingAttachments((current) =>
-          current.filter((attachment) => attachment.threadKey !== originThreadKey),
-        );
+        if (!promptBotId) {
+          setReplyTarget(null);
+          revokePendingAttachmentPreviews(attachments);
+          setPendingAttachments((current) =>
+            current.filter((attachment) => attachment.threadKey !== originThreadKey),
+          );
+        }
         // Refresh sidebar status even when a bot→group reroute navigates away below.
         void refreshBots().catch(() => undefined);
         if (reroutedToGroup && groupTarget) {
@@ -3533,6 +3538,18 @@ export function ShellPage() {
               <BotSettings
                 key={active.id}
                 bot={active}
+                sending={sending}
+                onPrompt={async (botId, text) => {
+                  if (sending || officePromptPending.current) return;
+                  officePromptPending.current = true;
+                  setPanel(null);
+                  navigate(`/app/${botId}`);
+                  try {
+                    await sendMessage(text, [], botId);
+                  } finally {
+                    officePromptPending.current = false;
+                  }
+                }}
                 memoryProviderConfigured={memoryProviderConfig != null}
                 onSkillsChange={setAgentSkills}
                 onSave={async ({ computerMode, ...patch }) => {

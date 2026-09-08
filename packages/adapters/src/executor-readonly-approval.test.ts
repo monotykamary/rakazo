@@ -121,6 +121,7 @@ function fixture({
         name: "Assistant",
         title: "Assistant",
         description: "Test assistant",
+        instructions: "",
         computerId: "computer-1",
         computer: { id: "computer-1", scope: "dedicated" },
       })),

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Run from a reviewed checkout on the destination server, never via a chat tool.
+# Run from a reviewed checkout on the destination server after explicit deployment consent.
+# Bot-guided preparation must not expose credentials or claim this migrates existing data.
 source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd -- "$source_dir/../.." && pwd)
 host=""

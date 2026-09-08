@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { buildRakazoGuidance } from "./rakazo-guidance.js";
 
 const endpoint = process.env.RAKAZO_LOCAL_PI_BRIDGE_ENDPOINT;
 
@@ -81,8 +82,13 @@ export default function localPiExtension(pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event) => {
     const lease = await bridge<{ active: boolean; pause?: boolean }>("lease", { effects: false });
     if (!lease.active) throw new Error("Rakazo run is paused");
-    if (!instructions) return;
-    return { systemPrompt: `${event.systemPrompt}\n\n${instructions}` };
+    const guidance = buildRakazoGuidance({
+      exposedToolNames: [...productTools],
+      fabricAvailable: pi.getActiveTools().includes("fabric_exec"),
+    });
+    return {
+      systemPrompt: [event.systemPrompt, instructions, guidance].filter(Boolean).join("\n\n"),
+    };
   });
 
   pi.on("tool_call", async (event) => {

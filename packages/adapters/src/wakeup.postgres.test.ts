@@ -8,6 +8,7 @@ const describePostgres =
 
 function handlers(overrides: Partial<BackgroundJobHandlers> = {}): BackgroundJobHandlers {
   return {
+    "office.move": vi.fn(async () => undefined),
     "run.continue": vi.fn(async () => undefined),
     "routine.wakeup": vi.fn(async () => undefined),
     "computer.sleep": vi.fn(async () => undefined),

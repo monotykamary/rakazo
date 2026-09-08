@@ -1,7 +1,9 @@
 import { ORPCError } from "@orpc/server";
-import type { AdapterContext, AgentHomeStore, SandboxProvider } from "@rakazo/adapter-kit";
 import {
+  assignBotMachine as assignSharedBotMachine,
   createMachinesService,
+  type MachineAssignDeps,
+  MachineRelocationError,
   type MachinesService,
   type MachinesServiceLimits,
   MachineTunnelError,
@@ -12,13 +14,11 @@ import type { PrismaClient } from "@rakazo/db";
 import {
   createPrismaMachineStore,
   type MachineAssignmentResult,
-  machineAssignment,
   sweepExpiredMachineCommands,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import type { Hono } from "hono";
 import { readBoundedBody } from "./http-body.js";
-import { relocateBotMachine } from "./machine-relocation.js";
 
 export class MachineRelocationBlockedError extends Error {
   constructor(message = "Stop the bot's active work before moving it to another machine.") {
@@ -173,109 +173,19 @@ export function createMachineCompositionDeps(deps: MachineCompositionDeps): {
   };
 }
 
-function machineAssignmentError(error: unknown): never {
-  if (error instanceof ORPCError) throw error;
-  if (error instanceof MachineRelocationBlockedError) {
-    throw new ORPCError("BAD_REQUEST", { message: error.message });
-  }
-  throw error;
-}
+export type { MachineAssignDeps } from "@rakazo/adapters";
 
-export interface MachineAssignDeps {
-  prisma: PrismaClient;
-  sandbox: SandboxProvider;
-  home: AgentHomeStore;
-  /**
-   * Kind for default (unassign) computer rows created by relocation; Main wires
-   * it from the deployment's sandbox configuration. Defaults to "docker".
-   */
-  defaultComputerKind?: string;
-}
-
-/**
- * machines.assign: point a bot at a user-owned machine (or back to a default)
- * under the same computerSwitching latch the setComputer flow uses, so runs
- * cannot start mid-move. Every move is a verified relocation: the source
- * workspace is checkpointed, copied to a distinct target home key, verified
- * against a manifest, and only then atomically committed; the source is
- * retired gracefully and kept until the copy is proven. Queued dispatched-work
- * bindings keep their old placement and hold instead of rebinding.
- */
 export async function assignBotMachine(
   deps: MachineAssignDeps,
   actor: Actor,
   input: { botId: string; machineId: string | null },
 ): Promise<MachineAssignmentResult> {
-  const { prisma } = deps;
-  // Existence is checked before the latch so a foreign or unknown bot reads as
-  // NOT_FOUND instead of a latch conflict that would leak its state.
-  const owned = await prisma.bot.findFirst({
-    where: { id: input.botId, spaceId: actor.spaceId, userId: actor.userId },
-    select: { id: true },
-  });
-  if (!owned) throw new ORPCError("NOT_FOUND");
-  const claimed = await prisma.bot.updateMany({
-    where: {
-      id: input.botId,
-      spaceId: actor.spaceId,
-      userId: actor.userId,
-      computerSwitching: false,
-    },
-    data: { computerSwitching: true },
-  });
-  if (claimed.count !== 1) throw new ORPCError("CONFLICT");
   try {
-    const bot = await prisma.bot.findFirst({
-      where: { id: input.botId, spaceId: actor.spaceId, userId: actor.userId },
-      include: { computer: true },
-    });
-    if (!bot) throw new ORPCError("NOT_FOUND");
-    const current = bot.computer;
-    if (input.machineId !== null) {
-      const machine = await prisma.machine.findFirst({
-        where: {
-          id: input.machineId,
-          spaceId: actor.spaceId,
-          userId: actor.userId,
-          status: "paired",
-        },
-        select: { id: true },
-      });
-      if (!machine) throw new ORPCError("NOT_FOUND");
-      if (current?.machineId === machine.id) {
-        return await machineAssignment(prisma, actor, { botId: bot.id });
-      }
-      return await relocateBotMachine(
-        {
-          prisma,
-          sandbox: deps.sandbox,
-          home: deps.home,
-          defaultComputerKind: deps.defaultComputerKind,
-        },
-        actor,
-        { botId: bot.id, current, machineId: machine.id },
-      );
-    }
-    if (!current?.machineId) {
-      return await machineAssignment(prisma, actor, { botId: bot.id });
-    }
-    return await relocateBotMachine(
-      {
-        prisma,
-        sandbox: deps.sandbox,
-        home: deps.home,
-        defaultComputerKind: deps.defaultComputerKind,
-      },
-      actor,
-      { botId: bot.id, current, machineId: null },
-    );
+    return await assignSharedBotMachine(deps, actor, input);
   } catch (error) {
-    throw machineAssignmentError(error);
-  } finally {
-    await prisma.bot.updateMany({
-      where: { id: input.botId },
-      data: { computerSwitching: false },
-    });
+    if (error instanceof MachineRelocationError)
+      throw new ORPCError(error.code, { message: error.message, cause: error });
+    throw error;
   }
 }
 

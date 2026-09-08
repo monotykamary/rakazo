@@ -1,4 +1,8 @@
 export const ZH_MESSAGES: Record<string, string> = {
+  Office: "办公室",
+  "Link office": "连接办公室",
+  "Move office": "迁移办公室",
+  "Manage offices": "管理办公室",
   "Add machine": "添加机器",
   "Cancel pairing": "取消配对",
   "Choose machine": "选择机器",

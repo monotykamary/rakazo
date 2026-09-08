@@ -35,6 +35,7 @@ const APPROVAL_REQUIRED_BUILTIN_TOOLS = new Set([
 const EXPLICIT_APPROVAL_BUILTIN_TOOLS = new Set(["create_space"]);
 
 const UNATTENDED_SAFE_BUILTIN_TOOLS = new Set([
+  "get_bot_context",
   "browser_snapshot",
   "cloud_agent_status",
   "discover_projects",
@@ -99,6 +100,7 @@ export function toolRequiresExplicitApproval(
   toolName: string,
   args?: Record<string, unknown>,
 ): boolean {
+  if (toolName === "manage_office") return args?.action !== "inspect" && args?.action !== "plan";
   if (toolName === "computer_services")
     return args?.action !== "list" && args?.action !== "changes";
   return EXPLICIT_APPROVAL_BUILTIN_TOOLS.has(toolName);
@@ -112,7 +114,8 @@ export function unattendedTriggerToolRequiresApproval(
   args?: Record<string, unknown>,
 ): boolean {
   if (trigger !== "webhook") return false;
-  if (toolName === "computer_services") return toolRequiresExplicitApproval(toolName, args);
+  if (toolName === "computer_services" || toolName === "manage_office")
+    return toolRequiresExplicitApproval(toolName, args);
   return viaConnector
     ? connectorToolRequiresApproval(toolName)
     : !UNATTENDED_SAFE_BUILTIN_TOOLS.has(toolName);

@@ -1,4 +1,8 @@
 .git
+.pi
+**/.pi
+.dev-worker
+**/.dev-worker
 .github
 .vercel
 .turbo

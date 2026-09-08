@@ -18,7 +18,12 @@ import {
   BOT_TITLE_MAX_LENGTH,
   isModelHidden,
 } from "@rakazo/contracts";
-import { connectedModelOptions, modelOptionKey, parseModelOptionKey } from "@rakazo/core";
+import {
+  type BotPromptHandler,
+  connectedModelOptions,
+  modelOptionKey,
+  parseModelOptionKey,
+} from "@rakazo/core";
 import {
   BotAvatar,
   Button,
@@ -199,6 +204,8 @@ export function BotSettings({
   onSave,
   onExport,
   onClear,
+  onPrompt,
+  sending = false,
 }: {
   bot: Bot;
   onSkillsChange: (skills: AgentSkillCatalogEntry[]) => void;
@@ -219,6 +226,8 @@ export function BotSettings({
   }) => Promise<void>;
   onExport: () => Promise<void>;
   onClear: () => void;
+  onPrompt: BotPromptHandler;
+  sending?: boolean;
 }) {
   const { t } = useLingui();
   const [advancedOpened, setAdvancedOpened] = useState(false);
@@ -355,6 +364,12 @@ export function BotSettings({
           ))}
         </div>
       </div>
+      <BotRunsOn
+        bot={bot}
+        onMachineChange={onMachineChange}
+        onPrompt={onPrompt}
+        disabled={sending}
+      />
       <details
         data-testid="bot-settings-advanced"
         className="group mt-5"
@@ -373,7 +388,6 @@ export function BotSettings({
         {!machineAssigned ? (
           <ComputerModePicker value={computerMode} onChange={setComputerMode} />
         ) : null}
-        <BotRunsOn bot={bot} onMachineChange={onMachineChange} />
         <BotServices botId={bot.id} />
         <Suspense fallback={null}>
           <ScratchpadSection botId={bot.id} />

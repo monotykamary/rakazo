@@ -8,6 +8,7 @@ import {
   WorkToolName,
 } from "@rakazo/contracts";
 import { z } from "zod";
+import { MANAGE_OFFICE_TOOL } from "./office-tools.js";
 import { manageQueueTool } from "./premove-tool-schema.js";
 
 export const DELEGATION_TOOL_NAMES = new Set([
@@ -21,6 +22,13 @@ export const DELEGATION_TOOL_NAMES = new Set([
 ]);
 
 export const builtinAgentTools: ConnectorTool[] = [
+  MANAGE_OFFICE_TOOL,
+  {
+    name: "get_bot_context",
+    description: "Read this bot's identity, instructions, workspace and app context when needed.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    readOnly: true,
+  },
   manageQueueTool,
   {
     name: "computer_observe",

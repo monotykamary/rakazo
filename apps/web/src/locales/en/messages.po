@@ -13,6 +13,18 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
+msgid "Office"
+msgstr "Office"
+
+msgid "Link office"
+msgstr "Link office"
+
+msgid "Move office"
+msgstr "Move office"
+
+msgid "Manage offices"
+msgstr "Manage offices"
+
 #: src/pages/Shell.tsx:2670
 msgid " (unread)"
 msgstr " (unread)"

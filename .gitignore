@@ -1,5 +1,6 @@
 .deepsec/
 .pi/
+.dev-worker/
 node_modules
 __pycache__/
 *.py[cod]

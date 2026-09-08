@@ -26,6 +26,7 @@ import {
   createMachinesService,
   createMessagingContextLoader,
   createMessagingTeamChatSender,
+  createOfficeMovePool,
   createRunExecutor,
   createRunSandbox,
   createRunSecretWriter,
@@ -56,6 +57,7 @@ import {
   pushTokenPath,
   type RemoteConnectorDependencies,
   reconcileCloudAgents,
+  reconcileOfficeMoveIntents,
   ScriptedAgentRuntime,
   SmtpEmailProvider,
   SpaceMemoryProviderResolver,
@@ -184,6 +186,7 @@ export async function createApp(
     ? { prisma: prismaOverride, pool: undefined }
     : createDb(env.databaseUrl);
   const { prisma } = created;
+  const officeMovePool = created.pool ? createOfficeMovePool(env.databaseUrl) : undefined;
   created.pool?.on("error", () => undefined);
   const realtime =
     realtimeOverride ??
@@ -404,6 +407,16 @@ export async function createApp(
     home,
     jobs,
     events,
+    officeMove: officeMovePool
+      ? {
+          prisma,
+          jobs,
+          sandbox,
+          home,
+          pool: officeMovePool,
+          defaultComputerKind: env.sandboxProvider,
+        }
+      : undefined,
     workerId: "api",
     runtime,
     secretStore: secrets,
@@ -419,6 +432,7 @@ export async function createApp(
     ? createJobReconciler({
         prisma,
         jobs,
+        reconcileOfficeMoves: () => reconcileOfficeMoveIntents({ prisma, jobs }),
         reconcileCloudAgents: async () => {
           await sweepExpiredMachineCommands(prisma);
           await reconcileCloudAgents({ prisma, jobs, cloudAgent });
@@ -855,6 +869,7 @@ export async function createApp(
       await email?.drain?.();
       await reconciler?.stop();
       await jobs.close();
+      await officeMovePool?.end();
       await realtime.close();
       await connector.stop();
       await mcp.close();

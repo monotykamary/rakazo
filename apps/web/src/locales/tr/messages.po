@@ -13,6 +13,18 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
+msgid "Office"
+msgstr "Ofis"
+
+msgid "Link office"
+msgstr "Ofis bağla"
+
+msgid "Move office"
+msgstr "Ofis değiştir"
+
+msgid "Manage offices"
+msgstr "Ofisleri yönet"
+
 #: src/pages/Shell.tsx:2670
 msgid " (unread)"
 msgstr " (okunmadı)"

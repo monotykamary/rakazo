@@ -13,6 +13,18 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
+msgid "Office"
+msgstr "Oficina"
+
+msgid "Link office"
+msgstr "Vincular oficina"
+
+msgid "Move office"
+msgstr "Cambiar de oficina"
+
+msgid "Manage offices"
+msgstr "Administrar oficinas"
+
 #: src/pages/Shell.tsx:2670
 msgid " (unread)"
 msgstr " (sin leer)"

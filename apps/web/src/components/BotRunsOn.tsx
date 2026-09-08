@@ -2,8 +2,9 @@ import { t } from "@lingui/core/macro";
 import { Trans } from "@lingui/react/macro";
 import type { Bot } from "@rakazo/contracts";
 import {
+  BOT_OFFICE_PROMPTS,
   BotDeploymentController,
-  currentMachine,
+  type BotPromptHandler,
   isLocalManagedOrigin,
   type MachineGateway,
   type MachineSummary,
@@ -26,7 +27,7 @@ import {
   DialogTitle,
   Input,
 } from "@rakazo/ui-web";
-import { ChevronRight, Copy, Plus } from "lucide-react";
+import { Copy, Ellipsis, Plus } from "lucide-react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { rpc } from "../lib/rpc";
 
@@ -48,8 +49,12 @@ const gateway: MachineGateway = {
 export function BotRunsOn({
   bot,
   onMachineChange,
+  onPrompt,
+  disabled = false,
 }: {
   bot: Bot;
+  onPrompt: BotPromptHandler;
+  disabled?: boolean;
   onMachineChange?: (machineId: string | null) => void;
 }) {
   const controller = useMemo(() => new BotDeploymentController(gateway, bot.id), [bot.id]);
@@ -65,34 +70,37 @@ export function BotRunsOn({
     if (snapshot.phase === "ready") onMachineChange?.(snapshot.botMachineId);
   }, [snapshot.phase, snapshot.botMachineId, onMachineChange]);
 
-  const current = currentMachine(snapshot.botMachineId, snapshot.machines);
   const pairing = snapshot.pairing;
 
   return (
     <div className="mt-4" data-testid="bot-runs-on">
       <div className="text-[14px] text-muted-foreground">
-        <Trans>Runs on</Trans>
+        <Trans>Office</Trans>
       </div>
       <Button
         variant="outline"
         size="sm"
         className="mt-2"
         data-testid="runs-on-trigger"
+        disabled={disabled || snapshot.phase !== "ready"}
+        onClick={() => {
+          setOpen(false);
+          void onPrompt(
+            bot.id,
+            snapshot.botMachineId ? BOT_OFFICE_PROMPTS.move : BOT_OFFICE_PROMPTS.link,
+          );
+        }}
+      >
+        {snapshot.botMachineId ? <Trans>Move office</Trans> : <Trans>Link office</Trans>}
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="mt-2 ms-1"
+        aria-label={t`Manage offices`}
         onClick={() => setOpen(true)}
       >
-        {current ? (
-          current.name
-        ) : snapshot.botMachineId ? (
-          <Trans>Unavailable machine</Trans>
-        ) : (
-          <Trans>Default machine</Trans>
-        )}
-        {current?.status === "revoked" ? (
-          <span className="text-destructive">
-            <Trans>Revoked</Trans>
-          </span>
-        ) : null}
-        <ChevronRight size={14} strokeWidth={1.8} />
+        <Ellipsis size={16} aria-hidden="true" />
       </Button>
       {snapshot.error ? (
         <p role="alert" className="mt-2 text-[13px] text-destructive">
@@ -102,7 +110,7 @@ export function BotRunsOn({
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-sm" data-testid="runs-on-dialog">
           <DialogTitle>
-            <Trans>Runs on</Trans>
+            <Trans>Office</Trans>
           </DialogTitle>
           {isLocalManagedOrigin(window.location.origin) ? (
             <p className="text-[13px] text-muted-foreground" data-testid="runs-on-local-warning">
@@ -110,9 +118,7 @@ export function BotRunsOn({
             </p>
           ) : null}
           {pairing ? <PairingPanel controller={controller} pairing={pairing} /> : null}
-          {pairing ? null : (
-            <MachineList controller={controller} snapshot={snapshot} current={current} />
-          )}
+          {pairing ? null : <MachineList controller={controller} snapshot={snapshot} />}
         </DialogContent>
       </Dialog>
     </div>
@@ -124,11 +130,9 @@ type Snapshot = ReturnType<BotDeploymentController["getSnapshot"]>;
 function MachineList({
   controller,
   snapshot,
-  current,
 }: {
   controller: BotDeploymentController;
   snapshot: Snapshot;
-  current: MachineSummary | null;
 }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
@@ -136,32 +140,15 @@ function MachineList({
   const choices = orderedMachineChoices(snapshot.machines);
   return (
     <fieldset className="flex min-w-0 flex-col gap-1" aria-label={t`Machine`}>
-      <Button
-        variant={snapshot.botMachineId === null ? "secondary" : "ghost"}
-        aria-pressed={snapshot.botMachineId === null}
-        disabled={snapshot.saving}
-        data-testid="runs-on-default"
-        className="justify-start"
-        onClick={() => void controller.choose(null)}
-      >
-        <Trans>Default machine</Trans>
-      </Button>
       {choices.map((machine) => (
         <div key={machine.id} className="flex items-center gap-2">
-          <Button
-            variant={current?.id === machine.id ? "secondary" : "ghost"}
-            aria-pressed={current?.id === machine.id}
-            disabled={snapshot.saving}
-            data-testid="runs-on-machine"
-            onClick={() => void controller.choose(machine.id)}
-            className="min-w-0 flex-1 justify-start text-[14px]"
-          >
+          <div className="flex min-w-0 flex-1 items-center gap-2 text-[14px]">
             <span
               aria-hidden="true"
               className={`size-2 shrink-0 rounded-full ${machine.status === "online" ? "bg-success" : "bg-muted-foreground/40"}`}
             />
             <span className="truncate">{machine.name}</span>
-          </Button>
+          </div>
           <Button
             variant="ghost"
             size="sm"
@@ -253,7 +240,7 @@ function PairingPanel({
   if (pairing.phase === "paired") {
     return (
       <Button onClick={() => controller.acknowledgePairing()}>
-        <Trans>Choose machine</Trans>
+        <Trans>Done</Trans>
       </Button>
     );
   }

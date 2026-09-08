@@ -627,10 +627,15 @@ describe("process and install boundaries", () => {
     );
     expect(pkg.scripts.dev).toBe("node scripts/dev.mjs");
     expect(pkg.scripts["dev:services"]).toContain("--env-mode=loose");
-    for (const service of ["api", "worker", "web"])
+    for (const service of ["api", "web"])
       expect(pkg.scripts["dev:services"]).toContain(`--filter=@rakazo/${service}`);
-    expect(pkg.scripts["dev:services"]).not.toMatch(/desktop|supervisor/);
+    expect(pkg.scripts["dev:services"]).not.toMatch(/desktop|supervisor|worker/);
+    for (const action of ["status", "stop", "restart"])
+      expect(pkg.scripts[`dev:worker:${action}`]).toBe(`node scripts/dev-worker.mjs ${action}`);
     expect(pkg.scripts["dev:managed"]).toContain("--filter=@rakazo/sandbox-supervisor");
     expect(pkg.scripts["dev:kit"]).toContain("--setup-kit");
+    const ignored = await readFile(new URL("../../../.dockerignore", import.meta.url), "utf8");
+    expect(ignored.split("\n")).toContain("**/.dev-worker");
+    expect(ignored.split("\n")).toContain("**/.pi");
   });
 });

@@ -42,6 +42,25 @@ describePostgres("machine mailbox (PostgreSQL)", () => {
     await prisma.space.create({
       data: { id: actor.spaceId, organizationId: id, name: "Machine Test" },
     });
+    await prisma.member.create({
+      data: {
+        id: randomUUID(),
+        organizationId: id,
+        userId: actor.userId,
+        role: "owner",
+        createdAt: new Date(),
+      },
+    });
+    await prisma.spaceMember.create({
+      data: {
+        id: randomUUID(),
+        organizationId: id,
+        spaceId: actor.spaceId,
+        userId: actor.userId,
+        role: "admin",
+        createdAt: new Date(),
+      },
+    });
   });
 
   afterAll(async () => {

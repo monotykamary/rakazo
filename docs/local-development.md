@@ -23,16 +23,63 @@ remote placements do not inherit that authority.
 
 The bootstrap generates missing private configuration, provisions persistent
 PostgreSQL with Mocker/Apple containers when it owns the dev database, applies
-migrations, and starts the API, worker and web watchers. Open
+migrations, starts a stable execution worker, and watches the API and web. Open
 <http://127.0.0.1:5173>. Electron is never launched automatically.
 
 Existing configuration and database URLs are preserved. An existing database URL is
 an external dependency, not permission to replace its container or erase its data.
 Keep the encryption key stable across restarts. Never commit `.env` or `data/`.
-Ctrl+C stops the development processes without deleting database storage. Fresh
+Ctrl+C stops the API/web launcher, not the stable worker or database storage. Fresh
 setups choose an available loopback database port. Owned PostgreSQL uses a native
 Apple volume with a private ownership record; unknown volumes and missing previously
 owned storage are rejected rather than adopted or silently replaced.
+
+## Build Rakazo while it is working
+
+When upgrading from the old watched worker, let its active jobs finish before
+stopping the old dev command. Trusted-local `bun run dev` then keeps the entire
+execution worker outside the API/web watcher process group. Restarting dev retains active Pi RPC processes, Fabric work,
+tool callbacks and job leases. It does not merely detach a Pi child whose bridge dies.
+
+```sh
+bun run dev:worker:status
+bun run dev:worker:stop
+bun run dev:worker:restart
+```
+
+Stop requests a drain and returns; poll status until stopped before maintenance.
+Restart drains before loading new worker code. Dev refuses pending database
+migrations while a worker exists; stop it, wait for stopped, then run dev to migrate. API/web restarts keep the old worker code until this explicit restart.
+Changed runtime configuration is rejected rather than silently reused. Private
+ownership state under `DATA_DIR/.dev-worker` authenticates reuse; a recorded PID is
+never authority to kill a process. An orphaned state directory requires inspection,
+not deletion while its worker may still be alive. Keep DATA_DIR non-symlinked and
+private. Startup/output diagnostics are retained in the private
+`DATA_DIR/.dev-worker/worker.log` until the owned worker stops. This lifecycle
+currently requires POSIX; managed development remains the
+explicit alternative on unsupported hosts.
+
+Office actions on web/Electron and mobile send ordinary chat prompts. The bot uses
+its discovered tools and bundled Rakazo skill to plan the work; bot templates are
+generated with existing tools, not a new template-management subsystem. Pi retains
+its normal system prompt and Fabric guidance. Rakazo app context is read on demand
+with `get_bot_context`, rather than repeating a tool manual every turn.
+
+`manage_office` inspects paired offices and queues explicitly approved managed moves.
+The backend waits for the originating run and active work, verifies the workspace
+copy and atomically switches placement. Pending moves survive worker restarts;
+interrupted in-flight transfers fail closed and may retain the source latch for
+operator inspection. Do not clear that latch until the old worker/copy is proven
+stopped. Pairing and revocation remain available under **Manage offices**, with
+pairing credentials outside the conversation.
+
+A paired machine is not an independent deployment: the original API/database may
+still require the laptop. Native Pi profiles, credentials and repositories are not
+automatically exported. The bot can plan and prepare an independent VPS using
+available Pi/Fabric tools and the existing deployment script, with explicit consent
+for infrastructure and data transfer. Complete control-plane migration is not an
+atomic app operation; verify destination health, model access, repositories and
+conversation continuity before cutover.
 
 ## Your Pi installation
 

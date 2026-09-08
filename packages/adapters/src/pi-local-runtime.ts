@@ -29,6 +29,8 @@ import {
 import { prepareManagedToolArguments } from "./pi-tool-arguments.js";
 import { MANAGED_RESERVED_TOOL_NAMES } from "./pi-tool-names.js";
 
+import { RAKAZO_SKILL_PATH } from "./rakazo-guidance.js";
+
 const MINIMUM_PI_VERSION = PI_RUNTIME_VERSION.split(".").map(Number);
 const BRIDGE_ENV = "RAKAZO_LOCAL_PI_BRIDGE_ENDPOINT";
 const MAX_BRIDGE_BODY_BYTES = 16 * 1024 * 1024;
@@ -1240,7 +1242,16 @@ export class LocalPiRuntime implements AgentRuntime {
       const childEnv = sanitizedEnvironment({ [BRIDGE_ENV]: endpoint });
       child = spawn(
         this.command,
-        ["--mode", "rpc", "--session", session.file, "--extension", LOCAL_EXTENSION],
+        [
+          "--mode",
+          "rpc",
+          "--session",
+          session.file,
+          "--extension",
+          LOCAL_EXTENSION,
+          "--skill",
+          RAKAZO_SKILL_PATH,
+        ],
         {
           cwd,
           env: childEnv,

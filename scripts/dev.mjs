@@ -9,6 +9,7 @@ import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseEnv } from "node:util";
+import { ensureWorker, workerControl } from "./dev-worker.mjs";
 
 class DevError extends Error {}
 
@@ -154,6 +155,12 @@ export async function readEnvironment(root) {
     if (error.code === "ENOENT") return { text: "", fresh: true };
     throw error;
   }
+}
+
+export async function loadEnvironment(root, inherited = process.env) {
+  const snapshot = await readEnvironment(root);
+  const stored = parseEnv(snapshot.text);
+  return { snapshot, stored, values: { ...stored, ...inherited } };
 }
 
 export async function saveEnvironment(root, snapshot, additions) {
@@ -650,6 +657,29 @@ export async function ensureDatabase(plan, runner, signal) {
   );
 }
 
+// Call only after database authentication; status failures must not reclaim a worker.
+export async function prepareWorkerDatabase({ root, env, runner, control = workerControl }) {
+  const { state } = await control({ root, env }, "status");
+  if (state !== "stopped") {
+    let status;
+    try {
+      status = await runner.run(
+        "bun",
+        ["run", "--cwd", "packages/db", "prisma", "migrate", "status"],
+        { allowFailure: true, capture: true },
+      );
+    } catch {
+      // A failed read-only check is not permission to migrate under active work.
+    }
+    if (status?.code !== 0)
+      throw new DevError(
+        "Migrations are not verified up to date while a worker exists. Run node scripts/dev-worker.mjs stop, wait until node scripts/dev-worker.mjs status reports stopped, then run bun dev. Nothing was stopped.",
+      );
+  }
+  await runner.run("bun", ["run", "db:generate"]);
+  if (state === "stopped") await runner.run("bun", ["run", "db:migrate"], { capture: true });
+}
+
 export async function bootstrap({
   root = checkout,
   inherited = process.env,
@@ -658,7 +688,7 @@ export async function bootstrap({
   const opts = options(args);
   if (opts.has("--help")) {
     console.log(
-      "bun run dev [--trust-local-pi] [--install-pi] [--install-kit]\nbun run dev:pi (or --pi): open Pi for /login and /model\nbun run dev:kit: isolated pinned Pi and kit setup, not authentication\nStarts web, API and worker from source; never Electron. Local Pi has host access.\nDatabase volumes persist after Ctrl+C. Existing databases and Pi configuration are preserved.",
+      "bun run dev [--trust-local-pi] [--install-pi] [--install-kit]\nbun run dev:pi (or --pi): open Pi for /login and /model\nbun run dev:kit: isolated pinned Pi and kit setup, not authentication\nStarts web, API and worker from source; never Electron. Local Pi has host access.\nCtrl+C leaves the local worker and active tasks running. node scripts/dev-worker.mjs status|stop|restart controls it. Restart drains active work before reloading source; no automatic worker watch. Database volumes persist. Existing databases and Pi configuration are preserved.",
     );
     return;
   }
@@ -707,9 +737,7 @@ export async function bootstrap({
     }
     return;
   }
-  const snapshot = await readEnvironment(root);
-  const stored = parseEnv(snapshot.text);
-  const values = { ...stored, ...inherited };
+  const { snapshot, stored, values } = await loadEnvironment(root, inherited);
   if (values.NODE_ENV === "production" || values.RAKAZO_DEPLOY_DIR || values.RAKAZO_COMPOSE_FILE)
     throw new DevError("Refusing source dev startup in a managed deployment");
   if (
@@ -804,20 +832,19 @@ export async function bootstrap({
       },
       { signal: abort.signal },
     );
-    console.log("Database ready. Generating client and applying migrations.");
-    await runner.run("bun", ["run", "db:generate"]);
-    await runner.run("bun", ["run", "db:migrate"], { capture: true });
+    await prepareWorkerDatabase({ root, env, runner });
     await preflightServices(env);
-    let workerReady = false;
-    let workerOutput = "";
-    const service = runner.launch("bun", ["run", "dev:services"], {
-      onOutput: (chunk) => {
-        workerOutput = `${workerOutput}${chunk}`.slice(-4096);
-        if (/worker ready/.test(workerOutput)) workerReady = true;
-      },
-    });
+    await ensureWorker({ root, env });
+    const service = runner.launch("bun", [
+      "x",
+      "turbo",
+      "dev",
+      "--env-mode=loose",
+      "--filter=@rakazo/api",
+      "--filter=@rakazo/web",
+    ]);
     console.log(
-      "Source services starting. Ctrl+C stops child processes; Postgres data is retained.",
+      "Source services starting. Ctrl+C stops API/web; the worker and active tasks remain alive. Use node scripts/dev-worker.mjs stop to drain.",
     );
     const exited = service.done.then((result) => {
       throw new DevError(`Dev service exited (${result.code})`);
@@ -837,7 +864,9 @@ export async function bootstrap({
                   }),
                 ),
               );
-              return workerReady && results.every(Boolean);
+              return (
+                (await workerControl({ root, env })).state === "ready" && results.every(Boolean)
+              );
             } catch {
               return false;
             }

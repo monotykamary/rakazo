@@ -554,6 +554,7 @@ export interface VoiceTranscribeRequest {
 }
 
 export interface BackgroundJobPayloads {
+  "office.move": { intentId: string };
   "run.continue": { runId: string };
   "routine.wakeup": { routineId: string; scheduledFor: string };
   "computer.sleep": { computerId: string };

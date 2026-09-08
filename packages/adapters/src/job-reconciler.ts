@@ -105,6 +105,7 @@ export function createJobReconciler(
     events?: ThreadEvents;
     leadership?: ReconciliationLeadership;
     reconcileCloudAgents?: () => Promise<void>;
+    reconcileOfficeMoves?: () => Promise<void>;
   },
   options: { intervalMs?: number; batchSize?: number } = {},
 ) {
@@ -123,6 +124,7 @@ export function createJobReconciler(
       if (deps.leadership && !(await deps.leadership.tryAcquire())) return;
 
       await deps.reconcileCloudAgents?.();
+      await deps.reconcileOfficeMoves?.();
 
       const now = new Date();
       controlScanDeadline ??= new Date(now.getTime() + CONTROL_LOOKAHEAD_MS);

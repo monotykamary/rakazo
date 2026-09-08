@@ -348,6 +348,7 @@ model Bot {
   computerId        String?
   computer          Computer?         @relation(fields: [computerId], references: [id], onDelete: SetNull)
   computerSwitching Boolean           @default(false)
+  officeMoveIntentId String?
   voiceId           String?
   autoSpeak         Boolean           @default(false)
   modelProvider     String?
@@ -752,6 +753,29 @@ model CloudAgent {
   @@index([providerKey, nextPollAt])
   @@index([spaceId, userId, id])
   @@map("cloud_agents")
+}
+
+// Approved post-run moves; scalar owner/source snapshots intentionally survive run deletion.
+model OfficeMoveIntent {
+  id String @id @default(cuid())
+  spaceId String
+  userId String
+  botId String
+  runId String
+  effectKey String @unique
+  claimToken String?
+  currentComputerId String?
+  machineId String?
+  status String @default("pending")
+  resultComputerId String?
+  error String?
+  nextAttemptAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, nextAttemptAt, id])
+  @@index([spaceId, userId, botId, createdAt])
+  @@map("office_move_intents")
 }
 
 model ExternalEffect {

@@ -1,7 +1,8 @@
 import type { MachineAssignment } from "@rakazo/contracts";
 import {
+  BOT_OFFICE_PROMPTS,
   BotDeploymentController,
-  currentMachine,
+  type BotPromptHandler,
   isLocalManagedOrigin,
   type MachineGateway,
   type MachineSummary,
@@ -45,9 +46,11 @@ export function RunsOnPicker({
   botId,
   apiBase,
   onMachineChange,
+  onPrompt,
   disabled = false,
 }: {
   botId: string;
+  onPrompt: BotPromptHandler;
   apiBase: string | undefined;
   onMachineChange?: (machineId: string | null) => void;
   disabled?: boolean;
@@ -68,18 +71,23 @@ export function RunsOnPicker({
     if (snapshot.phase === "ready") onMachineChange?.(snapshot.botMachineId);
   }, [snapshot.phase, snapshot.botMachineId, onMachineChange]);
 
-  const current = currentMachine(snapshot.botMachineId, snapshot.machines);
   const pairing = snapshot.pairing;
 
   return (
     <View style={{ marginTop: 16 }}>
-      <Text style={styles.label}>{t("Runs on")}</Text>
+      <Text style={styles.label}>{t("Office")}</Text>
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ selected: false }}
-        disabled={disabled}
-        accessibilityLabel={t("Runs on")}
-        onPress={() => setOpen(true)}
+        disabled={disabled || snapshot.phase !== "ready"}
+        accessibilityLabel={snapshot.botMachineId ? t("Move office") : t("Link office")}
+        onPress={() => {
+          setOpen(false);
+          void onPrompt(
+            botId,
+            snapshot.botMachineId ? BOT_OFFICE_PROMPTS.move : BOT_OFFICE_PROMPTS.link,
+          );
+        }}
         style={({ pressed }) => [
           styles.trigger,
           pressed && styles.pressed,
@@ -87,18 +95,16 @@ export function RunsOnPicker({
         ]}
       >
         <Text style={styles.triggerLabel} numberOfLines={1}>
-          {current
-            ? current.name
-            : snapshot.botMachineId
-              ? t("Unavailable machine")
-              : t("Default machine")}
+          {snapshot.botMachineId ? t("Move office") : t("Link office")}
         </Text>
-        <NativeSymbol
-          ios="chevron.right"
-          android="chevron-forward"
-          size={14}
-          color={native.secondaryLabel}
-        />
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={t("Manage offices")}
+        onPress={() => setOpen(true)}
+        style={({ pressed }) => [styles.manage, pressed && styles.pressed]}
+      >
+        <NativeSymbol ios="ellipsis" android="ellipsis-horizontal" size={20} color={native.label} />
       </Pressable>
       {snapshot.error ? <Text style={styles.error}>{snapshot.error}</Text> : null}
       <Modal
@@ -109,7 +115,7 @@ export function RunsOnPicker({
       >
         <ScrollView contentContainerStyle={styles.sheet} keyboardShouldPersistTaps="handled">
           <Text style={styles.title} numberOfLines={1}>
-            {t("Runs on")}
+            {t("Office")}
           </Text>
           {isLocalManagedOrigin(apiBase) ? (
             <Text style={styles.note} testID="runs-on-local-warning">
@@ -119,7 +125,7 @@ export function RunsOnPicker({
           {pairing ? (
             <PairingPanel controller={controller} pairing={pairing} serverOrigin={apiBase ?? ""} />
           ) : (
-            <MachineList controller={controller} snapshot={snapshot} current={current} />
+            <MachineList controller={controller} snapshot={snapshot} />
           )}
           <Pressable
             accessibilityRole="button"
@@ -139,11 +145,9 @@ type Snapshot = ReturnType<BotDeploymentController["getSnapshot"]>;
 function MachineList({
   controller,
   snapshot,
-  current,
 }: {
   controller: BotDeploymentController;
   snapshot: Snapshot;
-  current: MachineSummary | null;
 }) {
   const { t } = useI18n();
   const tokens = useMobileTokens();
@@ -165,27 +169,9 @@ function MachineList({
 
   return (
     <View>
-      <Pressable
-        accessibilityRole="radio"
-        accessibilityState={{ selected: snapshot.botMachineId === null }}
-        disabled={snapshot.saving}
-        onPress={() => void controller.choose(null)}
-        style={({ pressed }) => [styles.machine, pressed && styles.pressed]}
-      >
-        <Text style={styles.machineLabel}>{t("Default machine")}</Text>
-        {snapshot.botMachineId === null ? (
-          <NativeSymbol ios="checkmark" android="checkmark" size={16} color={native.label} />
-        ) : null}
-      </Pressable>
       {choices.map((machine) => (
         <View key={machine.id} style={styles.machineRow}>
-          <Pressable
-            accessibilityRole="radio"
-            accessibilityState={{ selected: current?.id === machine.id }}
-            disabled={snapshot.saving}
-            onPress={() => void controller.choose(machine.id)}
-            style={({ pressed }) => [styles.machine, pressed && styles.pressed]}
-          >
+          <View style={styles.machine}>
             <View
               style={[
                 styles.dot,
@@ -198,10 +184,7 @@ function MachineList({
             <Text style={styles.machineLabel} numberOfLines={1}>
               {machine.name}
             </Text>
-            {current?.id === machine.id ? (
-              <NativeSymbol ios="checkmark" android="checkmark" size={16} color={native.label} />
-            ) : null}
-          </Pressable>
+          </View>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={t("Revoke {name}", { name: machine.name })}
@@ -272,7 +255,7 @@ function PairingPanel({
         onPress={() => controller.acknowledgePairing()}
         style={styles.action}
       >
-        <Text style={styles.actionLabel}>{t("Choose machine")}</Text>
+        <Text style={styles.actionLabel}>{t("Done")}</Text>
       </Pressable>
     );
   }
@@ -322,6 +305,14 @@ function createRunsOnStyles(tokens: ReturnType<typeof useMobileTokens>) {
       color: native.secondaryLabel,
       fontSize: 14,
       marginBottom: 8,
+    },
+    manage: {
+      minHeight: 44,
+      width: 44,
+      alignItems: "center",
+      justifyContent: "center",
+      alignSelf: "flex-end",
+      borderRadius: 11,
     },
     trigger: {
       minHeight: 48,

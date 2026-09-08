@@ -7,6 +7,7 @@ import type {
 } from "./types.js";
 
 const payloadSchemas = {
+  "office.move": z.object({ intentId: z.string().min(1) }).strict(),
   "run.continue": z.object({ runId: z.string().min(1) }),
   "routine.wakeup": z.object({
     routineId: z.string().min(1),

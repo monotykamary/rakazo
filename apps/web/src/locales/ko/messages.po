@@ -13,6 +13,18 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
+msgid "Office"
+msgstr "오피스"
+
+msgid "Link office"
+msgstr "오피스 연결"
+
+msgid "Move office"
+msgstr "오피스 이전"
+
+msgid "Manage offices"
+msgstr "오피스 관리"
+
 #: src/pages/Shell.tsx:2670
 msgid " (unread)"
 msgstr " (읽지 않음)"

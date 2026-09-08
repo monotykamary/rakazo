@@ -8,14 +8,16 @@ import {
   type ModelSelection,
   normalizeCreateBotProfile,
 } from "@rakazo/contracts";
+import type { BotPromptHandler } from "@rakazo/core";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { BotAvatar } from "../components/bot-avatar";
 import { ComputerModePicker } from "../components/computer-mode-picker";
 import { ModelSelectionControl } from "../components/ModelSelectionControl";
 import { RunsOnPicker } from "../components/runs-on-picker";
 import { currentApiBase, type MobileBot, rpc } from "../lib/api";
+import { cancelFocusPrompt } from "../lib/focus-prompt";
 import { useI18n } from "../lib/i18n";
 import { useMobileTokens } from "../lib/native";
 
@@ -45,6 +47,30 @@ export default function BotSettingsScreen() {
   );
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const promptPending = useRef(false);
+  const onPrompt: BotPromptHandler = async (targetBotId, text) => {
+    if (pending || promptPending.current) return;
+    promptPending.current = true;
+    setPending(true);
+    setError(null);
+    try {
+      const clientNonce =
+        globalThis.crypto?.randomUUID?.() ??
+        `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      // Same durable send endpoint as the composer, without its draft or attachments.
+      await rpc("threads/send", { botId: targetBotId, text, clientNonce });
+      cancelFocusPrompt(targetBotId);
+      router.dismissTo({
+        pathname: "/thread",
+        params: { botId: targetBotId, ...(bot?.id === targetBotId ? { name: bot.name } : {}) },
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("Failed to send message"));
+    } finally {
+      promptPending.current = false;
+      setPending(false);
+    }
+  };
 
   useEffect(() => {
     if (!botId) return;
@@ -220,6 +246,8 @@ export default function BotSettingsScreen() {
             botId={bot.id}
             apiBase={currentApiBase()}
             onMachineChange={onMachineChange}
+            onPrompt={onPrompt}
+            disabled={pending}
           />
         ) : null}
         {bot ? (

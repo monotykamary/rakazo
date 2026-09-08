@@ -509,18 +509,17 @@ describeDatabase("verified workspace relocation (PostgreSQL)", () => {
         email: `other-${randomUUID()}@example.test`,
       },
     });
-    const foreignSpace = await prisma.space.create({
-      data: {
-        id: `foreign-space-${randomUUID()}`,
-        organizationId: (await prisma.space.findUniqueOrThrow({ where: { id: actor.spaceId } }))
-          .organizationId,
-        name: "Foreign space",
-        isDefault: false,
-      },
-      select: { id: true },
+    const foreignSpace = await bootstrapUserSpace(prisma, other, {
+      signupsEnabled: "true",
+      signupAllowlist: undefined,
     });
     const foreignBot = await createRepos(prisma).createBot(
-      { userId: other.id, spaceId: foreignSpace.id, email: other.email, isDeploymentOwner: false },
+      {
+        userId: other.id,
+        spaceId: foreignSpace.spaceId,
+        email: other.email,
+        isDeploymentOwner: false,
+      },
       {
         name: "Foreign bot",
         title: "",

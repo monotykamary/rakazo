@@ -15,6 +15,24 @@ import {
 } from "./action-approval.js";
 
 describe("toolRequiresApproval", () => {
+  it("keeps Office inspection read-only and requires explicit approval for every mutation", () => {
+    for (const action of ["inspect", "plan"]) {
+      expect(toolRequiresApproval("manage_office", false, { action })).toBe(false);
+      expect(toolRequiresExplicitApproval("manage_office", { action })).toBe(false);
+      expect(
+        unattendedTriggerToolRequiresApproval("webhook", "manage_office", false, { action }),
+      ).toBe(false);
+    }
+    for (const action of ["move", "link", "unknown", undefined]) {
+      expect(toolRequiresApproval("manage_office", false, { action })).toBe(true);
+      expect(toolRequiresExplicitApproval("manage_office", { action })).toBe(true);
+      expect(
+        unattendedTriggerToolRequiresApproval("webhook", "manage_office", false, { action }),
+      ).toBe(true);
+    }
+    expect(toolRequiresApproval("get_bot_context", false)).toBe(false);
+    expect(unattendedTriggerToolRequiresApproval("webhook", "get_bot_context", false)).toBe(false);
+  });
   it("requires explicit service mutation approval but lets discovery and inspection stay read-only", () => {
     for (const action of ["declare", "stop", "restart", "remove", undefined]) {
       expect(toolRequiresApproval("computer_services", false, { action })).toBe(true);

@@ -13,6 +13,18 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
+msgid "Office"
+msgstr "कार्यालय"
+
+msgid "Link office"
+msgstr "कार्यालय जोड़ें"
+
+msgid "Move office"
+msgstr "कार्यालय बदलें"
+
+msgid "Manage offices"
+msgstr "कार्यालय प्रबंधित करें"
+
 #: src/pages/Shell.tsx:2670
 msgid " (unread)"
 msgstr " (अपठित)"

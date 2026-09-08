@@ -4,8 +4,6 @@ import type {
   ComputerActionRequest,
   ComputerInput,
   ComputerRef,
-  ComputerServicePreviewRequest,
-  ComputerServiceSpec,
   ComputerServicesCapability,
   ControlLeaseRef,
   PortableFile,
@@ -114,8 +112,12 @@ export function createMachineRouting(options: MachineRoutingOptions): MachineRou
         return provider.pageBrowser(ref, request, context);
       };
       this.services = {
-        list: (computer, context) =>
-          this.withServices(computer, (services, ref) => services.list(ref, context)),
+        list: async (computer, context) => {
+          const { provider, ref } = this.route(computer);
+          return provider.services
+            ? provider.services.list(ref, context)
+            : { supported: false, services: [] };
+        },
         declare: (computer, spec, context) =>
           this.withServices(computer, (services, ref) => services.declare(ref, spec, context)),
         stop: (computer, name, context) =>
