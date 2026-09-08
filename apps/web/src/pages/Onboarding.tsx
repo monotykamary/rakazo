@@ -31,6 +31,7 @@ export function OnboardingPage() {
   const navigate = useNavigate();
   const fieldId = useId();
   const [step, setStep] = useState<"loading" | "model" | "bot">("loading");
+  const [canLeave, setCanLeave] = useState(false);
   const [catalog, setCatalog] = useState<ModelCatalogEntry[]>([]);
   const [query, setQuery] = useState("");
   const [showAllProviders, setShowAllProviders] = useState(false);
@@ -69,6 +70,7 @@ export function OnboardingPage() {
     void Promise.all([rpc.me(), rpc.models.list().catch(() => [])])
       .then(([me, models]) => {
         setCatalog(models);
+        setCanLeave(me.hasOnboarded === true);
         const preferred =
           models.find(
             (entry) => entry.provider === me.defaultProvider && entry.id === me.defaultModel,
@@ -234,6 +236,18 @@ export function OnboardingPage() {
   return (
     <div className="min-h-full bg-background px-6 py-12">
       <div className="mx-auto w-full max-w-[560px]">
+        {canLeave ? (
+          <Button
+            variant="ghost"
+            className="mb-4"
+            onClick={() => {
+              cancelOAuthAttempt();
+              navigate("/app", { replace: true });
+            }}
+          >
+            <Trans>Back</Trans>
+          </Button>
+        ) : null}
         {step === "loading" ? (
           <p className="text-muted-foreground">
             <Trans>Loading…</Trans>

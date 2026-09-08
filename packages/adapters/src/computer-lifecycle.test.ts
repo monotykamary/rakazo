@@ -1606,6 +1606,145 @@ describe("computer replacement", () => {
     }
   });
 
+  it("does not clobber a moved row with the stale replace stop write", async () => {
+    // Upstream b423545 safety, adapted without maintenanceId: the suspending claim is the
+    // ownership token. A concurrent boot that wins the row between our claim and teardown
+    // keeps its identity; the fenced stop/error writes match nothing and Replace refuses.
+    const row = {
+      id: "computer-1",
+      homeKey: "bot-1",
+      providerRef: "provider-1",
+      kind: "fake",
+      machineId: "machine-1",
+      scope: "dedicated",
+      state: "running",
+      controlHolder: "none",
+      controlLeaseId: null,
+      updatedAt: new Date("2024-01-01T00:00:00.000Z"),
+    };
+    let claimReturned = false;
+    const updateMany = vi.fn(
+      async (args: { where: Record<string, unknown>; data?: Record<string, unknown> }) => {
+        if (!claimReturned) {
+          claimReturned = true;
+          Object.assign(row, { state: "suspending" });
+          Object.assign(row, {
+            state: "booting",
+            providerRef: "provider-2",
+            machineId: "machine-2",
+            updatedAt: new Date("2024-01-01T00:00:01.000Z"),
+          });
+          return { count: 1 };
+        }
+        const owned =
+          args.where.state === "suspending" &&
+          args.where.providerRef === "provider-1" &&
+          args.where.kind === "fake" &&
+          args.where.machineId === "machine-1";
+        return { count: owned ? 1 : 0 };
+      },
+    );
+    const prisma = {
+      computer: {
+        findUniqueOrThrow: vi.fn(async () => ({ ...row })),
+        updateMany,
+      },
+      run: { findFirst: vi.fn().mockResolvedValue(null) },
+    } as unknown as PrismaClient;
+    const destroy = vi.fn().mockResolvedValue(undefined);
+    const sandbox = {
+      releaseScreen: vi.fn().mockResolvedValue(undefined),
+      destroy,
+    } as unknown as SandboxProvider;
+    await expect(
+      replaceComputer(
+        {
+          prisma,
+          sandbox,
+          home: {} as AgentHomeStore,
+          jobs: {} as JobPublisher,
+          events: {} as ThreadEvents,
+        },
+        "computer-1",
+        "reset",
+        context,
+      ),
+    ).rejects.toBeInstanceOf(ComputerBusyError);
+    expect(destroy).toHaveBeenCalledOnce();
+    expect(row.state).toBe("booting");
+    expect(row.providerRef).toBe("provider-2");
+    expect(row.machineId).toBe("machine-2");
+    const stoppedWrite = updateMany.mock.calls[1]?.[0] as {
+      where: Record<string, unknown>;
+    };
+    expect(stoppedWrite.where).toMatchObject({ state: "suspending", providerRef: "provider-1" });
+  });
+
+  it("does not stamp error over a moved row when a stale replace fails", async () => {
+    const row = {
+      id: "computer-1",
+      homeKey: "bot-1",
+      providerRef: "provider-1",
+      kind: "fake",
+      machineId: null,
+      scope: "dedicated",
+      state: "running",
+      controlHolder: "none",
+      controlLeaseId: null,
+      updatedAt: new Date("2024-01-01T00:00:00.000Z"),
+    };
+    let claimReturned = false;
+    const updateMany = vi.fn(
+      async (args: { where: Record<string, unknown>; data?: Record<string, unknown> }) => {
+        if (!claimReturned) {
+          claimReturned = true;
+          Object.assign(row, { state: "suspending" });
+          Object.assign(row, {
+            state: "booting",
+            providerRef: "provider-2",
+            machineId: "machine-2",
+            updatedAt: new Date("2024-01-01T00:00:01.000Z"),
+          });
+          return { count: 1 };
+        }
+        const owned =
+          args.where.state === "suspending" &&
+          args.where.providerRef === "provider-1" &&
+          args.where.kind === "fake" &&
+          args.where.machineId === null;
+        return { count: owned ? 1 : 0 };
+      },
+    );
+    const prisma = {
+      computer: {
+        findUniqueOrThrow: vi.fn(async () => ({ ...row })),
+        updateMany,
+      },
+      run: { findFirst: vi.fn().mockResolvedValue(null) },
+    } as unknown as PrismaClient;
+    const sandbox = {
+      releaseScreen: vi.fn().mockResolvedValue(undefined),
+      destroy: vi.fn().mockRejectedValue(new Error("destroy failed")),
+    } as unknown as SandboxProvider;
+    await expect(
+      replaceComputer(
+        {
+          prisma,
+          sandbox,
+          home: {} as AgentHomeStore,
+          jobs: {} as JobPublisher,
+          events: {} as ThreadEvents,
+        },
+        "computer-1",
+        "reset",
+        context,
+      ),
+    ).rejects.toThrow("destroy failed");
+    expect(updateMany).toHaveBeenCalledTimes(2);
+    expect(row.state).toBe("booting");
+    expect(row.providerRef).toBe("provider-2");
+  });
+
   it("rejects replacement while another team bot holds the computer", async () => {
     const prisma = {
       computer: {
@@ -2377,7 +2516,13 @@ describe("computer replacement", () => {
       ).rejects.toThrow("ECONNRESET");
       expect(destroy).not.toHaveBeenCalled();
       expect(updateMany).toHaveBeenLastCalledWith({
-        where: { id: "computer-1" },
+        where: {
+          id: "computer-1",
+          state: "suspending",
+          providerRef: "fake-bot-1",
+          kind: "fake",
+          machineId: null,
+        },
         data: { state: "error" },
       });
     } finally {

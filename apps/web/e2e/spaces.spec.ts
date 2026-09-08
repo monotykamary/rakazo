@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, openNewSpace, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, openNewSpace, rpc, signup } from "./helpers";
 
 test("spaces stay invisible by default and chat creation requires approval", async ({
   page,
@@ -69,3 +69,118 @@ test("spaces stay invisible by default and chat creation requires approval", asy
     .toBe(personalSpaceId);
   await expect(sidebar.getByText("Customer support", { exact: true })).toBeVisible();
 });
+
+test("a new space auto-completes onboarding and can be deleted from its menu", async ({
+  page,
+}, testInfo) => {
+  const stamp = Date.now();
+  await signup(page, `spaces-delete-${stamp}@rakazo.test`, "password12", "Space Owner");
+  await completeOnboarding(page);
+
+  const sidebar = page.locator("aside").first();
+  await openNewSpace(page);
+  const dialog = page.getByRole("dialog", { name: "New space" });
+  await dialog.getByLabel("Name").fill("Temporary");
+  await dialog.getByRole("button", { name: "Create space", exact: true }).click();
+  await page.waitForURL(/\/onboarding/);
+  await completeOnboarding(page);
+
+  await expect(sidebar.getByText("Temporary", { exact: true })).toBeVisible();
+  const temporarySpace = sidebar
+    .locator('[data-sidebar-group^="space:"]')
+    .filter({ hasText: "Temporary" });
+  const temporaryBot = temporarySpace.getByRole("button", { name: /^Chief/ });
+  await temporaryBotClickDelete(page, temporaryBot);
+  await expect(temporarySpace.getByRole("button", { name: /^Chief/ })).toHaveCount(0);
+
+  // The emptied space stays selectable instead of trapping the user.
+  await expect(sidebar.getByRole("button", { name: "Open Temporary" })).toBeVisible();
+
+  // Deletion is discoverable through the visible Space actions menu.
+  await sidebar.getByRole("button", { name: "Actions for Temporary" }).click();
+  await captureScreenshot(page, testInfo, "space-actions-menu");
+  await page.getByRole("menuitem", { name: "Delete space" }).click();
+  const deleteSpaceDialog = page.getByRole("alertdialog", { name: "Delete Temporary?" });
+  await expect(deleteSpaceDialog).toBeVisible();
+  await deleteSpaceDialog.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(sidebar.getByText("Temporary", { exact: true })).toHaveCount(0);
+  await expect(page).not.toHaveURL(/\/onboarding/);
+  await expect(sidebar.getByRole("button", { name: /^Chief/ })).toHaveCount(1);
+});
+
+test("deleting the last bot in a space stays in the app after first use", async ({ page }) => {
+  const stamp = Date.now();
+  await signup(page, `spaces-empty-${stamp}@rakazo.test`, "password12", "Space Owner");
+  await completeOnboarding(page);
+  const [chief] = await rpc<Array<{ id: string }>>(page, "bots/list", {});
+  expect(chief).toBeTruthy();
+  await rpc(page, "bots/remove", { botId: chief!.id });
+  await page.reload();
+  await expect(page).not.toHaveURL(/\/onboarding/);
+
+  const sidebar = page.locator("aside").first();
+  await openNewSpace(page);
+  const dialog = page.getByRole("dialog", { name: "New space" });
+  await dialog.getByLabel("Name").fill("Side");
+  await dialog.getByRole("button", { name: "Create space", exact: true }).click();
+  await page.waitForURL(/\/onboarding/);
+  await completeOnboarding(page);
+  await expect(sidebar.getByText("Side", { exact: true })).toBeVisible();
+
+  // Delete the only bot in the new space: the app must stay put instead of
+  // forcing onboarding again.
+  const sideBot = sidebar
+    .locator('[data-sidebar-group^="space:"]')
+    .filter({ hasText: "Side" })
+    .getByRole("button", { name: /^Chief/ });
+  await temporaryBotClickDelete(page, sideBot);
+  await expect(sideBot).toHaveCount(0);
+  await expect(page).not.toHaveURL(/\/onboarding/);
+  await page.reload();
+  await expect(page).not.toHaveURL(/\/onboarding/);
+  await expect(sidebar.getByRole("button", { name: "Open Side" })).toBeVisible();
+  await expect(
+    page.locator("main").getByRole("button", { name: "Create new Bot", exact: true }),
+  ).toBeVisible();
+
+  await sidebar.getByRole("button", { name: "Actions for Side" }).click();
+  await page.getByRole("menuitem", { name: "Delete space" }).click();
+  await page
+    .getByRole("alertdialog", { name: "Delete Side?" })
+    .getByRole("button", { name: "Delete", exact: true })
+    .click();
+  await expect(sidebar.getByText("Side", { exact: true })).toHaveCount(0);
+});
+
+test("can leave optional-space onboarding without creating a bot", async ({ page }, testInfo) => {
+  await signup(page, `spaces-abandon-${Date.now()}@rakazo.test`, "password12", "Space Owner");
+  await completeOnboarding(page);
+  await openNewSpace(page);
+  const dialog = page.getByRole("dialog", { name: "New space" });
+  await dialog.getByLabel("Name").fill("Unused");
+  await dialog.getByRole("button", { name: "Create space", exact: true }).click();
+  await page.waitForURL(/\/onboarding/);
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page).not.toHaveURL(/\/onboarding/);
+  await page.reload();
+  await expect(page).not.toHaveURL(/\/onboarding/);
+  await page.getByRole("button", { name: "Actions for Unused" }).click();
+  await page.getByRole("menuitem", { name: "Delete space" }).click();
+  await captureScreenshot(page, testInfo, "empty-space-delete");
+  await page
+    .getByRole("alertdialog", { name: "Delete Unused?" })
+    .getByRole("button", { name: "Delete", exact: true })
+    .click();
+  await expect(page.locator("aside").getByText("Unused", { exact: true })).toHaveCount(0);
+});
+
+async function temporaryBotClickDelete(
+  page: import("@playwright/test").Page,
+  bot: import("@playwright/test").Locator,
+) {
+  await bot.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+  const deleteDialog = page.getByRole("alertdialog", { name: /Delete Chief/ });
+  await expect(deleteDialog).toBeVisible();
+  await deleteDialog.getByRole("button", { name: "Delete", exact: true }).click();
+}

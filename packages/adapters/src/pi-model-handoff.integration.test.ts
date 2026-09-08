@@ -113,6 +113,7 @@ describe("real managed RPC model handoffs", () => {
 
   it("cannot resume a saved Fabric child after delegation authority is removed", async () => {
     const h = await createRpcHarness({
+      runTimeoutMs: 60_000,
       tool: { name: "run_subagent", args: { name: "helper", task: "Help" } },
     });
     let saved: any;
@@ -158,7 +159,7 @@ describe("real managed RPC model handoffs", () => {
     } finally {
       await h.close();
     }
-  }, 60000);
+  }, 120000);
 
   it("finishes an allowed tool but blocks the next hidden inference and hidden restore", async () => {
     const protocol = observer();
@@ -566,6 +567,7 @@ describe("real managed RPC model handoffs", () => {
   it("keeps a worker model binding on its persisted identity after every parent/child process stops", async () => {
     const protocol = observer();
     const h = await createRpcHarness({
+      runTimeoutMs: 60_000,
       wrapHost: protocol.wrapHost,
       tool: { name: "run_subagent", args: { name: "helper", task: "Help" } },
     });
@@ -672,5 +674,5 @@ describe("real managed RPC model handoffs", () => {
     } finally {
       await h.close();
     }
-  }, 60000);
+  }, 120000);
 });

@@ -100,6 +100,31 @@ describe("thread event reduction", () => {
     expect(next?.cursor).toBe(4);
   });
 
+  it("appends an emoji reply with its exact target", () => {
+    const initial = snapshot([message("message-1", [{ kind: "text", text: "Done" }], 1)]);
+
+    const next = reduceThreadSnapshot(
+      initial,
+      event({
+        type: "thread.message.created",
+        seq: 4,
+        payload: {
+          messageId: "reaction-1",
+          role: "user",
+          blocks: [{ kind: "text", text: "❤️" }],
+          replyToMessageId: "message-1",
+        },
+      }),
+    );
+
+    expect(next?.messages.find((m) => m.id === "reaction-1")).toMatchObject({
+      role: "user",
+      blocks: [{ kind: "text", text: "❤️" }],
+      replyToMessageId: "message-1",
+    });
+    expect(next?.cursor).toBe(4);
+  });
+
   it("prepends older pages in order, removes overlaps, and advances the history cursor", () => {
     const initial = snapshot([message("m-2", [], 2), message("m-3", [], 3)], 2);
 

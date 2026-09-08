@@ -37,11 +37,18 @@ const { bot } = vi.hoisted(() => ({
 }));
 vi.mock("@rakazo/db", async (original) => ({
   ...(await original<typeof import("@rakazo/db")>()),
-  createRepos: () => ({ getBot: async () => bot, listBots: async () => [bot] }),
+  appendEventInTransaction: vi.fn(async () => ({ seq: 1 })),
+  createRepos: () => ({
+    getBot: async () => ({ ...bot, thread: { id: "thread" } }),
+    listBots: async () => [bot],
+  }),
 }));
 
 function fixture() {
   const prisma = {
+    $transaction: vi.fn(
+      async (run: (tx: unknown) => Promise<unknown>): Promise<unknown> => run(prisma),
+    ),
     user: {
       findUnique: vi.fn(async () => ({
         modelVisibility: { hide: [{ provider: "openai-compatible" }] },
@@ -62,7 +69,7 @@ function fixture() {
       secrets: {},
       sandbox: {},
       home: {},
-      events: {},
+      events: { notify: vi.fn(async () => undefined) },
       jobs: {},
     } as unknown as RouterDeps),
     { context: { actor: { userId: "owner", spaceId: "space" } as Actor } },

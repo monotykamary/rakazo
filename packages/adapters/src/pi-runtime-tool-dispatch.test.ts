@@ -1,5 +1,6 @@
 import type { AgentRunRequest, AgentRuntimeEvent, ConnectorTool } from "@rakazo/adapter-kit";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolveBotWorkspaceCwd, teamBotWorkspaceDirectory } from "./computer-support.js";
 import { createRpcHarness } from "./pi-rpc-test-emulator.js";
 import { RunAuthority, ToolBridge } from "./pi-rpc-tool-bridge.js";
 import { maxToolCallsPerTurn, normalizeAgentToolNames } from "./pi-runtime.js";
@@ -151,6 +152,49 @@ describe("Pi connector tool dispatch", () => {
       expect.any(AbortSignal),
     );
   });
+  it.each([undefined, "", "projects/demo"])(
+    "preserves executor shell cwd ownership for %s",
+    async (cwd) => {
+      const fixture = setup([
+        {
+          ...shell,
+          inputSchema: {
+            type: "object",
+            properties: { command: { type: "string" }, cwd: { type: "string" } },
+          },
+        },
+      ]);
+      await fixture.bridge.invoke({
+        handle: fixture.bridge.catalog[0]!.handle,
+        callId: "cwd",
+        args: { command: "pwd", ...(cwd === undefined ? {} : { cwd }) },
+      });
+      expect(fixture.executeTool).toHaveBeenCalledWith(
+        "shell",
+        { command: "pwd", ...(cwd ? { cwd } : {}) },
+        expect.any(String),
+        undefined,
+        expect.any(AbortSignal),
+      );
+    },
+  );
+
+  it("lets the executor choose the Team bot directory through real native Pi bash", async () => {
+    let resolvedCwd: string | undefined;
+    const executeTool = vi.fn(async (_name: string, args: Record<string, unknown>) => {
+      resolvedCwd = resolveBotWorkspaceCwd("team", "bot", args.cwd as string | undefined);
+      return { stdout: resolvedCwd, exitCode: 0 };
+    });
+    const harness = await createRpcHarness({ tool: { name: "shell", args: { command: "pwd" } } });
+    try {
+      await harness.run({ tools: [shell], executeTool });
+      expect(executeTool).toHaveBeenCalledOnce();
+      expect(resolvedCwd).toBe(teamBotWorkspaceDirectory("bot"));
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("rejects unknown handles and duplicate execution identities without replay", async () => {
     const { bridge, executeTool } = setup([shell]);
     const call = { handle: bridge.catalog[0]!.handle, callId: "same", args: { command: "true" } };

@@ -1,7 +1,7 @@
 import type { AssistantMessageEvent, Context, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import type { AgentRunRequest } from "@rakazo/adapter-kit";
 import { MultiProviderService, NoAccountAvailableError } from "pi-multiprovider";
-import { modelsForRequest, reliableStreamOptions } from "./pi-runtime.js";
+import { conversationSessionId, modelsForRequest, reliableStreamOptions } from "./pi-runtime.js";
 
 type Target = { credentialId: string; model: AgentRunRequest["model"] };
 function resolveTarget(target: Target) {
@@ -61,8 +61,11 @@ export class ModelRoutingBroker {
   private readonly fallbacks: ResolvedTarget[];
   private readonly service: MultiProviderService;
   private readonly assertModelAllowed: AgentRunRequest["assertModelAllowed"];
+  private readonly sessionId: string;
   constructor(request: AgentRunRequest, cache = routingCache, resolve = resolveTarget) {
     this.assertModelAllowed = request.assertModelAllowed;
+    this.sessionId =
+      request.modelSessionId?.trim() || conversationSessionId(request.threadId, request.botId);
     const routing = request.modelRouting;
     const targets = routing?.pool ?? [{ credentialId: "primary", model: request.model }];
     if (!targets.length || targets.length > 20 || (routing?.fallbacks.length ?? 0) > 20)
@@ -151,6 +154,7 @@ export class ModelRoutingBroker {
       }
       const options: SimpleStreamOptions = {
         signal,
+        sessionId: this.sessionId,
         apiKey: target.model.oauth
           ? undefined
           : (target.model.apiKey ?? (target.model.baseUrl ? "local" : undefined)),

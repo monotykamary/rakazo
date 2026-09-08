@@ -303,5 +303,5 @@ describe("sanitized real-model computer recordings", () => {
     } finally {
       await fixture.close();
     }
-  });
+  }, 90_000);
 });

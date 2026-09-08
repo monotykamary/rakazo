@@ -26,6 +26,23 @@ describe("lingui catalogs", () => {
     ).toBe("Cancel new bot");
   });
 
+  it.each([
+    ["de", de],
+    ["es", es],
+    ["hi", hi],
+    ["ko", ko],
+    ["pt-BR", ptBR],
+    ["tr", tr],
+    ["zh-CN", zhCN],
+  ] as const)("has translated picker labels in %s", (locale, catalog) => {
+    i18n.load(locale, catalog);
+    i18n.activate(locale);
+    expect(catalog.Search).toBeTruthy();
+    expect(catalog["To:"]).toBeTruthy();
+    expect(i18n._("Search")).toBe(catalog.Search);
+    expect(i18n._("To:")).toBe(catalog["To:"]);
+  });
+
   it("formats ICU cron-style messages with reordered placeholders", () => {
     i18n.load("de", {
       "every {intervalAmountSelect} {intervalUnitSelect}":

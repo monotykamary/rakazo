@@ -477,6 +477,7 @@ export function reduceThreadSnapshot(
     };
   }
   if (event.type === "thread.message.reaction") {
+    // Legacy persisted events keep replaying deterministically; new reactions are emoji replies.
     return {
       ...prev,
       cursor: event.seq,
@@ -495,6 +496,10 @@ export function reduceThreadSnapshot(
       botId: event.botId,
       runId: event.runId,
       thumbsUp: event.payload.thumbsUp === true,
+      replyToMessageId:
+        typeof event.payload.replyToMessageId === "string"
+          ? event.payload.replyToMessageId
+          : undefined,
       createdAt: event.createdAt,
     };
     const replacedSubagentIds = new Set(

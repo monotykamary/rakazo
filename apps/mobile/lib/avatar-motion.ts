@@ -8,7 +8,9 @@ export interface WorkingAvatarFrame {
   eyeOffsetY: number;
 }
 
-const WORKING_DURATIONS_MS = [1800, 1350, 1600, 2400, 1350, 1350, 1100, 1350, 1600, 1350];
+// Per shape-family loop length in ms — keep in sync with the web CSS
+// animation durations in @rakazo/ui-web styles.css (avatar-motion-sync test).
+const WORKING_DURATIONS_MS = [1800, 1350, 1600, 2400, 2400, 1350, 1100, 1350, 1600, 1350];
 
 export function workingAvatarDuration(seed: number): number {
   "worklet";

@@ -1,6 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { reliableStreamOptions } from "./pi-runtime.js";
+import { conversationSessionId, reliableStreamOptions } from "./pi-runtime.js";
 
 describe("Pi runtime transport", () => {
   it.each([
@@ -13,6 +13,32 @@ describe("Pi runtime transport", () => {
       transport: "sse",
       maxRetries: 4,
     });
+  });
+
+  it.each(["opencode", "opencode-go"])("attaches sticky affinity for %s", (provider) => {
+    const model = { provider, api: "openai-completions" } as Model<Api>;
+    const options = { sessionId: "thread:bot", headers: { "x-custom": "value" } };
+    expect(reliableStreamOptions(model, options)).toMatchObject({
+      sessionId: "thread:bot",
+      headers: {
+        "x-opencode-session": "thread:bot",
+        "x-opencode-client": "rakazo",
+        "x-custom": "value",
+      },
+    });
+    expect(options.headers).toEqual({ "x-custom": "value" });
+    const fallback = reliableStreamOptions(model);
+    expect(fallback?.sessionId).toBeTruthy();
+    expect(fallback?.headers?.["x-opencode-session"]).toBe(fallback?.sessionId);
+  });
+
+  it("isolates conversation and participant identities", () => {
+    expect(conversationSessionId("thread", "bot")).toBe("thread:bot");
+    expect(conversationSessionId("thread", "bot", "child")).toBe("thread:bot:child");
+    expect(conversationSessionId("other", "bot")).not.toBe(conversationSessionId("thread", "bot"));
+    expect(conversationSessionId("thread", "other")).not.toBe(
+      conversationSessionId("thread", "bot"),
+    );
   });
 
   it("leaves other provider transports unchanged", () => {

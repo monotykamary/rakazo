@@ -547,7 +547,7 @@ msgstr ""
 #: src/pages/RoutineEditor.tsx:231
 #: src/pages/shell/bot-picker.tsx:51
 msgid "Back"
-msgstr ""
+msgstr "Back"
 
 #: src/pages/Auth.tsx:120
 #: src/pages/Auth.tsx:229
@@ -3536,7 +3536,7 @@ msgstr "Título"
 
 #: src/pages/shell/bot-picker.tsx:86
 msgid "To:"
-msgstr ""
+msgstr "Para:"
 
 #: src/components/QueueStrip.tsx:84
 msgid "Too many attachments"
@@ -3771,3 +3771,21 @@ msgstr "Seu sistema operacional não pedirá permissão extra se você permitir 
 #: src/pages/Welcome.tsx:21
 msgid "Your team of always-on agents<0/>that you can give real work to."
 msgstr "Sua equipe de agentes sempre ativos<0/>, a quem você pode dar trabalho de verdade."
+
+msgid "React"
+msgstr "Reagir"
+
+msgid "Reactions"
+msgstr "Reações"
+
+msgid "Actions for space"
+msgstr "Actions for space"
+
+msgid "Delete space"
+msgstr "Delete space"
+
+msgid "Could not delete space"
+msgstr "Could not delete space"
+
+msgid "Only empty spaces can be deleted. Delete its bots and groups first."
+msgstr "Only empty spaces can be deleted. Delete its bots and groups first."

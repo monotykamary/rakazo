@@ -1,4 +1,5 @@
 {
+  "To:": "Kime:",
   " (unread)": " (okunmadı)",
   "macOS will not ask for extra permission if you let bots run on this Mac. They run as you.": "Botların bu Mac'te çalışmasına izin verirsen macOS ek izin istemez. Botlar senin adına çalışır.",
   "Your OS will not ask for extra permission if you let bots run on {hostLabel}. They run as you.": "Botların {hostLabel} üzerinde çalışmasına izin verirsen işletim sistemin ek izin istemez. Botlar senin adına çalışır.",
@@ -579,5 +580,12 @@
   "Message from": "Mesaj gönderen",
   "This chat is view-only": "Bu sohbet yalnızca görüntülenebilir",
   "Could not load this chat.": "Bu sohbet yüklenemedi.",
-  "No messages with {peerBotName} yet.": "{peerBotName} ile henüz mesaj yok."
+  "No messages with {peerBotName} yet.": "{peerBotName} ile henüz mesaj yok.",
+  "React": "Tepki ver",
+  "Reactions": "Tepkiler",
+  "Actions for space": "Actions for space",
+  "Delete space": "Delete space",
+  "Could not delete space": "Could not delete space",
+  "Only empty spaces can be deleted. Delete its bots and groups first.": "Only empty spaces can be deleted. Delete its bots and groups first.",
+  "Back": "Back"
 }

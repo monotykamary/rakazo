@@ -44,7 +44,11 @@ async function setup(saved: DesktopSetup | null) {
     state: vi.fn(async () => ({ saved, defaultLocalUrl: "http://127.0.0.1:45173" })),
     save: vi.fn(async () => ({ ok: true })),
     quit: vi.fn(),
-    stack: { state: vi.fn(async () => ({ phase: "idle" })), start: vi.fn() },
+    stack: {
+      state: vi.fn(async () => ({ phase: "idle" })),
+      start: vi.fn(),
+      onChange: vi.fn(),
+    },
   };
   vm.runInNewContext(readFileSync(new URL("./setup.js", import.meta.url), "utf8"), {
     URL,

@@ -1,4 +1,5 @@
 {
+  "To:": "Para:",
   " (unread)": " (não lido)",
   "macOS will not ask for extra permission if you let bots run on this Mac. They run as you.": "O macOS não pedirá permissão extra se você permitir que os bots sejam executados neste Mac. Eles são executados como você.",
   "Your OS will not ask for extra permission if you let bots run on {hostLabel}. They run as you.": "Seu sistema operacional não pedirá permissão extra se você permitir que os bots sejam executados no {hostLabel}. Eles são executados como você.",
@@ -584,5 +585,12 @@
   "Message from": "Mensagem de",
   "This chat is view-only": "Este chat é somente leitura",
   "Could not load this chat.": "Não foi possível carregar este chat.",
-  "No messages with {peerBotName} yet.": "Ainda sem mensagens com {peerBotName}."
+  "No messages with {peerBotName} yet.": "Ainda sem mensagens com {peerBotName}.",
+  "React": "Reagir",
+  "Reactions": "Reações",
+  "Actions for space": "Actions for space",
+  "Delete space": "Delete space",
+  "Could not delete space": "Could not delete space",
+  "Only empty spaces can be deleted. Delete its bots and groups first.": "Only empty spaces can be deleted. Delete its bots and groups first.",
+  "Back": "Back"
 }

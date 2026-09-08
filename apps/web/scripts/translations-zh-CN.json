@@ -1,4 +1,5 @@
 {
+  "To:": "至:",
   " (unread)": "（未读）",
   "macOS will not ask for extra permission if you let bots run on this Mac. They run as you.": "若让 Bot 在这台 Mac 上运行，它们会使用你的账户权限，macOS 不会再逐项询问。",
   "Your OS will not ask for extra permission if you let bots run on {hostLabel}. They run as you.": "若让 Bot 在 {hostLabel} 上运行，它们会使用你的账户权限，系统不会再逐项询问。",
@@ -731,5 +732,11 @@
   "Waiting for the API to come back…": "正在等待 API 恢复…",
   "Webhook": "Webhook",
   "What should this routine do each time it runs?": "每次运行时，这个例行任务应做什么？",
-  "When a webhook fires": "当 Webhook 触发时"
+  "When a webhook fires": "当 Webhook 触发时",
+  "React": "回应",
+  "Reactions": "表情回应",
+  "Actions for space": "Actions for space",
+  "Delete space": "Delete space",
+  "Could not delete space": "Could not delete space",
+  "Only empty spaces can be deleted. Delete its bots and groups first.": "Only empty spaces can be deleted. Delete its bots and groups first."
 }

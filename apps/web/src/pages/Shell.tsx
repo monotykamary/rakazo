@@ -28,6 +28,8 @@ import {
   ATTACHMENT_MAX_BYTES,
   ATTACHMENT_MAX_COUNT,
   canReactToThreadMessage,
+  MESSAGE_REACTIONS,
+  type MessageReaction,
   normalizeCreateBotProfile,
 } from "@rakazo/contracts";
 import {
@@ -44,6 +46,7 @@ import {
   latestAnswerableAskMessageId,
   mentionChipKey,
   projectMessageActivity,
+  projectMessageReactions,
   reorderBotTo,
   resolveComposerSendPlan,
   resolveMentionPickerKey,
@@ -102,6 +105,7 @@ import {
   Settings,
   Smile,
   Square,
+  Trash2,
   Volume2,
   X,
 } from "lucide-react";
@@ -504,6 +508,18 @@ export function ShellPage() {
   }, [botMenu]);
   const [deleteTarget, setDeleteTarget] = useState<Bot | null>(null);
   const [deleteGroupTarget, setDeleteGroupTarget] = useState<Group | null>(null);
+  const [deleteSpaceTarget, setDeleteSpaceTarget] = useState<Space | null>(null);
+  const [spaceMenu, setSpaceMenu] = useState<{
+    id: string;
+    position: ContextMenuPosition;
+  } | null>(null);
+  const spaceMenuAnchor = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (spaceMenu || !spaceMenuAnchor.current) return;
+    spaceMenuAnchor.current.focus();
+    spaceMenuAnchor.current = null;
+  }, [spaceMenu]);
+  const closeSpaceMenu = useCallback(() => setSpaceMenu(null), []);
   const [clearTarget, setClearTarget] = useState<
     { kind: "bot"; chat: Bot } | { kind: "group"; chat: Group } | null
   >(null);
@@ -754,16 +770,6 @@ export function ShellPage() {
         setSpaces(navigation.spaces);
         setInitialBotsLoaded(true);
         botsRefreshApplied.current = request;
-        if (
-          includeArchived &&
-          list.length === 0 &&
-          archived?.length === 0 &&
-          groupList.length === 0 &&
-          archivedGroupList?.length === 0
-        ) {
-          navigate("/onboarding", { replace: true });
-          return;
-        }
         const currentGroupId = routeGroupId.current;
         if (currentGroupId) {
           if (!groupList.some((group) => group.id === currentGroupId)) {
@@ -985,8 +991,13 @@ export function ShellPage() {
           bootstrap.bots.length === 0 &&
           bootstrap.archivedBots.length === 0 &&
           groupList.length === 0 &&
-          bootstrap.archivedGroups.length === 0
+          bootstrap.archivedGroups.length === 0 &&
+          !bootstrap.me.hasOnboarded &&
+          !bootstrap.spaces.some((space) => space.hasContent)
         ) {
+          // Only the very first bot everywhere needs onboarding. An empty
+          // current space with content elsewhere stays in the app so the
+          // space can be switched to or deleted instead of trapping the user.
           navigate("/onboarding", { replace: true });
           return;
         }
@@ -1183,6 +1194,7 @@ export function ShellPage() {
           void refreshBots(true).catch(() => undefined);
         } else if (
           event.type === "bot.spawned" ||
+          event.type === "bot.updated" ||
           event.type === "bot.deleted" ||
           event.type === "run.started" ||
           isRunTerminalEvent(event) ||
@@ -1313,6 +1325,8 @@ export function ShellPage() {
                 id: bootstrapMe.spaceId,
                 name: "Personal",
                 isDefault: true,
+                hasContent: true,
+                canDelete: false,
                 bots,
                 groups,
                 botSections,
@@ -1333,7 +1347,7 @@ export function ShellPage() {
           ...visibleGroups.map((chat) => ({ kind: "group" as const, chat })),
         ].map((item) => ({ ...item, pinned: item.chat.pinned, sectionId: item.chat.sectionId })),
         space.botSections,
-      ).map((group) => ({
+      ).map((group, index) => ({
         ...group,
         key: showSpaceNames ? `space:${space.id}:${group.key}` : group.key,
         title: showSpaceNames
@@ -1343,6 +1357,9 @@ export function ShellPage() {
           : group.title,
         showLock: showSpaceNames,
         emptySpaceId: undefined as string | undefined,
+        spaceId: space.id,
+        spaceName: space.name,
+        canDeleteSpace: index === 0 && space.canDelete === true,
       }));
       if (sections.length > 0) return sections;
       // Keep empty spaces selectable; chat clicks are the only switch control.
@@ -1355,6 +1372,9 @@ export function ShellPage() {
           bots: [],
           showLock: true,
           emptySpaceId: space.id,
+          spaceId: space.id,
+          spaceName: space.name,
+          canDeleteSpace: space.canDelete === true,
         },
       ];
     });
@@ -1821,7 +1841,7 @@ export function ShellPage() {
     }
   }, []);
   const reactToMessage = useCallback(
-    async (message: ThreadMessage) => {
+    async (message: ThreadMessage, reaction: MessageReaction) => {
       const botId = activeBotId.current;
       const groupId = activeGroupId.current;
       if (!botId && !groupId) return;
@@ -1829,7 +1849,8 @@ export function ShellPage() {
         await rpc.threads.react({
           ...(groupId ? { groupId } : { botId: botId! }),
           messageId: message.id,
-          thumbsUp: !message.thumbsUp,
+          reaction,
+          clientNonce: newClientNonce(),
         });
       } catch (error) {
         const stillHere = groupId
@@ -2576,10 +2597,10 @@ export function ShellPage() {
                 return (
                   <div key={group.key} data-sidebar-group={group.key}>
                     {group.title ? (
-                      <div className="pt-2">
+                      <div className="flex items-center pt-2">
                         <button
                           type="button"
-                          className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium text-muted-foreground/80 hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+                          className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium text-muted-foreground/80 hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
                           onClick={() => {
                             if (group.emptySpaceId) {
                               openSpaceChat(group.emptySpaceId, "/onboarding");
@@ -2587,6 +2608,18 @@ export function ShellPage() {
                             }
                             toggleSidebarSection(group.key);
                           }}
+                          onContextMenu={
+                            group.canDeleteSpace
+                              ? (event) => {
+                                  event.preventDefault();
+                                  spaceMenuAnchor.current = event.currentTarget;
+                                  setSpaceMenu({
+                                    id: group.spaceId,
+                                    position: { x: event.clientX, y: event.clientY },
+                                  });
+                                }
+                              : undefined
+                          }
                           aria-expanded={group.emptySpaceId ? undefined : !collapsed}
                           aria-label={
                             group.emptySpaceId
@@ -2615,6 +2648,23 @@ export function ShellPage() {
                             />
                           )}
                         </button>
+                        {group.canDeleteSpace ? (
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={t`Actions for ${group.spaceName}`}
+                            onClick={(event) => {
+                              const rect = event.currentTarget.getBoundingClientRect();
+                              spaceMenuAnchor.current = event.currentTarget;
+                              setSpaceMenu({
+                                id: group.spaceId,
+                                position: { x: rect.left, y: rect.bottom },
+                              });
+                            }}
+                          >
+                            <MoreHorizontal size={14} aria-hidden="true" />
+                          </Button>
+                        ) : null}
                       </div>
                     ) : null}
                     {!collapsed &&
@@ -3102,7 +3152,7 @@ export function ShellPage() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
-              {!inGroup ? (
+              {!inGroup && active ? (
                 <button
                   type="button"
                   title={t`Agent computer`}
@@ -3122,60 +3172,69 @@ export function ShellPage() {
               ) : null}
             </div>
           </div>
-          <Transcript
-            key={inGroup ? `transcript:group:${groupId}` : `transcript:bot:${active?.id}`}
-            loading={!activeSnapshot && Boolean(active || activeGroup)}
-            scrollRef={messageScroll}
-            artifactTarget={transcriptArtifactTarget}
-            messages={transcriptMessages}
-            olderCursor={activeSnapshot?.olderCursor ?? null}
-            loadingOlder={loadingOlder}
-            answerableAskMessageId={answerableAskMessageId}
-            running={transcriptRunning}
-            workingBots={workingBots}
-            onLoadOlder={loadOlder}
-            onOpenBot={openBot}
-            onAnswer={answerMessage}
-            onReply={setReplyTarget}
-            onReact={reactToMessage}
-            onJumpToMessage={jumpToReplyMessage}
-            onOpenPeerMessages={openPeerMessages}
-            onOpenExecution={(runId, botId) =>
-              setThreadInspector({ view: "execution", runId, botId })
-            }
-            onOpenRoutine={async (routineId, ownerId) => {
-              const botId = ownerId ?? active?.id;
-              if (!botId) return;
-              const originBot = activeBotId.current;
-              const originGroup = activeGroupId.current;
-              const rows = await rpc.routines.list({ botId });
-              if (activeBotId.current !== originBot || activeGroupId.current !== originGroup)
-                return;
-              const routine = rows.find((row) => row.id === routineId);
-              if (!routine) throw new Error(t`This routine no longer exists`);
-              setRoutines(rows);
-              setRoutinesBotId(botId);
-              if (inGroup || botId !== active?.id) {
-                navigate(
-                  `/app/${encodeURIComponent(botId)}?routine=${encodeURIComponent(routineId)}`,
-                );
-                return;
+          {!active && !activeGroup && initialBotsLoaded ? (
+            <div className="grid flex-1 place-items-center">
+              <Button onClick={() => setPanel("create")}>
+                <Plus size={16} aria-hidden="true" />
+                <Trans>Create new Bot</Trans>
+              </Button>
+            </div>
+          ) : (
+            <Transcript
+              key={inGroup ? `transcript:group:${groupId}` : `transcript:bot:${active?.id}`}
+              loading={!activeSnapshot && Boolean(active || activeGroup)}
+              scrollRef={messageScroll}
+              artifactTarget={transcriptArtifactTarget}
+              messages={transcriptMessages}
+              olderCursor={activeSnapshot?.olderCursor ?? null}
+              loadingOlder={loadingOlder}
+              answerableAskMessageId={answerableAskMessageId}
+              running={transcriptRunning}
+              workingBots={workingBots}
+              onLoadOlder={loadOlder}
+              onOpenBot={openBot}
+              onAnswer={answerMessage}
+              onReply={setReplyTarget}
+              onReact={reactToMessage}
+              onJumpToMessage={jumpToReplyMessage}
+              onOpenPeerMessages={openPeerMessages}
+              onOpenExecution={(runId, botId) =>
+                setThreadInspector({ view: "execution", runId, botId })
               }
-              setRoutineDraft(draftFromRoutine(routine));
-              setRoutineWebhookSecret(null);
-              setEditingRoutine(routine);
-              setRoutineError(null);
-              setPanel("routine");
-            }}
-            memberName={resolveTranscriptMemberName}
-            peerBot={resolveTranscriptBot}
-            onRefresh={refreshActiveThread}
-            onBotChanged={refreshBots}
-            onAddRoutine={addSkillRoutine}
-            voiceReady={Boolean(voiceStatus?.ready)}
-            speakingMessageId={speakingMessageId}
-            onSpeak={speakMessage}
-          />
+              onOpenRoutine={async (routineId, ownerId) => {
+                const botId = ownerId ?? active?.id;
+                if (!botId) return;
+                const originBot = activeBotId.current;
+                const originGroup = activeGroupId.current;
+                const rows = await rpc.routines.list({ botId });
+                if (activeBotId.current !== originBot || activeGroupId.current !== originGroup)
+                  return;
+                const routine = rows.find((row) => row.id === routineId);
+                if (!routine) throw new Error(t`This routine no longer exists`);
+                setRoutines(rows);
+                setRoutinesBotId(botId);
+                if (inGroup || botId !== active?.id) {
+                  navigate(
+                    `/app/${encodeURIComponent(botId)}?routine=${encodeURIComponent(routineId)}`,
+                  );
+                  return;
+                }
+                setRoutineDraft(draftFromRoutine(routine));
+                setRoutineWebhookSecret(null);
+                setEditingRoutine(routine);
+                setRoutineError(null);
+                setPanel("routine");
+              }}
+              memberName={resolveTranscriptMemberName}
+              peerBot={resolveTranscriptBot}
+              onRefresh={refreshActiveThread}
+              onBotChanged={refreshBots}
+              onAddRoutine={addSkillRoutine}
+              voiceReady={Boolean(voiceStatus?.ready)}
+              speakingMessageId={speakingMessageId}
+              onSpeak={speakMessage}
+            />
+          )}
           {recordingSkill ? (
             <div className="px-6 pb-2 text-center text-[13px] text-destructive">
               <Trans>Teaching in progress. Stop teaching before sending a new message.</Trans>
@@ -3204,62 +3263,64 @@ export function ShellPage() {
               ]}
             />
           )}
-          <Composer
-            key={inGroup ? `group:${groupId}` : `bot:${active?.id}`}
-            activeName={inGroup ? (activeGroup?.name ?? activeSnapshot?.groupName) : active?.name}
-            running={composerRunning}
-            disabled={Boolean(recordingSkill)}
-            pendingAttachments={activePendingAttachments}
-            attachmentNotice={attachmentNotice}
-            sendError={sendError}
-            runError={displayedRunError}
-            runErrorId={displayedRunErrorId}
-            onRunErrorPresented={handleRunErrorPresented}
-            onDismissError={dismissComposerError}
-            sending={sending}
-            fileInputRef={fileInputRef}
-            onAttachmentPick={onAttachmentPick}
-            onRemoveAttachment={removeAttachment}
-            onSend={sendMessage}
-            onStop={stopRun}
-            onVoice={
-              !inGroup && active
-                ? () => {
-                    if (!voiceStatus?.ready) {
-                      setVoiceOpen(true);
-                      return;
+          {active || activeGroup ? (
+            <Composer
+              key={inGroup ? `group:${groupId}` : `bot:${active?.id}`}
+              activeName={inGroup ? (activeGroup?.name ?? activeSnapshot?.groupName) : active?.name}
+              running={composerRunning}
+              disabled={Boolean(recordingSkill)}
+              pendingAttachments={activePendingAttachments}
+              attachmentNotice={attachmentNotice}
+              sendError={sendError}
+              runError={displayedRunError}
+              runErrorId={displayedRunErrorId}
+              onRunErrorPresented={handleRunErrorPresented}
+              onDismissError={dismissComposerError}
+              sending={sending}
+              fileInputRef={fileInputRef}
+              onAttachmentPick={onAttachmentPick}
+              onRemoveAttachment={removeAttachment}
+              onSend={sendMessage}
+              onStop={stopRun}
+              onVoice={
+                !inGroup && active
+                  ? () => {
+                      if (!voiceStatus?.ready) {
+                        setVoiceOpen(true);
+                        return;
+                      }
+                      setCallOpen(true);
                     }
-                    setCallOpen(true);
-                  }
-                : undefined
-            }
-            replyTarget={activeReplyTarget}
-            replyTargetName={replyTargetName}
-            onClearReply={() => setReplyTarget(null)}
-            mentionTargets={composerMentionTargets}
-            onMentionOpen={requestMentionMetadata}
-            agentSkills={agentSkills}
-            onSlashOpen={refreshAgentSkills}
-            onSlashAction={(action) => {
-              if (action === "chat-settings") {
-                setPanel(inGroup ? "group-settings" : "settings");
-                return;
+                  : undefined
               }
-              if (action === "settings-general") {
-                setAccountSettingsFocusUsage(false);
-                setAccountSettingsOpen(true);
-                return;
-              }
-              if (action === "settings-usage") {
-                setAccountSettingsFocusUsage(true);
-                setAccountSettingsOpen(true);
-                void rpc.usage
-                  .summary()
-                  .then(setUsage)
-                  .catch(() => undefined);
-              }
-            }}
-          />
+              replyTarget={activeReplyTarget}
+              replyTargetName={replyTargetName}
+              onClearReply={() => setReplyTarget(null)}
+              mentionTargets={composerMentionTargets}
+              onMentionOpen={requestMentionMetadata}
+              agentSkills={agentSkills}
+              onSlashOpen={refreshAgentSkills}
+              onSlashAction={(action) => {
+                if (action === "chat-settings") {
+                  setPanel(inGroup ? "group-settings" : "settings");
+                  return;
+                }
+                if (action === "settings-general") {
+                  setAccountSettingsFocusUsage(false);
+                  setAccountSettingsOpen(true);
+                  return;
+                }
+                if (action === "settings-usage") {
+                  setAccountSettingsFocusUsage(true);
+                  setAccountSettingsOpen(true);
+                  void rpc.usage
+                    .summary()
+                    .then(setUsage)
+                    .catch(() => undefined);
+                }
+              }}
+            />
+          ) : null}
         </div>
         {peerConversation && (peerConversation.botId ?? active?.id) ? (
           <div className="absolute inset-0 z-20 bg-background">
@@ -3779,6 +3840,72 @@ export function ShellPage() {
           />
         ) : null}
 
+        {spaceMenu ? (
+          <DropdownMenu
+            open
+            onOpenChange={(open) => {
+              if (!open) closeSpaceMenu();
+            }}
+          >
+            {/* Invisible anchor at the pointer position, mirroring the bot menu. */}
+            <DropdownMenuTrigger
+              render={
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  aria-hidden
+                  className="fixed size-0 p-0 opacity-0"
+                  style={{ left: spaceMenu.position.x, top: spaceMenu.position.y }}
+                />
+              }
+            />
+            <DropdownMenuContent
+              aria-label={t`Actions for space`}
+              align="start"
+              sideOffset={0}
+              className="w-[220px]"
+            >
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={() => {
+                  const target = spaces.find((space) => space.id === spaceMenu.id);
+                  if (target) setDeleteSpaceTarget(target);
+                  setSpaceMenu(null);
+                }}
+              >
+                <Trash2 />
+                {t`Delete space`}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+
+        {deleteSpaceTarget ? (
+          <DeleteItemDialog
+            item={deleteSpaceTarget}
+            noun="space"
+            description={
+              <Trans>Only empty spaces can be deleted. Delete its bots and groups first.</Trans>
+            }
+            onCancel={() => setDeleteSpaceTarget(null)}
+            onConfirm={async () => {
+              const targetId = deleteSpaceTarget.id;
+              const result = await rpc.spaces.remove({ spaceId: targetId });
+              setDeleteSpaceTarget(null);
+              setPanel(null);
+              const effectiveSpaceId = selectedSpaceId() ?? bootstrapMe?.spaceId;
+              if (effectiveSpaceId === targetId) {
+                // The auth boundary changed, so reload like a space switch.
+                if (selectSpace(result.activeSpaceId)) {
+                  window.location.assign("/app");
+                  return;
+                }
+              }
+              await refreshBots(true);
+            }}
+          />
+        ) : null}
+
         {newSectionTarget ? (
           <NewBotSectionDialog
             bot={newSectionTarget.chat}
@@ -4138,7 +4265,7 @@ const Transcript = memo(function Transcript({
   onOpenBot: (botId: string) => void;
   onAnswer: (message: ThreadMessage, text: string) => Promise<void>;
   onReply: (message: ThreadMessage) => void;
-  onReact: (message: ThreadMessage) => Promise<void>;
+  onReact: (message: ThreadMessage, reaction: MessageReaction) => Promise<void>;
   onJumpToMessage: (messageId: string) => void;
   onOpenPeerMessages: (peer: { botId?: string; peerBotId: string; peerBotName: string }) => void;
   onOpenExecution: (runId: string, botId?: string) => void;
@@ -4164,6 +4291,10 @@ const Transcript = memo(function Transcript({
     [messages],
   );
   const activityProjection = useMemo(() => projectMessageActivity(messages), [messages]);
+  const reactionView = useMemo(
+    () => projectMessageReactions(activityProjection.messages),
+    [activityProjection.messages],
+  );
   const workingBotName = workingBots.length === 1 ? workingBots[0]?.name : undefined;
   const workingLabel =
     workingBotName != null && workingBotName !== ""
@@ -4298,7 +4429,8 @@ const Transcript = memo(function Transcript({
             {loadingOlder ? t`Loading…` : t`Load earlier messages`}
           </button>
         ) : null}
-        {activityProjection.messages.map((message) => {
+        {reactionView.visibleMessages.map((message) => {
+          const messageReactions = reactionView.reactions.get(message.id);
           const activities = activityProjection.activities.get(message.id) ?? [];
           if (!message.blocks.some((block) => !isToolActivityBlock(block)) && !activities.length)
             return null;
@@ -4375,17 +4507,24 @@ const Transcript = memo(function Transcript({
                   />
                 </div>
               </div>
-              {!peerReceipt && message.thumbsUp ? (
-                <button
-                  type="button"
-                  aria-label={t`Remove thumbs-up`}
-                  onClick={() => void onReact(message)}
-                  className={`mt-1 rounded-full border border-border bg-muted px-2 py-0.5 text-xs ${
-                    message.role === "user" ? "ml-auto block" : ""
-                  }`}
+              {!peerReceipt && messageReactions ? (
+                <div
+                  data-testid="message-reactions"
+                  className={cn(
+                    "mt-1 flex flex-wrap gap-1",
+                    message.role === "user" && "justify-end",
+                  )}
                 >
-                  👍
-                </button>
+                  {[...messageReactions].map(([emoji, count]) => (
+                    <span
+                      key={emoji}
+                      className="rounded-full border border-border bg-muted px-2 py-0.5 text-xs"
+                    >
+                      {emoji}
+                      {count > 1 ? ` ${count}` : ""}
+                    </span>
+                  ))}
+                </div>
               ) : null}
             </div>
           );
@@ -5156,10 +5295,11 @@ function MessageHoverActions({
   message: ThreadMessage;
   side: "start" | "end";
   onReply: (message: ThreadMessage) => void;
-  onReact: (message: ThreadMessage) => Promise<void>;
+  onReact: (message: ThreadMessage, reaction: MessageReaction) => Promise<void>;
 }) {
   const { t } = useLingui();
   const [moreOpen, setMoreOpen] = useState(false);
+  const [reactionsOpen, setReactionsOpen] = useState(false);
 
   // Streaming progress bubbles keep hover free for selection / stop clicks.
   if (message.id.startsWith("progress:")) return null;
@@ -5174,22 +5314,40 @@ function MessageHoverActions({
     "grid h-7 w-7 place-items-center text-muted-foreground transition-colors hover:text-foreground";
 
   return (
-    <MessageHoverMetadata pinned={moreOpen} side={side}>
+    <MessageHoverMetadata pinned={moreOpen || reactionsOpen} side={side}>
       <div data-testid="message-hover-actions" className="flex items-center gap-0.5">
         {canReactToThreadMessage(message) ? (
-          <button
-            type="button"
-            aria-label={message.thumbsUp ? t`Remove thumbs-up` : t`Add thumbs-up`}
-            aria-pressed={Boolean(message.thumbsUp)}
-            onClick={() => void onReact(message)}
-            className={cn(
-              iconButtonClass,
-              "hidden [@media(hover:hover)_and_(pointer:fine)]:grid",
-              message.thumbsUp && "text-foreground",
-            )}
-          >
-            <Smile size={15} strokeWidth={1.7} />
-          </button>
+          <Popover open={reactionsOpen} onOpenChange={setReactionsOpen}>
+            <PopoverTrigger
+              aria-label={t`React`}
+              className={cn(
+                iconButtonClass,
+                "h-11 w-11 [@media(hover:hover)_and_(pointer:fine)]:h-7 [@media(hover:hover)_and_(pointer:fine)]:w-7",
+              )}
+            >
+              <Smile size={15} strokeWidth={1.7} />
+            </PopoverTrigger>
+            <PopoverContent
+              align={side === "end" ? "start" : "end"}
+              className="w-auto flex-row gap-0 rounded-2xl p-1.5"
+              aria-label={t`Reactions`}
+            >
+              {MESSAGE_REACTIONS.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  aria-label={emoji}
+                  className="grid h-11 w-11 place-items-center rounded-xl text-2xl hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
+                  onClick={() => {
+                    setReactionsOpen(false);
+                    void onReact(message, emoji);
+                  }}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </PopoverContent>
+          </Popover>
         ) : null}
         <button
           type="button"
@@ -5210,15 +5368,6 @@ function MessageHoverActions({
             <MoreHorizontal size={15} strokeWidth={1.7} />
           </DropdownMenuTrigger>
           <DropdownMenuContent align={side === "end" ? "start" : "end"}>
-            {canReactToThreadMessage(message) ? (
-              <DropdownMenuItem
-                className="[@media(hover:hover)_and_(pointer:fine)]:hidden"
-                onClick={() => void onReact(message)}
-              >
-                <Smile size={15} />
-                {message.thumbsUp ? t`Remove thumbs-up` : t`Add thumbs-up`}
-              </DropdownMenuItem>
-            ) : null}
             <DropdownMenuItem
               className="[@media(hover:hover)_and_(pointer:fine)]:hidden"
               onClick={() => onReply(message)}

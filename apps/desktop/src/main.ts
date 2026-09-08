@@ -9,6 +9,7 @@ import {
   type ElectronAutoUpdater,
   LAUNCH_CHECK_DELAY_MS,
 } from "./auto-update.js";
+import { openBrowserAuth } from "./browser-auth.js";
 import { DOCKER_INSTALL_LINKS, isDesktopSetupLink, runDocker } from "./docker-cli.js";
 import {
   LocalStackController,
@@ -80,10 +81,17 @@ const updaterEnvironment = {
   version: app.getVersion(),
   disabled: process.env.RAKAZO_DISABLE_AUTO_UPDATE === "1",
 };
-const desktopUpdater = new DesktopUpdateController(updaterEnvironment, async () => {
-  const module = await import("electron-updater");
-  return (module.default ?? module).autoUpdater as unknown as ElectronAutoUpdater;
-});
+const desktopUpdater = new DesktopUpdateController(
+  updaterEnvironment,
+  async () => {
+    const module = await import("electron-updater");
+    return (module.default ?? module).autoUpdater as unknown as ElectronAutoUpdater;
+  },
+  undefined,
+  () => {
+    quitting = false;
+  },
+);
 let launchUpdateCheckScheduled = false;
 let localStack: LocalStackController;
 
@@ -318,6 +326,7 @@ function createWindow(url: string, partition: string | null) {
   if (!launchUpdateCheckScheduled) {
     launchUpdateCheckScheduled = true;
     setTimeout(() => void desktopUpdater.check(false), LAUNCH_CHECK_DELAY_MS).unref();
+    setInterval(() => void desktopUpdater.check(false), 60 * 60 * 1_000).unref();
   }
   return { loaded, win };
 }
@@ -447,9 +456,10 @@ async function waitForMountedAppDocument(contents: Electron.WebContents) {
           performance.getEntriesByName("rk:renderer:shell-ready").length > 0,
       );
       const authOrWelcomeSurface = Boolean(
-        document.querySelector(
-          'form input[type="email"], form input[name="email"], form input#email',
-        ) ||
+        document.querySelector('[data-rakazo-surface="welcome"]') ||
+          document.querySelector(
+            'form input[type="email"], form input[name="email"], form input#email',
+          ) ||
           Array.from(document.querySelectorAll("button")).some((button) =>
             /sign\\s*in/i.test((button.textContent || "").trim()),
           ) ||
@@ -556,6 +566,8 @@ function createSetupWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      // A long pull runs while this window sits behind others; throttled timers would freeze it.
+      backgroundThrottling: false,
     },
   });
   setupWindow = win;
@@ -906,6 +918,11 @@ app.whenReady().then(async () => {
     }),
     probe: (url, signal, token) => probeManagedStack(url, token, signal),
     randomHex: (bytes) => randomBytes(bytes).toString("hex"),
+    onState: (state) => {
+      if (setupWindow !== null && !setupWindow.isDestroyed()) {
+        setupWindow.webContents.send("desktop.setup.stack.changed", state);
+      }
+    },
   });
   currentSetup = await readSetup(userDataDir);
   const target = resolveStartupTarget({
@@ -927,6 +944,63 @@ app.whenReady().then(async () => {
   const icon = developmentIcon();
   if (process.platform === "darwin" && icon) app.dock?.setIcon(icon);
   installApplicationMenu();
+  const browserAuthAttempts = new Map<string, AbortController>();
+  const cancelBrowserAuth = () => {
+    for (const attempt of browserAuthAttempts.values()) attempt.abort();
+    browserAuthAttempts.clear();
+  };
+  app.on("before-quit", cancelBrowserAuth);
+  ipcMain.handle("desktop.oauth.open", async (event, url: unknown) => {
+    if (
+      !fromMainWindow(event) ||
+      event.senderFrame !== event.sender.mainFrame ||
+      typeof url !== "string" ||
+      url.length > 16_384
+    )
+      throw new Error("Invalid sign-in request.");
+    if (browserAuthAttempts.has(url) || browserAuthAttempts.size >= 8) {
+      throw new Error("A sign-in attempt is already active. Cancel it and retry.");
+    }
+    const controller = new AbortController();
+    browserAuthAttempts.set(url, controller);
+    const stop = () => controller.abort();
+    const expiry = setTimeout(stop, 10 * 60_000);
+    expiry.unref();
+    event.sender.once("destroyed", stop);
+    event.sender.once("did-navigate", stop);
+    controller.signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(expiry);
+        event.sender.removeListener("destroyed", stop);
+        event.sender.removeListener("did-navigate", stop);
+        if (browserAuthAttempts.get(url) === controller) browserAuthAttempts.delete(url);
+      },
+      { once: true },
+    );
+    try {
+      await openBrowserAuth(url, {
+        signal: controller.signal,
+        onClose: stop,
+        openExternal: (target) => shell.openExternal(target),
+        onCallback: (callback) => {
+          if (!event.sender.isDestroyed()) event.sender.send("desktop.oauth.callback", callback);
+        },
+      });
+    } catch {
+      controller.abort();
+      throw new Error("Could not open browser sign-in. Close other sign-in attempts and retry.");
+    }
+  });
+  ipcMain.handle("desktop.oauth.cancel", (event, url: unknown) => {
+    if (
+      !fromMainWindow(event) ||
+      event.senderFrame !== event.sender.mainFrame ||
+      typeof url !== "string"
+    )
+      return;
+    browserAuthAttempts.get(url)?.abort();
+  });
   ipcMain.handle("desktop.platform", () => process.platform);
   ipcMain.handle("desktop.window.close", (event) => {
     windowFrom(event)?.close();
@@ -965,9 +1039,9 @@ app.whenReady().then(async () => {
     }
     quitting = true;
     const state = await desktopUpdater.install();
-    // Install failures leave ready via installFailed; also clear quitting if still ready
-    // is no longer true for any other reason.
-    if (state.phase !== "ready") quitting = false;
+    // A failed install stays ready for retry but reports a message. Restore normal
+    // window behavior while the user keeps working after that failure.
+    if (state.phase !== "ready" || state.message !== null) quitting = false;
     return state;
   });
   ipcMain.handle("desktop.setup.state", (event) => {

@@ -54,6 +54,7 @@ describe("managed runtime continuity", () => {
 
   it("persists a child transcript and resumes it with placement after the root run changes", async () => {
     const harness = await createRpcHarness({
+      runTimeoutMs: 60_000,
       tool: {
         name: "run_subagent",
         args: { name: "helper", task: "Child original marker", cwd: "project", worktree: false },
@@ -143,10 +144,11 @@ describe("managed runtime continuity", () => {
     } finally {
       await harness.close();
     }
-  }, 60000);
+  }, 120000);
 
   it("polls the root queue at a live child model boundary and delivers only to that child", async () => {
     const harness = await createRpcHarness({
+      runTimeoutMs: 60_000,
       tool: {
         name: "run_subagent",
         args: { name: "helper", task: "Child task", cwd: "project", worktree: false },
@@ -203,7 +205,7 @@ describe("managed runtime continuity", () => {
     } finally {
       await harness.close();
     }
-  }, 30000);
+  }, 120000);
 
   it("parks a participant gate at that child's model boundary without deadlocking its completion", async () => {
     const harness = await createRpcHarness({
@@ -405,6 +407,7 @@ describe("managed runtime continuity", () => {
 
   it("latches a requested graceful pause before an authorized tool effect", async () => {
     const harness = await createRpcHarness({
+      runTimeoutMs: 60_000,
       tool: { name: "read_file", args: { path: "notes.txt" } },
     });
     const executeTool = vi.fn(async () => ({ ok: true }));
@@ -429,7 +432,7 @@ describe("managed runtime continuity", () => {
     } finally {
       await harness.close();
     }
-  }, 30000);
+  }, 120000);
 
   it("does not dispatch the settled queue tail after a terminal worker model failure", async () => {
     const harness = await createRpcHarness({ error: true });

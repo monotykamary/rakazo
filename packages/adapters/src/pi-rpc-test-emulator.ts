@@ -7,6 +7,8 @@ import { PiAgentRuntime } from "./pi-runtime.js";
 export async function createRpcHarness(
   options: {
     wrapHost?: (host: AgentProcessHost) => AgentProcessHost;
+    /** Extra startup headroom for tests that launch multiple real workers. */
+    runTimeoutMs?: number;
     estimateUsage?: boolean;
     quiet?: boolean;
     error?: boolean;
@@ -114,7 +116,7 @@ export async function createRpcHarness(
       try {
         for await (const event of runtime.run(
           { ...request, ...overrides },
-          { spaceId: "space", signal: AbortSignal.timeout(20000) },
+          { spaceId: "space", signal: AbortSignal.timeout(options.runTimeoutMs ?? 20000) },
         ))
           events.push(event);
       } catch (error) {

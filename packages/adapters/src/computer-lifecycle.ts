@@ -625,6 +625,17 @@ export async function replaceComputer(
   }
 
   const oldRef = existing.providerRef ? toComputerRef(existing) : null;
+  // The suspending claim is the ownership token. Teardown writes must CAS on the identity
+  // observed at entry so a concurrent boot/reconcile that legitimately moved the row is
+  // never clobbered. Not updatedAt: checkpointAndRecordComputerWorkspace advances the stamp
+  // mid-replacement, so an entry-stamp fence would false-fail our own write.
+  const suspendingOwnership = {
+    id: computerId,
+    state: "suspending",
+    providerRef: existing.providerRef,
+    kind: existing.kind,
+    machineId: existing.machineId ?? null,
+  };
   try {
     // Retry the checkpoint even after an earlier update left the row in error.
     if (oldRef && (mode === "update" || (existing.state === "running" && mode === "recover"))) {
@@ -642,8 +653,8 @@ export async function replaceComputer(
         if (mode !== "recover") throw error;
       }
     }
-    await deps.prisma.computer.update({
-      where: { id: computerId },
+    const stopped = await deps.prisma.computer.updateMany({
+      where: suspendingOwnership,
       data: {
         state: "stopped",
         providerRef: null,
@@ -654,11 +665,12 @@ export async function replaceComputer(
         controlRunId: null,
       },
     });
+    if (stopped.count !== 1) throw new ComputerBusyError();
     return provisionComputer(deps, computerId, context, controlHolder);
   } catch (error) {
     await deps.prisma.computer
       .updateMany({
-        where: { id: computerId },
+        where: suspendingOwnership,
         data: { state: "error" },
       })
       .catch(() => undefined);

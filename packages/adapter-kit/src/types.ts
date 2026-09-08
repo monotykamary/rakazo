@@ -344,6 +344,8 @@ export interface BotMemoryCall {
 export type BotMemoryCallback = (call: BotMemoryCall) => Promise<unknown>;
 
 export interface AgentRunRequest {
+  /** Trusted backend model affinity; never accepted from worker stream options. */
+  modelSessionId?: string;
   botId: string;
   threadId: string;
   runId: string;

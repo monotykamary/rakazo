@@ -1,0 +1,5 @@
+reviews:
+  tools:
+    # Biome owns this repository's CSS; Stylelint is not configured.
+    stylelint:
+      enabled: false

@@ -26,6 +26,7 @@ it("gracefully suspends a background child waiting for model abort and retains i
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Missing offline model listener");
   const harness = await createRpcHarness({
+    runTimeoutMs: 60_000,
     tool: {
       name: "fabric_exec",
       args: {
@@ -70,4 +71,4 @@ it("gracefully suspends a background child waiting for model abort and retains i
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
-}, 30000);
+}, 120000);

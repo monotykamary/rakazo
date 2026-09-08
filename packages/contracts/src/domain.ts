@@ -238,6 +238,10 @@ export const SpaceSchema = z.object({
   id: Id,
   name: z.string(),
   isDefault: z.boolean(),
+  /** True when the space has any bot or group, including archived. */
+  hasContent: z.boolean(),
+  /** True only when the current member may delete this non-default space. */
+  canDelete: z.boolean().optional(),
   bots: z.array(SpaceBotSchema),
   groups: z.array(SpaceGroupSchema),
   externalConversations: z.array(ExternalConversationSchema),
@@ -1081,6 +1085,8 @@ export const MeSchema = z.object({
   spaceId: Id,
   isDeploymentOwner: z.boolean(),
   needsModel: z.boolean(),
+  /** First use survives deletion of every bot or optional space. */
+  hasOnboarded: z.boolean().optional(),
   defaultProvider: z.string().nullable(),
   defaultModel: z.string().nullable(),
   computerHost: z.enum(["docker", "this-mac"]).nullable(),

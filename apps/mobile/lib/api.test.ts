@@ -1,6 +1,7 @@
 import * as SecureStore from "expo-secure-store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  adoptDeletedSpaceFallback,
   applyMobileThreadEvent,
   authHeaders,
   blockText,
@@ -905,6 +906,29 @@ describe("mobile thread event reduction", () => {
     expect(next?.cursor).toBe(4);
   });
 
+  it("preserves legacy reactions and reply metadata when an update omits them", () => {
+    const initial = snapshot([
+      {
+        ...mobileMessage("message-1", [{ kind: "text", text: "Done" }]),
+        thumbsUp: true,
+        replyToMessageId: "parent",
+      },
+    ]);
+    const next = applyMobileThreadEvent(initial, {
+      type: "thread.message.updated",
+      seq: 5,
+      payload: { messageId: "message-1", blocks: [{ kind: "text", text: "Updated" }] },
+    });
+    expect(next?.messages[0]).toMatchObject({ thumbsUp: true, replyToMessageId: "parent" });
+    const cleared = applyMobileThreadEvent(next, {
+      type: "thread.message.updated",
+      seq: 6,
+      payload: { messageId: "message-1", thumbsUp: false, replyToMessageId: null },
+    });
+    expect(cleared?.messages[0]?.thumbsUp).toBe(false);
+    expect(cleared?.messages[0]?.replyToMessageId).toBeUndefined();
+  });
+
   it("prepends ordered history pages without duplicating the boundary message", () => {
     const initial = snapshot([mobileMessage("m-2", [], 2), mobileMessage("m-3", [], 3)], 2);
 
@@ -1435,5 +1459,285 @@ describe("mobile clipboard text", () => {
         ],
       }),
     ).toBe("Hello\nSMS · Sender: Reply");
+  });
+});
+
+describe("mobile Space selection recovery", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.mocked(resumeLiveNotifications).mockClear();
+    vi.mocked(SecureStore.getItemAsync).mockReset();
+    vi.mocked(SecureStore.setItemAsync).mockReset();
+    vi.mocked(SecureStore.deleteItemAsync).mockReset();
+  });
+
+  function memoryStore(initial: Array<[string, string]>) {
+    const storage = new Map<string, string>(initial);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      storage.delete(key);
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      storage.set(key, value);
+    });
+    return storage;
+  }
+
+  async function freshApi() {
+    vi.resetModules();
+    return await import("./api.js");
+  }
+
+  it("recovers a deleted-space fallback over a stale saved selection after restart", async () => {
+    const storage = memoryStore([["rakazo.space_id", "space-deleted"]]);
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      if (key === "rakazo.space_id") throw new Error("device locked");
+      storage.set(key, value);
+    });
+    const api = await freshApi();
+    await api.loadApiBase();
+
+    await expect(api.selectSpace("space-personal")).resolves.toBe(false);
+    await expect(api.adoptDeletedSpaceFallback("space-personal")).resolves.toBe(true);
+    expect(api.selectedSpaceId()).toBe("space-personal");
+    // Stale deleted id is cleared even while the replacement write stays locked.
+    expect(storage.has("rakazo.space_id")).toBe(false);
+    expect(storage.get("rakazo.space_rollback")).toBe(
+      JSON.stringify({ apiBase: "http://127.0.0.1:3100", spaceId: "space-personal" }),
+    );
+
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      storage.set(key, value);
+    });
+    const restarted = await freshApi();
+    await restarted.loadApiBase();
+    expect(restarted.selectedSpaceId()).toBe("space-personal");
+    expect(storage.get("rakazo.space_id")).toBe("space-personal");
+    expect(storage.has("rakazo.space_rollback")).toBe(false);
+  });
+
+  it("clears a deleted selection when every SecureStore write fails after delete", async () => {
+    const storage = memoryStore([["rakazo.space_id", "space-deleted"]]);
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async () => {
+      throw new Error("device locked");
+    });
+    const api = await freshApi();
+    await api.loadApiBase();
+
+    await expect(api.selectSpace("space-personal")).resolves.toBe(false);
+    await expect(api.adoptDeletedSpaceFallback("space-personal")).resolves.toBe(true);
+    expect(api.selectedSpaceId()).toBe("space-personal");
+    expect(storage.has("rakazo.space_id")).toBe(false);
+    expect(storage.has("rakazo.space_rollback")).toBe(false);
+
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      storage.set(key, value);
+    });
+    const restarted = await freshApi();
+    await restarted.loadApiBase();
+    // Cleared selection lets startup fall through to the server default.
+    expect(restarted.selectedSpaceId()).toBeNull();
+    await expect(restarted.selectInitialSpace("space-personal")).resolves.toBe(true);
+    expect(storage.get("rakazo.space_id")).toBe("space-personal");
+  });
+
+  it("drops a stale deleted selection when rollback recovery cannot rewrite SPACE_KEY", async () => {
+    const storage = memoryStore([
+      ["rakazo.space_id", "space-deleted"],
+      [
+        "rakazo.space_rollback",
+        JSON.stringify({ apiBase: "http://127.0.0.1:3100", spaceId: "space-personal" }),
+      ],
+    ]);
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async () => {
+      throw new Error("device locked");
+    });
+    const restarted = await freshApi();
+    await restarted.loadApiBase();
+
+    expect(restarted.selectedSpaceId()).toBe("space-personal");
+    expect(storage.has("rakazo.space_id")).toBe(false);
+    expect(storage.get("rakazo.space_rollback")).toBe(
+      JSON.stringify({ apiBase: "http://127.0.0.1:3100", spaceId: "space-personal" }),
+    );
+  });
+
+  it("recovers after restart when SecureStore could neither write nor clear after delete", async () => {
+    const storage = memoryStore([["rakazo.space_id", "space-deleted"]]);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async () => {
+      throw new Error("device locked");
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async () => {
+      throw new Error("device locked");
+    });
+    const api = await freshApi();
+    await api.loadApiBase();
+
+    await expect(api.selectSpace("space-personal")).resolves.toBe(false);
+    await expect(api.adoptDeletedSpaceFallback("space-personal")).resolves.toBe(false);
+    expect(api.selectedSpaceId()).toBe("space-personal");
+    expect(storage.get("rakazo.space_id")).toBe("space-deleted");
+
+    const restarted = await freshApi();
+    await restarted.loadApiBase();
+    expect(restarted.selectedSpaceId()).toBe("space-deleted");
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ json: { spaces: [] } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(restarted.rpc("spaces/list")).resolves.toEqual({ spaces: [] });
+    expect(restarted.selectedSpaceId()).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]![1].headers["x-rakazo-space-id"]).toBe("space-deleted");
+    expect(fetchMock.mock.calls[1]![1].headers["x-rakazo-space-id"]).toBeUndefined();
+  });
+
+  it("keeps the Space selection when unauthorized is a session failure", async () => {
+    const storage = memoryStore([["rakazo.space_id", "space-support"]]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
+      if (key === "rakazo.session_token") return "expired-token";
+      return storage.get(key) ?? null;
+    });
+    const api = await freshApi();
+    await api.loadApiBase();
+    expect(api.selectedSpaceId()).toBe("space-support");
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.rpc("spaces/list")).rejects.toThrow("Unauthorized");
+    expect(api.selectedSpaceId()).toBe("space-support");
+    expect(storage.get("rakazo.space_id")).toBe("space-support");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]![1].headers["x-rakazo-space-id"]).toBe("space-support");
+    expect(fetchMock.mock.calls[1]![1].headers["x-rakazo-space-id"]).toBeUndefined();
+  });
+
+  it("does not retry a mutating RPC against the default Space after Space auth failure", async () => {
+    const storage = memoryStore([["rakazo.space_id", "space-deleted"]]);
+    const api = await freshApi();
+    await api.loadApiBase();
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ json: { spaces: [] } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.rpc("bots/create", { name: "Wrong space bot" })).rejects.toThrow(
+      "Unauthorized",
+    );
+    expect(api.selectedSpaceId()).toBeNull();
+    expect(storage.has("rakazo.space_id")).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]![0])).toContain("/rpc/bots/create");
+    expect(fetchMock.mock.calls[0]![1].headers["x-rakazo-space-id"]).toBe("space-deleted");
+    expect(String(fetchMock.mock.calls[1]![0])).toContain("/rpc/spaces/list");
+    expect(fetchMock.mock.calls[1]![1].headers["x-rakazo-space-id"]).toBeUndefined();
+  });
+
+  it("re-persists a Space selected while recovery cleanup is in flight", async () => {
+    const storage = memoryStore([["rakazo.space_id", "space-deleted"]]);
+    let injected = false;
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      if (key === "rakazo.space_id" && !injected) {
+        injected = true;
+        await expect(api.selectSpace("space-new")).resolves.toBe(true);
+      }
+      storage.delete(key);
+    });
+    const api = await freshApi();
+    await api.loadApiBase();
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ json: { spaces: [] } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.rpc("spaces/list")).resolves.toEqual({ spaces: [] });
+    expect(injected).toBe(true);
+    expect(api.selectedSpaceId()).toBe("space-new");
+    expect(storage.get("rakazo.space_id")).toBe("space-new");
+  });
+
+  it("ignores a stale 401 after switching away and back to the same Space", async () => {
+    const storage = memoryStore([["rakazo.space_id", "space-a"]]);
+    const api = await freshApi();
+    await api.loadApiBase();
+    expect(api.selectedSpaceId()).toBe("space-a");
+
+    let resolveStale!: (value: Response) => void;
+    const fetchMock = vi.fn().mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveStale = resolve;
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const stale = api.rpc("bots/list");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0]![1].headers["x-rakazo-space-id"]).toBe("space-a");
+    await expect(api.selectSpace("space-b")).resolves.toBe(true);
+    await expect(api.selectSpace("space-a")).resolves.toBe(true);
+    resolveStale(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }));
+
+    // ID-only matching would treat this obsolete Space A response as current
+    // after A → B → A; the selection epoch must keep recovery from clearing
+    // the newer Space A selection.
+    await expect(stale).rejects.toThrow("Unauthorized");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(api.selectedSpaceId()).toBe("space-a");
+    expect(storage.get("rakazo.space_id")).toBe("space-a");
+  });
+
+  it("converges durable state to the latest overlapping selection", async () => {
+    const storage = memoryStore([["rakazo.space_id", "space-support"]]);
+    let resolveA!: () => void;
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      if (key === "rakazo.space_id" && value === "space-a") {
+        await new Promise<void>((resolve) => {
+          resolveA = resolve;
+        });
+      }
+      storage.set(key, value);
+    });
+    const api = await freshApi();
+    await api.loadApiBase();
+
+    const pendingA = api.selectSpace("space-a");
+    await vi.waitFor(() => expect(api.selectedSpaceId()).toBe("space-a"));
+    await expect(api.selectSpace("space-b")).resolves.toBe(true);
+    // The older write lands stale after the newer one completed.
+    resolveA();
+
+    await expect(pendingA).resolves.toBe(true);
+    expect(api.selectedSpaceId()).toBe("space-b");
+    expect(storage.get("rakazo.space_id")).toBe("space-b");
+  });
+
+  it("does not adopt a deleted fallback that fails every durable write", async () => {
+    const storage = memoryStore([["rakazo.space_id", "space-deleted"]]);
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async () => {
+      throw new Error("device locked");
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async () => {
+      throw new Error("device locked");
+    });
+    const api = await freshApi();
+    await api.loadApiBase();
+
+    // Total store failure keeps the in-memory fallback for this session; the
+    // 401-probe recovery path is the backstop after restart.
+    await expect(api.adoptDeletedSpaceFallback("space-personal")).resolves.toBe(false);
+    expect(api.selectedSpaceId()).toBe("space-personal");
+    expect(storage.get("rakazo.space_id")).toBe("space-deleted");
   });
 });

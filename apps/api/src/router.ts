@@ -99,12 +99,17 @@ import {
 } from "@rakazo/core";
 import {
   appendEventInTransaction,
+  CannotDeleteDefaultSpaceError,
+  CannotDeleteLastSpaceError,
+  CannotDeleteSpaceAsNonOwnerError,
+  claimEmptySpaceDeletionForMember,
   createExternalConversationRepos,
   createGroupRepos,
   createPrismaMachineStore,
   createRepos,
   createSpaceForMember,
   createThreadMessageInTransaction,
+  deleteEmptySpaceForMember,
   deleteUnreferencedCredentialSecret,
   findDefaultModelCredential,
   findDefaultVoiceCredential,
@@ -122,7 +127,13 @@ import {
   Prisma,
   type PrismaClient,
   parseComputerMode,
+  releaseSpaceDeletionClaim,
+  renewSpaceDeletionClaim,
+  SPACE_DELETION_CLAIM_TIMEOUT_MS,
+  SpaceDeletionInProgressError,
   SpaceLimitError,
+  SpaceNotEmptyError,
+  SpaceNotFoundError,
   selectSpaceModelPreference,
   selectSpaceVoicePreference,
   stagePremoveSteeringInTransaction,
@@ -133,6 +144,7 @@ import { getLogger } from "@rakazo/logging";
 import { deleteAgentSecret, listAgentSecrets, putAgentSecret } from "./agent-secrets.js";
 import { createAgentSkillsService } from "./agent-skills.js";
 import { createOwnedArtifact, getOwnedArtifact, getSpaceArtifact } from "./artifacts.js";
+import { botProfileLabelsChanged, commitBotUpdate } from "./bot-update.js";
 import {
   executionBlocksUserTakeover,
   resolveBusyBotName,
@@ -189,6 +201,7 @@ import {
   loadPeerMessagePage,
   shouldForwardPeerThreadEvent,
 } from "./thread-message-pages.js";
+import { appendThreadReaction } from "./thread-reactions.js";
 import {
   reactToThreadMessage,
   resolveThreadTarget,
@@ -465,6 +478,24 @@ export interface RouterDeps {
   };
 }
 
+/** Bound for one provider sandbox destroy during Space deletion. Providers may
+ * ignore the request abort signal, so without a deadline a hung destroy would
+ * keep the deletion claim renewed forever and block stale-claim recovery. */
+const SPACE_TEARDOWN_TIMEOUT_MS = 120_000;
+
+function spaceTeardownTimeoutMs(): number {
+  const override = Number(process.env.SPACE_TEARDOWN_TIMEOUT_MS ?? "");
+  return Number.isFinite(override) && override > 0 ? override : SPACE_TEARDOWN_TIMEOUT_MS;
+}
+
+/** Surface a Space deletion race as a retryable conflict instead of a generic failure. */
+function mapSpaceLifecycleError(error: unknown): unknown {
+  if (error instanceof SpaceDeletionInProgressError) {
+    return new ORPCError("CONFLICT", { message: error.message });
+  }
+  return error;
+}
+
 export function createRouter(deps: RouterDeps) {
   const os = implement(appContract).$context<{ actor: Actor | null; signal?: AbortSignal }>();
   const repos = createRepos(deps.prisma);
@@ -534,11 +565,137 @@ export function createRouter(deps: RouterDeps) {
           id: space.id,
           name: space.name,
           isDefault: false,
+          hasContent: false,
+          canDelete: true,
           bots: [],
           groups: [],
           externalConversations: [],
           botSections: [],
         };
+      }),
+      remove: authed.spaces.remove.handler(async ({ context, input }) => {
+        let claimId: string | null = null;
+        let claimActive = false;
+        let claimHealthy = true;
+        let claimReleasable = false;
+        let claimRenewal: ReturnType<typeof setInterval> | null = null;
+        const deleteInput = {
+          currentSpaceId: context.actor.spaceId,
+          userId: context.actor.userId,
+          spaceId: input.spaceId,
+        };
+        try {
+          // Claim emptiness before external teardown. Bot and group creation
+          // take the same lifecycle lock and reject the Space until deletion
+          // finishes or this claim is released.
+          const claim = await claimEmptySpaceDeletionForMember(deps.prisma, deleteInput);
+          claimId = claim.claimId;
+          claimActive = true;
+          // A recovered worker can safely finish deletion, but cannot know
+          // whether the previous worker still has provider teardown in flight.
+          // Keep the Space claimed on failure so content cannot reuse it.
+          claimReleasable = !claim.recovered;
+          const claimedInput = { ...deleteInput, claimId };
+          const assertClaim = async () => {
+            if (!claimHealthy) throw new SpaceDeletionInProgressError();
+            try {
+              const renewed = await renewSpaceDeletionClaim(deps.prisma, claimedInput);
+              if (!renewed) {
+                claimHealthy = false;
+                claimReleasable = false;
+                throw new SpaceDeletionInProgressError();
+              }
+            } catch (error) {
+              claimHealthy = false;
+              claimReleasable = false;
+              throw error;
+            }
+          };
+          claimRenewal = setInterval(() => {
+            void assertClaim().catch((renewalError) => {
+              if (claimActive) {
+                getLogger().error("space deletion claim renewal failed", renewalError);
+              }
+            });
+          }, SPACE_DELETION_CLAIM_TIMEOUT_MS / 5);
+          const adapterContext = connectionContext(context.actor, "spaces.remove", context.signal);
+          for (const computer of claim.computers) {
+            await assertClaim();
+            // Provider errors are ambiguous: teardown may have reached the
+            // remote service. From this point, only successful deletion may
+            // unblock content creation; a stale recovery must finish it.
+            claimReleasable = false;
+            let teardownTimer: ReturnType<typeof setTimeout> | undefined;
+            try {
+              await Promise.race([
+                deps.sandbox.destroy(toComputerRef(computer), {
+                  ...adapterContext,
+                  botId: computer.homeKey,
+                }),
+                new Promise<never>((_, reject) => {
+                  teardownTimer = setTimeout(() => {
+                    // Stop renewal so the claim goes stale and a later
+                    // worker can recover; never release after teardown
+                    // started, since the hung destroy may still complete.
+                    claimHealthy = false;
+                    claimReleasable = false;
+                    reject(new Error("Space sandbox teardown timed out"));
+                  }, spaceTeardownTimeoutMs());
+                }),
+              ]);
+            } finally {
+              if (teardownTimer !== undefined) clearTimeout(teardownTimer);
+            }
+            // Never clear a provider handle after this worker loses its claim.
+            await assertClaim();
+            await deps.prisma.computer.updateMany({
+              where: {
+                spaceId: input.spaceId,
+                homeKey: computer.homeKey,
+                providerRef: computer.providerRef,
+                space: { deletionClaimId: claimId },
+              },
+              data: { state: "stopped", providerRef: null },
+            });
+          }
+          await assertClaim();
+          claimActive = false;
+          if (claimRenewal) {
+            clearInterval(claimRenewal);
+            claimRenewal = null;
+          }
+          const fallback = await deleteEmptySpaceForMember(deps.prisma, claimedInput);
+          return { ok: true as const, activeSpaceId: fallback.id };
+        } catch (error) {
+          if (context.signal?.aborted) claimReleasable = false;
+          if (claimId && claimReleasable) {
+            await releaseSpaceDeletionClaim(deps.prisma, { ...deleteInput, claimId }).catch(
+              (releaseError) => {
+                getLogger().error("space deletion claim release failed", releaseError);
+              },
+            );
+          }
+          if (error instanceof SpaceNotFoundError) {
+            throw new ORPCError("NOT_FOUND", { message: error.message });
+          }
+          if (error instanceof CannotDeleteSpaceAsNonOwnerError) {
+            throw new ORPCError("FORBIDDEN", { message: error.message });
+          }
+          if (error instanceof SpaceDeletionInProgressError) {
+            throw new ORPCError("CONFLICT", { message: error.message });
+          }
+          if (
+            error instanceof CannotDeleteDefaultSpaceError ||
+            error instanceof CannotDeleteLastSpaceError ||
+            error instanceof SpaceNotEmptyError
+          ) {
+            throw new ORPCError("BAD_REQUEST", { message: error.message });
+          }
+          throw error;
+        } finally {
+          claimActive = false;
+          if (claimRenewal) clearInterval(claimRenewal);
+        }
       }),
     },
     bootstrap: authed.bootstrap.handler(async ({ context, input }) => {
@@ -882,23 +1039,31 @@ export function createRouter(deps: RouterDeps) {
         if (!found) throw new IsolationError();
         return found;
       }),
-      create: authed.bots.create.handler(async ({ context, input }) =>
-        repos.createBot(context.actor, input),
-      ),
+      create: authed.bots.create.handler(async ({ context, input }) => {
+        try {
+          return await repos.createBot(context.actor, input);
+        } catch (error) {
+          throw mapSpaceLifecycleError(error);
+        }
+      }),
       duplicate: authed.bots.duplicate.handler(async ({ context, input }) => {
         const source = await repos.getBot(context.actor, input.botId);
-        const duplicate = await repos.createBot(context.actor, {
-          name: duplicateBotName(source.name),
-          title: source.title,
-          description: source.description,
-          instructions: source.instructions,
-          notifyOnFinish: source.notifyOnFinish,
-          color: source.color,
-          computerMode: source.computer?.scope === "dedicated" ? "dedicated" : "team",
-          modelProvider: source.modelProvider,
-          modelId: source.modelId,
-          thinkingLevel: source.thinkingLevel,
-        });
+        const duplicate = await repos
+          .createBot(context.actor, {
+            name: duplicateBotName(source.name),
+            title: source.title,
+            description: source.description,
+            instructions: source.instructions,
+            notifyOnFinish: source.notifyOnFinish,
+            color: source.color,
+            computerMode: source.computer?.scope === "dedicated" ? "dedicated" : "team",
+            modelProvider: source.modelProvider,
+            modelId: source.modelId,
+            thinkingLevel: source.thinkingLevel,
+          })
+          .catch((error: unknown) => {
+            throw mapSpaceLifecycleError(error);
+          });
         const assignments = await deps.prisma.botMcpServer.findMany({
           where: {
             botId: source.id,
@@ -1022,8 +1187,15 @@ export function createRouter(deps: RouterDeps) {
             }
           }
         }
-        await deps.prisma.bot.update({
-          where: { id: input.botId },
+        const emitBotUpdated = botProfileLabelsChanged(input);
+        if (emitBotUpdated && !existing.thread) throw new IsolationError();
+        await commitBotUpdate({
+          prisma: deps.prisma,
+          notify: (threadId, seq) => deps.events.notify(threadId, seq),
+          spaceId: context.actor.spaceId,
+          threadId: existing.thread?.id ?? "",
+          botId: input.botId,
+          emitBotUpdated,
           data: {
             name: input.name,
             title: input.title,
@@ -1205,9 +1377,13 @@ export function createRouter(deps: RouterDeps) {
       }),
     },
     groups: {
-      create: authed.groups.create.handler(async ({ context, input }) =>
-        groupRepos.createGroup(context.actor, input),
-      ),
+      create: authed.groups.create.handler(async ({ context, input }) => {
+        try {
+          return await groupRepos.createGroup(context.actor, input);
+        } catch (error) {
+          throw mapSpaceLifecycleError(error);
+        }
+      }),
       list: authed.groups.list.handler(async ({ context }) => groupRepos.listGroups(context.actor)),
       listArchived: authed.groups.listArchived.handler(async ({ context }) =>
         groupRepos.listGroups(context.actor, { archived: true }),
@@ -1228,10 +1404,14 @@ export function createRouter(deps: RouterDeps) {
       }),
       duplicate: authed.groups.duplicate.handler(async ({ context, input }) => {
         const source = await groupRepos.getGroup(context.actor, input.groupId);
-        return groupRepos.createGroup(context.actor, {
-          name: duplicateBotName(source.name),
-          botIds: source.members.map((member) => member.bot.id),
-        });
+        try {
+          return await groupRepos.createGroup(context.actor, {
+            name: duplicateBotName(source.name),
+            botIds: source.members.map((member) => member.bot.id),
+          });
+        } catch (error) {
+          throw mapSpaceLifecycleError(error);
+        }
       }),
       update: authed.groups.update.handler(async ({ context, input }) => {
         if (input.sectionId) {
@@ -1376,19 +1556,22 @@ export function createRouter(deps: RouterDeps) {
       }),
       react: authed.threads.react.handler(async ({ context, input }) => {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
-        const result = await reactToThreadMessage(
-          deps,
-          context.actor,
-          target,
-          input.messageId,
-          input.thumbsUp,
-        );
+        const result =
+          "reaction" in input
+            ? await appendThreadReaction(deps, context.actor, target, input)
+            : await reactToThreadMessage(
+                deps,
+                context.actor,
+                target,
+                input.messageId,
+                input.thumbsUp,
+              );
         if (result.eventSeq != null) {
           await deps.events.notify(target.threadId, result.eventSeq).catch((error) => {
             getLogger().error("thread reaction realtime notification", error);
           });
         }
-        if (result.runId) {
+        if ("runId" in result && typeof result.runId === "string") {
           await deps.jobs.enqueue(runContinueJob(result.runId)).catch((error) => {
             getLogger().error("thread reaction enqueue", error);
           });
@@ -4597,7 +4780,8 @@ async function spaceNavigationDto(
     where: { userId: actor.userId, organizationId: currentSpace.organizationId },
     select: {
       spaceId: true,
-      space: { select: { name: true, isDefault: true } },
+      role: true,
+      space: { select: { name: true, isDefault: true, deletingAt: true } },
     },
     orderBy: { createdAt: "asc" },
   });
@@ -4610,6 +4794,8 @@ async function spaceNavigationDto(
     inactiveGroups,
     botSections,
     externalConversations,
+    contentBots,
+    contentGroups,
   ] = await Promise.all([
     repos.listBots(actor),
     groupRepos.listGroups(actor),
@@ -4617,6 +4803,23 @@ async function spaceNavigationDto(
     groupRepos.listSpaceGroupsForSpaces(actor, inactiveSpaceIds),
     repos.listBotSectionsForSpaces(actor, spaceIds),
     createExternalConversationRepos(deps.prisma).listForSpaces(actor, spaceIds),
+    // Active-only navigation lists miss archived content in other spaces; count any
+    // bot/group in the actor's spaces (including another member's) so a shared
+    // non-empty space cannot look empty for onboarding redirects.
+    deps.prisma.bot.findMany({
+      where: { spaceId: { in: spaceIds } },
+      select: { spaceId: true },
+      distinct: ["spaceId"],
+    }),
+    deps.prisma.chatGroup.findMany({
+      where: { spaceId: { in: spaceIds } },
+      select: { spaceId: true },
+      distinct: ["spaceId"],
+    }),
+  ]);
+  const spacesWithContent = new Set([
+    ...contentBots.map((row) => row.spaceId),
+    ...contentGroups.map((row) => row.spaceId),
   ]);
   const currentMembership = memberships.find((membership) => membership.spaceId === actor.spaceId);
   if (!currentMembership) throw new IsolationError();
@@ -4626,6 +4829,7 @@ async function spaceNavigationDto(
   const botsFor = (spaceId: string) => botsBySpace.get(spaceId) ?? [];
   const groupsFor = (spaceId: string) => groupsBySpace.get(spaceId) ?? [];
   const sectionsFor = (spaceId: string) => sectionsBySpace.get(spaceId) ?? [];
+  const staleClaimBefore = new Date(Date.now() - SPACE_DELETION_CLAIM_TIMEOUT_MS);
 
   return {
     current: {
@@ -4645,6 +4849,13 @@ async function spaceNavigationDto(
         id: membership.spaceId,
         name: membership.space.name,
         isDefault: membership.space.isDefault,
+        hasContent: spacesWithContent.has(membership.spaceId),
+        canDelete:
+          membership.role === "owner" &&
+          !membership.space.isDefault &&
+          memberships.length > 1 &&
+          !spacesWithContent.has(membership.spaceId) &&
+          (membership.space.deletingAt === null || membership.space.deletingAt < staleClaimBefore),
         bots: spaceBots.map((bot) => ({
           id: bot.id,
           spaceId: bot.spaceId,
@@ -4727,6 +4938,7 @@ async function meDto(deps: RouterDeps, actor: Actor): Promise<Me> {
     spaceId: actor.spaceId,
     isDeploymentOwner: actor.isDeploymentOwner,
     needsModel: setup.needsModel,
+    hasOnboarded: Boolean(user.onboardedAt),
     defaultProvider:
       setup.credential?.provider ??
       setup.settings?.defaultModelProvider ??

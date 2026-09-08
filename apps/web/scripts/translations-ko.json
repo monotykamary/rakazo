@@ -1,4 +1,5 @@
 {
+  "To:": "받는 사람:",
   " (unread)": " (읽지 않음)",
   "macOS will not ask for extra permission if you let bots run on this Mac. They run as you.": "이 Mac에서 실행하면 Bot이 내 계정 권한으로 동작하며 macOS가 작업마다 별도 승인을 묻지 않습니다.",
   "Your OS will not ask for extra permission if you let bots run on {hostLabel}. They run as you.": "{hostLabel}에서 실행하면 Bot이 내 계정 권한으로 동작하며 운영체제가 작업마다 별도 승인을 묻지 않습니다.",
@@ -582,5 +583,12 @@
   "Message from": "메시지 보낸 봇",
   "This chat is view-only": "이 채팅은 읽기 전용입니다",
   "Could not load this chat.": "이 채팅을 불러오지 못했습니다.",
-  "No messages with {peerBotName} yet.": "{peerBotName}와의 메시지가 아직 없습니다."
+  "No messages with {peerBotName} yet.": "{peerBotName}와의 메시지가 아직 없습니다.",
+  "React": "반응하기",
+  "Reactions": "반응",
+  "Actions for space": "Actions for space",
+  "Delete space": "Delete space",
+  "Could not delete space": "Could not delete space",
+  "Only empty spaces can be deleted. Delete its bots and groups first.": "Only empty spaces can be deleted. Delete its bots and groups first.",
+  "Back": "뒤로"
 }

@@ -16,6 +16,7 @@ model User {
   createdAt                   DateTime                     @default(now())
   updatedAt                   DateTime                     @updatedAt
   avatarStyle                 String                       @default("robot")
+  onboardedAt                 DateTime?
   modelVisibility             Json                         @default("{\"hide\":[]}")
   sessions                    Session[]
   accounts                    Account[]
@@ -155,6 +156,8 @@ model Space {
   createdByUserId             String?
   createdByUser               User?                        @relation("SpaceCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
   createdAt                   DateTime                     @default(now())
+  deletingAt                  DateTime?
+  deletionClaimId             String?
   memberships                 SpaceMember[]
   bots                        Bot[]
   botSections                 BotSection[]

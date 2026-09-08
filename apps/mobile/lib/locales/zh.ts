@@ -207,6 +207,12 @@ export const ZH_MESSAGES: Record<string, string> = {
   Cancelled: "已取消",
   "Change password": "更改密码",
   "Chat settings": "聊天设置",
+  React: "回应",
+  "Delete space": "删除空间",
+  "Could not delete space": "无法删除空间",
+  "Space actions for {name}": "{name}的空间操作",
+  "This removes the empty space for everyone.": "这会为所有成员删除此空空间。",
+
   Checking: "检查中",
   "Checking…": "正在检查…",
   "Check your email": "请查看邮箱",

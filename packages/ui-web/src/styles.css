@@ -163,6 +163,8 @@
   animation: rakazo-organic-eyes-loop-3 7.8s ease-in-out -2.1s infinite;
 }
 
+/* Durations mirror the mobile worklet math in apps/mobile/lib/avatar-motion.ts
+   (kept aligned by avatar-motion-sync.test.ts). */
 .rakazo-organic-avatar[data-shape-family="0"] .rakazo-organic-avatar-body-working {
   animation: rakazo-organic-float 1.8s ease-in-out infinite;
 }

@@ -26,6 +26,11 @@ function harness(count: number) {
     computer: null,
   };
   const tx = {
+    $queryRaw: vi.fn().mockResolvedValue([]),
+    spaceMember: {
+      findUnique: vi.fn().mockResolvedValue({ organizationId: "org", space: { deletingAt: null } }),
+    },
+    user: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     bot: {
       aggregate: vi.fn().mockResolvedValue({ _max: { position: null } }),
       create: vi.fn().mockResolvedValue(bot),
@@ -49,6 +54,10 @@ describe("first bot provisioning", () => {
   it("stores the shared builder prompt on an unconfigured first bot", async () => {
     const h = harness(0);
     await h.repos.createBot(actor, input);
+    expect(h.tx.user.updateMany).toHaveBeenCalledWith({
+      where: { id: actor.userId, onboardedAt: null },
+      data: { onboardedAt: expect.any(Date) },
+    });
     expect(h.tx.bot.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ instructions: COORDINATOR_INSTRUCTIONS }),
     });

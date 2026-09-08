@@ -1,4 +1,5 @@
 {
+  "To:": "Para:",
   " (unread)": " (sin leer)",
   "macOS will not ask for extra permission if you let bots run on this Mac. They run as you.": "MacOS no pedirá permisos extra si dejas que los bots se ejecuten en esta Mac: se ejecutan como tú.",
   "Your OS will not ask for extra permission if you let bots run on {hostLabel}. They run as you.": "Tu sistema operativo no pedirá permisos extra si dejas que los bots se ejecuten en {hostLabel}: se ejecutan como tú.",
@@ -725,5 +726,11 @@
   "Apps": "Apps",
   "Asleep": "En reposo",
   "at <0/>": "a las <0/>",
-  "Authorization expired — reconnect required": "Autorización expirada: se requiere reconectar"
+  "Authorization expired — reconnect required": "Autorización expirada: se requiere reconectar",
+  "React": "Reaccionar",
+  "Reactions": "Reacciones",
+  "Actions for space": "Actions for space",
+  "Delete space": "Delete space",
+  "Could not delete space": "Could not delete space",
+  "Only empty spaces can be deleted. Delete its bots and groups first.": "Only empty spaces can be deleted. Delete its bots and groups first."
 }

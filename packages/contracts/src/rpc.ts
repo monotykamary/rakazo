@@ -92,6 +92,7 @@ import {
   QueueScopeSchema,
   QueueSnapshotSchema,
 } from "./queue.js";
+import { MessageReactionSchema } from "./reactions.js";
 import { RunsListOutputSchema } from "./runs.js";
 import { SearchQueryOutputSchema } from "./search.js";
 import {
@@ -170,6 +171,9 @@ export const appContract = {
   spaces: {
     list: oc.output(SpaceNavigationSchema),
     create: oc.input(z.object({ name: z.string().trim().min(1).max(60) })).output(SpaceSchema),
+    remove: oc
+      .input(z.object({ spaceId: Id }))
+      .output(z.object({ ok: z.literal(true), activeSpaceId: Id })),
   },
   bootstrap: oc.input(z.object({ botId: Id.optional() })).output(AppBootstrapSchema),
   deployment: {
@@ -353,10 +357,15 @@ export const appContract = {
     ),
     react: oc
       .input(
-        threadTarget.safeExtend({
-          messageId: Id,
-          thumbsUp: z.boolean(),
-        }),
+        z.union([
+          threadTarget.safeExtend({
+            messageId: Id,
+            reaction: MessageReactionSchema,
+            clientNonce: z.string().min(1).max(200),
+          }),
+          // Keep installed older clients and their persisted thumbs-up events compatible.
+          threadTarget.safeExtend({ messageId: Id, thumbsUp: z.boolean() }),
+        ]),
       )
       .output(z.object({ ok: z.literal(true) })),
     stop: oc.input(threadTarget).output(z.object({ ok: z.literal(true) })),

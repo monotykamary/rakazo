@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   type Api,
@@ -415,15 +416,33 @@ function redactActivityUrl(value: unknown): string {
   }
 }
 
+/** Stable affinity for a bot conversation or one delegated participant. */
+export function conversationSessionId(threadId: string, botId: string, agentId?: string): string {
+  return agentId ? `${threadId}:${botId}:${agentId}` : `${threadId}:${botId}`;
+}
+
 export function reliableStreamOptions(
   model: Pick<Model<Api>, "api" | "provider">,
   options?: SimpleStreamOptions,
 ): SimpleStreamOptions | undefined {
-  if (model.provider !== "openai-codex" && model.api !== "openai-codex-responses") {
-    return options;
+  let next = options;
+  if (model.provider === "openai-codex" || model.api === "openai-codex-responses") {
+    // Pi cannot fall back after a WebSocket has emitted its start event. SSE
+    // avoids long-lived sockets between tool turns and has bounded retries.
+    next = { ...next, transport: "sse" };
   }
-  // Pi cannot fall back after a WebSocket has emitted its start event. Long tool
-  // runs then surface abnormal close 1006 as a terminal model error. SSE has
-  // bounded network retries and no long-lived connection between tool turns.
-  return { ...options, transport: "sse" };
+  // These protocols require affinity headers that Pi 0.85.1 does not attach.
+  if (model.provider === "opencode" || model.provider === "opencode-go") {
+    const sessionId = next?.sessionId?.trim() || randomUUID();
+    next = {
+      ...next,
+      sessionId,
+      headers: {
+        "x-opencode-session": sessionId,
+        "x-opencode-client": "rakazo",
+        ...next?.headers,
+      },
+    };
+  }
+  return next;
 }

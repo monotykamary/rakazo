@@ -12,6 +12,7 @@ export * from "./model-selection.js";
 export * from "./model-visibility.js";
 export * from "./openai-compatible-ui.js";
 export * from "./queue.js";
+export * from "./reactions.js";
 export * from "./rpc.js";
 export * from "./runs.js";
 export * from "./search.js";

@@ -40,7 +40,10 @@ export function prepareManagedToolArguments(name: string, value: unknown): Recor
     case "launch_app":
       return { application: String(raw.application ?? ""), uri: String(raw.uri ?? "") };
     case "shell":
-      return { command: String(raw.command ?? ""), cwd: String(raw.cwd || "/home/rakazo") };
+      return {
+        command: String(raw.command ?? ""),
+        ...(raw.cwd ? { cwd: String(raw.cwd) } : {}),
+      };
     case "run_subagent":
       return {
         name: String(raw.name ?? "helper"),

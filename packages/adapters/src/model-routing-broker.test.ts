@@ -128,6 +128,44 @@ describe("backend multiprovider routing", () => {
     expect(f.attempts.map((attempt) => attempt.credentialId)).toEqual(["primary", "secondary"]);
   });
 
+  it.each(["opencode", "opencode-go"])(
+    "keeps backend-owned affinity across %s retries and turns",
+    async (provider) => {
+      const f = fixture({ primary: "rate-limit" });
+      const input = request();
+      input.model = { ...input.model, provider };
+      input.modelRouting!.pool = input.modelRouting!.pool.map((entry) => ({
+        ...entry,
+        model: { ...entry.model, provider },
+      }));
+      const broker = new ModelRoutingBroker(input, f.cache, f.resolve);
+      for await (const _ of broker.stream(
+        context,
+        {
+          sessionId: "untrusted-worker",
+          headers: { "x-opencode-session": "untrusted-worker", Authorization: "untrusted-worker" },
+        },
+        new AbortController().signal,
+        async () => {},
+        f.events,
+      )) {
+        /* Drain the offline stream. */
+      }
+      expect(f.attempts).toHaveLength(2);
+      for (const { options } of f.attempts) {
+        expect(options.sessionId).toBe("thread:bot");
+        expect(options.headers).toEqual({
+          "x-opencode-session": "thread:bot",
+          "x-opencode-client": "rakazo",
+        });
+      }
+      await f.run({ ...input, runId: "next-root-turn" });
+      expect(f.attempts.at(-1)!.options.sessionId).toBe("thread:bot");
+      await f.run({ ...input, runId: "child", modelSessionId: "thread:bot:child" });
+      expect(f.attempts.at(-1)!.options.sessionId).toBe("thread:bot:child");
+    },
+  );
+
   it("uses the first ordered connection without trying other targets on success", async () => {
     const f = fixture();
     expect((await f.run()).at(-1)?.type).toBe("done");
