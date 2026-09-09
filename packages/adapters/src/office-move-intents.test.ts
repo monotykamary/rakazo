@@ -89,6 +89,69 @@ function fixture() {
   };
 }
 describe("approved durable office moves", () => {
+  it("the real deferred assignment cannot bypass absent Pi authority", async () => {
+    const { deps, prisma, intent } = fixture();
+    Object.assign(prisma, {
+      runtimeSession: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            state: {
+              modelSelection: {
+                requested: null,
+                effective: {
+                  provider: "pi-provider",
+                  modelId: "actual-model",
+                  thinkingLevel: "low",
+                },
+                status: "applied",
+                error: null,
+              },
+            },
+          },
+        ]),
+      },
+      runtimeModelPreference: { findMany: vi.fn().mockResolvedValue([]) },
+    });
+    prisma.bot.findFirst.mockResolvedValue({
+      id: "bot",
+      computerId: "source",
+      computer: { id: "source", machineId: "old-machine", controlHolder: "none" },
+      computerSwitching: false,
+    });
+    prisma.machine.findFirst.mockResolvedValue({
+      id: "target",
+      status: "paired",
+      lastSeenAt: new Date(),
+    });
+    const actual =
+      await vi.importActual<typeof import("./machine-assignment.js")>("./machine-assignment.js");
+    vi.mocked(assignBotMachine).mockImplementationOnce(actual.assignBotMachine);
+    await handleOfficeMoveIntent(deps, { intentId: "intent" });
+    expect(intent).toMatchObject({ status: "failed", error: "Pi model authority is unavailable" });
+    expect(prisma.computer.updateMany).not.toHaveBeenCalled();
+    expect(prisma.bot.updateMany).toHaveBeenLastCalledWith({
+      where: { id: "bot", officeMoveIntentId: "intent" },
+      data: { computerSwitching: false, officeMoveIntentId: null },
+    });
+  });
+  it("forwards only the trusted resolver to deferred assignment and records model failure", async () => {
+    const { deps, intent } = fixture();
+    const resolveOfficeModelRuntime = vi.fn().mockResolvedValue(null);
+    deps.resolveOfficeModelRuntime = resolveOfficeModelRuntime;
+    vi.mocked(assignBotMachine).mockImplementationOnce(async (assignment) => {
+      expect(assignment.resolveOfficeModelRuntime).toBe(resolveOfficeModelRuntime);
+      intent.status = "processing";
+      const { MachineRelocationError } = await import("./machine-relocation.js");
+      throw new MachineRelocationError("BAD_REQUEST", {
+        message: "Destination Pi model authority is unavailable",
+      });
+    });
+    await handleOfficeMoveIntent(deps, { intentId: "intent" });
+    expect(intent).toMatchObject({
+      status: "failed",
+      error: "Destination Pi model authority is unavailable",
+    });
+  });
   it("binds executing approval receipt to exact owner/run/tool and stable idempotency key", async () => {
     const { deps, prisma } = fixture();
     const first = await enqueueApprovedOfficeMove(deps, actor, input);

@@ -44,7 +44,12 @@ vi.mock("@rakazo/db", async (original) => ({
   }),
 }));
 
-function fixture() {
+function fixture(owner = false) {
+  const piModels = {
+    read: vi.fn(),
+    validate: vi.fn(async () => {}),
+    supportsCheckpoint: vi.fn(() => true),
+  };
   const prisma = {
     $transaction: vi.fn(
       async (run: (tx: unknown) => Promise<unknown>): Promise<unknown> => run(prisma),
@@ -54,7 +59,10 @@ function fixture() {
         modelVisibility: { hide: [{ provider: "openai-compatible" }] },
       })),
     },
-    bot: { update: vi.fn(async () => bot) },
+    $queryRaw: vi.fn(async () => [{ computerSwitching: false }]),
+    thread: { findFirst: vi.fn(async () => ({ id: "thread" })) },
+    runtimeSession: { findUnique: vi.fn(async () => ({ state: {} })) },
+    bot: { findFirst: vi.fn(async () => bot), update: vi.fn(async () => bot) },
     spaceModelPreference: {
       findFirst: vi.fn(async () => ({
         credential: { id: "connection", provider: "openai-compatible" },
@@ -65,6 +73,7 @@ function fixture() {
   const client = createRouterClient(
     createRouter({
       prisma,
+      piModels,
       env: {},
       secrets: {},
       sandbox: {},
@@ -72,13 +81,52 @@ function fixture() {
       events: { notify: vi.fn(async () => undefined) },
       jobs: {},
     } as unknown as RouterDeps),
-    { context: { actor: { userId: "owner", spaceId: "space" } as Actor } },
+    {
+      context: { actor: { userId: "owner", spaceId: "space", isDeploymentOwner: owner } as Actor },
+    },
   );
-  return { prisma, client };
+  return { prisma, client, piModels };
 }
 
-describe("bot pin visibility route", () => {
-  it("rejects hidden custom/default targets before credential lookup or mutation", async () => {
+describe("bot Pi model intent route", () => {
+  it.each([
+    { thinkingLevel: "low" as const },
+    { thinkingLevel: null },
+    { modelProvider: "extension", modelId: "custom" },
+  ])("Pi-validates each model intent: %j", async (update) => {
+    const f = fixture(true);
+    await f.client.bots.update({ botId: "bot", ...update });
+    expect(f.piModels.validate).toHaveBeenCalledOnce();
+    expect(f.prisma.$queryRaw).toHaveBeenCalledOnce();
+    expect(f.prisma.bot.update).toHaveBeenCalledOnce();
+    expect(f.prisma.spaceModelPreference.findFirst).not.toHaveBeenCalled();
+  });
+  it("blocks a bot model update when moving starts during validation", async () => {
+    const f = fixture(true);
+    f.piModels.validate.mockImplementation(async () => {
+      f.prisma.$queryRaw.mockResolvedValue([{ computerSwitching: true }]);
+    });
+    await expect(
+      f.client.bots.update({ botId: "bot", thinkingLevel: "low" }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(f.prisma.bot.update).not.toHaveBeenCalled();
+  });
+  it("clears bot intent without probing but still honors the move latch", async () => {
+    const f = fixture(true);
+    f.prisma.$queryRaw.mockResolvedValue([{ computerSwitching: true }]);
+    await expect(
+      f.client.bots.update({
+        botId: "bot",
+        modelProvider: null,
+        modelId: null,
+        thinkingLevel: null,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(f.piModels.validate).not.toHaveBeenCalled();
+    expect(f.prisma.bot.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-owner model intents before credential lookup or mutation", async () => {
     const f = fixture();
     await expect(
       f.client.bots.update({
@@ -86,18 +134,17 @@ describe("bot pin visibility route", () => {
         modelProvider: "openai-compatible",
         modelId: "another-custom",
       }),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: expect.stringContaining("hidden") });
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(f.prisma.spaceModelPreference.findFirst).not.toHaveBeenCalled();
     expect(f.prisma.bot.update).not.toHaveBeenCalled();
   });
-  it.each([
-    { title: "New title" },
-    { instructions: "New instructions" },
-    { title: "New title", modelProvider: "openai-compatible", modelId: "custom-default" },
-  ])("allows unrelated edits without reselecting an unchanged hidden pin: %j", async (update) => {
-    const f = fixture();
-    await expect(f.client.bots.update({ botId: "bot", ...update })).resolves.toMatchObject(bot);
-    expect(f.prisma.bot.update).toHaveBeenCalledOnce();
-    expect(f.prisma.user.findUnique).not.toHaveBeenCalled();
-  });
+  it.each([{ title: "New title" }, { instructions: "New instructions" }])(
+    "allows unrelated edits without reselecting an unchanged hidden pin: %j",
+    async (update) => {
+      const f = fixture();
+      await expect(f.client.bots.update({ botId: "bot", ...update })).resolves.toMatchObject(bot);
+      expect(f.prisma.bot.update).toHaveBeenCalledOnce();
+      expect(f.prisma.user.findUnique).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -6,6 +6,7 @@ import { ComposioEmulator, FakeSandboxProvider, PiAgentRuntime } from "@rakazo/a
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createTestProcessHost } from "../../adapters/src/pi-rpc-test-host.js";
 import { sessionCookieHeader } from "./index.js";
+import { LEGACY_MODEL_FIXTURE_KEY, seedLegacyModelCredential } from "./legacy-model-fixture.js";
 import {
   type ModelEmulatorRequest,
   type ModelEmulatorStep,
@@ -154,7 +155,9 @@ describe.skipIf(!databaseAvailable)("offline Pi computer approval", () => {
       let stop: (() => Promise<void>) | undefined;
       try {
         const { createApp } = await import("../../../apps/api/src/app.ts");
+        sandbox = new FakeSandboxProvider();
         const handles = await createApp({
+          sandbox,
           databaseUrl: process.env.DATABASE_URL!,
           realtimeDatabaseUrl: process.env.DATABASE_URL!,
           authUrl: fixtureOrigin,
@@ -162,14 +165,13 @@ describe.skipIf(!databaseAvailable)("offline Pi computer approval", () => {
           dataDir,
           sandboxProvider: "fake",
           agentRuntime: "pi",
+          runtime: new PiAgentRuntime({ host: createTestProcessHost() }),
           wakeupDriver: "memory",
           signupsEnabled: "true",
           composio: new ComposioEmulator(),
-          encryptionKey: "offline-computer-fixture-encryption-key",
+          encryptionKey: LEGACY_MODEL_FIXTURE_KEY,
         });
         stop = handles.stop;
-        expect(handles.sandbox).toBeInstanceOf(FakeSandboxProvider);
-        sandbox = handles.sandbox as FakeSandboxProvider;
         // Keep the real fake-provider implementation; observe calls and its state
         // independently of the model's claims and the persisted effect record.
         const act = vi.spyOn(sandbox, "act");
@@ -242,12 +244,16 @@ describe.skipIf(!databaseAvailable)("offline Pi computer approval", () => {
         });
         expect(signup.status).toBeLessThan(400);
         const cookie = sessionCookieHeader(signup);
-        await rpc(handles.app, cookie, "models/connect", {
-          provider: model.model.provider,
-          modelId: model.model.id,
-          baseUrl: model.baseUrl,
-          apiKey: fixtureKey,
-        });
+        await seedLegacyModelCredential(
+          handles.prisma,
+          await rpc<{ userId: string; spaceId: string }>(handles.app, cookie, "me"),
+          {
+            provider: model.model.provider,
+            modelId: model.model.id,
+            baseUrl: model.baseUrl,
+            apiKey: fixtureKey,
+          },
+        );
         const bot = await rpc<{ id: string }>(handles.app, cookie, "bots/create", {
           name: "Computer fixture",
           title: "",
@@ -255,10 +261,9 @@ describe.skipIf(!databaseAvailable)("offline Pi computer approval", () => {
           instructions: "Complete the computer task.",
           notifyOnFinish: false,
         });
-        await rpc(handles.app, cookie, "bots/update", {
-          botId: bot.id,
-          modelProvider: model.model.provider,
-          modelId: model.model.id,
+        await handles.prisma.bot.update({
+          where: { id: bot.id },
+          data: { modelProvider: model.model.provider, modelId: model.model.id },
         });
         const storedBot = await handles.prisma.bot.findUniqueOrThrow({ where: { id: bot.id } });
         await handles.prisma.actionApprovalRule.create({

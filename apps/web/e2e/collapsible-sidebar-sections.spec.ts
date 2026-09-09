@@ -46,6 +46,10 @@ test("titled sidebar section expands and collapses", async ({ page }, testInfo) 
   await sidebar.getByPlaceholder("Search").hover();
   await captureScreenshot(page, testInfo, "sidebar-section-collapsed");
 
+  await page.reload();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(projects.getByRole("button", { name: /^Chief/ })).toHaveCount(0);
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
   await expect(projects.getByRole("button", { name: /^Chief/ })).toHaveCount(1);

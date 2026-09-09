@@ -265,11 +265,8 @@ describe("local Pi execution authority", () => {
     ).resolves.toEqual({
       provider: "pi-local",
       id: "default",
-      apiKey: undefined,
-      baseUrl: undefined,
-      reasoning: undefined,
-      thinkingLevel: null,
-      oauth: undefined,
+      apiKey: "",
+      thinkingLevel: undefined,
     });
   });
 });

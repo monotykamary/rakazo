@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Pi models</title></head>
+  <body><div id="root"></div><script type="module">
+    import { i18n } from "@lingui/core";
+    import { I18nProvider } from "@lingui/react";
+    import { BOT_COLORS } from "@rakazo/contracts";
+    import { createElement as h } from "react";
+    import { createRoot } from "react-dom/client";
+    import { BrowserRouter } from "react-router-dom";
+    import { PiRuntimeModelSettings } from "../../src/components/WorkerModelSettings.tsx";
+    import { rpc } from "../../src/lib/rpc.ts";
+    import { ModelSettingsOverlay } from "../../src/pages/ModelSettingsOverlay.tsx";
+    import { OnboardingPage } from "../../src/pages/Onboarding.tsx";
+    import { BotSettings } from "../../src/pages/shell/bot-panel.tsx";
+    import "../../src/styles.css";
+
+    i18n.load("en", {}); i18n.activate("en");
+    const params = new URLSearchParams(location.search);
+    const bot = {id:"bot-fixture",name:"Fixture bot",title:"",description:"",color:BOT_COLORS[0],status:"idle",computerMode:"shared",memoryScope:null,autoSpeak:false,voiceId:null,modelProvider:"removed-provider",modelId:"retired-model",thinkingLevel:"high"};
+    const screen = params.has("worker") ? h(PiRuntimeModelSettings, {botId:bot.id,threadId:"thread-fixture",participantId:params.has("root") ? undefined : "worker-fixture"}) : params.has("bot") ? h(BotSettings, {bot,memoryProviderConfigured:false,onSkillsChange:()=>{},onSave:(patch)=>rpc.bots.update({botId:bot.id,...patch}),onExport:async()=>{},onClear:()=>{},onPrompt:async()=>{}}) : params.has("onboarding") ? h(OnboardingPage) : h(ModelSettingsOverlay, {onClose:()=>{}});
+    createRoot(document.getElementById("root")).render(h(I18nProvider, {i18n}, h(BrowserRouter, {}, h("main", {className:"mx-auto max-w-xl bg-background p-6 text-foreground"}, screen))));
+  </script></body>
+</html>

@@ -116,6 +116,8 @@ export class ModelTeamChatEngagementJudge implements TeamChatEngagementJudge {
   constructor(private readonly deps: ModelTeamChatEngagementJudgeDeps) {}
 
   async decide(input: TeamChatEngagementInput): Promise<TeamChatEngagementDecision> {
+    // Native Pi retains host tools; ambient classification has no authorized run lease.
+    if (this.deps.runtime.describe().id === "pi-local") return { act: false };
     try {
       const resolved = await this.resolveModel(input.bot);
       if (!resolved) return { act: false };

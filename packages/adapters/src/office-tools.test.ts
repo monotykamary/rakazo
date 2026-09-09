@@ -10,7 +10,34 @@ import {
 const actor = { spaceId: "space", userId: "owner" } as Actor;
 const scope = { botId: "bot", runId: "run", leaseOwner: "worker", leaseFence: 7 };
 function fixture(runtime = "managed") {
+  const selected = {
+    provider: "pi-provider",
+    modelId: "actual-model",
+    thinkingLevel: "low" as const,
+  };
+  const modelRuntime = {
+    read: vi
+      .fn()
+      .mockResolvedValue({ catalog: [{ endpoint: "SECRET" }], profileDefault: selected }),
+    validate: vi.fn().mockResolvedValue(undefined),
+  };
+  const resolveOfficeModelRuntime = vi.fn().mockResolvedValue(modelRuntime);
   const prisma = {
+    runtimeSession: {
+      findMany: vi.fn().mockResolvedValue([
+        {
+          state: {
+            modelSelection: {
+              requested: null,
+              effective: selected,
+              status: "applied",
+              error: null,
+            },
+          },
+        },
+      ]),
+    },
+    runtimeModelPreference: { findMany: vi.fn().mockResolvedValue([]) },
     officeMoveIntent: {
       findMany: vi.fn().mockResolvedValue([]),
       upsert: vi.fn().mockResolvedValue({
@@ -42,12 +69,67 @@ function fixture(runtime = "managed") {
         },
       }),
     },
-    machine: { findMany: vi.fn().mockResolvedValue([{ id: "target", runnerToken: "SECRET" }]) },
+    machine: {
+      findMany: vi.fn().mockResolvedValue([{ id: "target", runnerToken: "SECRET" }]),
+      findFirst: vi
+        .fn()
+        .mockResolvedValue({ id: "target", status: "paired", lastSeenAt: new Date() }),
+    },
   };
-  return { prisma, deps: { prisma: prisma as unknown as PrismaClient, runtime } };
+  return {
+    prisma,
+    modelRuntime,
+    resolveOfficeModelRuntime,
+    deps: { prisma: prisma as unknown as PrismaClient, runtime, resolveOfficeModelRuntime },
+  };
 }
 
 describe("manage_office", () => {
+  it("preflights an optional plan target without a receipt or mutation", async () => {
+    const { deps, prisma, modelRuntime } = fixture();
+    expect(officeActionRequiresExplicitApproval({ action: "plan", machineId: "target" })).toBe(
+      false,
+    );
+    const result = await manageOfficeTool(deps, actor, scope, {
+      action: "plan",
+      machineId: "target",
+    });
+    expect(result.models).toMatchObject({ authority: "pi", status: "available" });
+    expect(modelRuntime.validate).toHaveBeenCalled();
+    expect(prisma.officeMoveIntent.upsert).not.toHaveBeenCalled();
+  });
+  it("refuses foreign plan targets before any Pi probe and rejects caller availability claims", async () => {
+    const { deps, resolveOfficeModelRuntime } = fixture();
+    await expect(
+      manageOfficeTool(deps, actor, scope, { action: "plan", machineId: "foreign" }),
+    ).rejects.toThrow("Target unavailable");
+    await expect(
+      manageOfficeTool(deps, actor, scope, {
+        action: "plan",
+        machineId: "target",
+        available: true,
+      }),
+    ).rejects.toThrow();
+    expect(resolveOfficeModelRuntime).not.toHaveBeenCalled();
+  });
+  it("does not queue an approved move when Pi cannot validate destination models", async () => {
+    const { deps, prisma, modelRuntime } = fixture();
+    modelRuntime.validate.mockRejectedValue(new Error("SECRET endpoint key"));
+    const result = await manageOfficeTool(
+      deps,
+      actor,
+      scope,
+      { action: "move", machineId: "target" },
+      "receipt",
+    );
+    expect(result).toMatchObject({
+      status: "blocked",
+      queued: false,
+      models: { status: "unavailable" },
+    });
+    expect(JSON.stringify(result)).not.toContain("SECRET");
+    expect(prisma.officeMoveIntent.upsert).not.toHaveBeenCalled();
+  });
   it("exports one action tool and fail-closed approval classification", () => {
     expect(MANAGE_OFFICE_TOOL.name).toBe("manage_office");
     for (const action of ["inspect", "plan"])

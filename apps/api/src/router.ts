@@ -20,7 +20,6 @@ import {
   applyTeachingDesktopInput,
   archiveBot,
   buildMcpCredentialBlob,
-  buildModelConnectPlaintext,
   type ComposioProvider,
   ComputerBusyError,
   type ComputerExecutionLease,
@@ -43,20 +42,16 @@ import {
   isComputerScreenUnavailable,
   isSandboxGoneError,
   isScratchpadStatus,
-  listPiCatalog,
   listScratchpadItems,
   type MachinesService,
   McpOAuthBroker,
   type MemoryProviderResolver,
   mapScratchpadItem,
-  matchesDeploymentModel,
-  modelCredentialDto,
-  modelsForRequest,
-  type PiOAuthLogins,
+  type OfficeModelRuntimeResolver,
+  type PiModelRuntimeService,
   planLiveConnectionSync,
   prepareApiInstall,
   prepareGraphqlInstall,
-  probeOpenAiCompatibleModels,
   provisionComputer,
   type RemoteConnectorDependencies,
   releaseComputerExecutionLease,
@@ -68,10 +63,7 @@ import {
   scheduleComputerControlExpiry,
   scheduleComputerSleep,
   screenLeaseIdForRun,
-  scriptedCatalogEntry,
-  serializeModelSecret,
   takeoverLeaseMs,
-  thinkingLevelFor,
   toComputerRef,
   touchRunningComputer,
   verifyMcpInstall,
@@ -80,14 +72,12 @@ import type { Auth } from "@rakazo/auth";
 import {
   type Actor,
   appContract,
-  assertModelVisible,
   type ComputerStatus,
   type McpServer,
   type Me,
   type ModelCatalogEntry,
-  ModelHiddenError,
-  OPENAI_COMPATIBLE_PROVIDER_ID,
   type SpaceNavigation,
+  ThinkingLevelSchema,
 } from "@rakazo/contracts";
 import {
   ACTIVE_RUN_STATUSES,
@@ -111,10 +101,7 @@ import {
   createSpaceForMember,
   createThreadMessageInTransaction,
   deleteEmptySpaceForMember,
-  deleteUnreferencedCredentialSecret,
-  findDefaultModelCredential,
   findDefaultVoiceCredential,
-  findModelCredential,
   findSpaceMemoryConfig,
   formatMessagingLinkCode,
   InvalidSpaceNameError,
@@ -123,7 +110,6 @@ import {
   listDispatchedWork,
   lockOwnedGroup,
   machineAssignment,
-  newestModelCredentialOrder,
   newestVoiceCredentialOrder,
   Prisma,
   type PrismaClient,
@@ -135,7 +121,6 @@ import {
   SpaceLimitError,
   SpaceNotEmptyError,
   SpaceNotFoundError,
-  selectSpaceModelPreference,
   selectSpaceVoicePreference,
   stagePremoveSteeringInTransaction,
   type ThreadEvents,
@@ -145,7 +130,11 @@ import { getLogger } from "@rakazo/logging";
 import { deleteAgentSecret, listAgentSecrets, putAgentSecret } from "./agent-secrets.js";
 import { createAgentSkillsService } from "./agent-skills.js";
 import { createOwnedArtifact, getOwnedArtifact, getSpaceArtifact } from "./artifacts.js";
-import { botProfileLabelsChanged, commitBotUpdate } from "./bot-update.js";
+import {
+  BotComputerSwitchingError,
+  botProfileLabelsChanged,
+  commitBotUpdate,
+} from "./bot-update.js";
 import {
   executionBlocksUserTakeover,
   resolveBusyBotName,
@@ -160,13 +149,12 @@ import {
   serializeSpaceMemoryConfig,
   updateMemoryProviderDefaultScope,
 } from "./memory-provider-config.js";
-import { getModelRouting, setModelRouting } from "./model-routing.js";
-import { getModelSelection, setWorkerModelSelection } from "./model-selection.js";
+import { readPiModelRuntime } from "./model-runtime.js";
 import {
-  getOwnerModelVisibility,
-  setOwnerModelVisibility,
-  visibleModelCatalog,
-} from "./model-visibility.js";
+  getAuthorizedModelState,
+  getPiModelSelection,
+  setWorkerModelSelection,
+} from "./model-selection.js";
 import {
   chooseFocus,
   dismissFocus,
@@ -227,34 +215,30 @@ const MAX_COMPUTER_TEXT_FILE_BYTES = 2 * 1024 * 1024;
 const THREAD_MESSAGE_PAGE_SIZE = 100;
 const EXPORT_MESSAGE_PAGE_SIZE = 500;
 
-const LOCAL_PI_CATALOG_ENTRY = {
-  provider: "pi-local",
-  providerName: "Pi",
-  id: "default",
-  label: "Pi configured model",
-  billing: "Uses the model configured in local Pi.",
-} satisfies ModelCatalogEntry;
-
-function deploymentModelFor(deps: RouterDeps) {
-  return deps.env.agentRuntime === "pi-local" || deps.env.deploymentModelKey
-    ? { provider: deps.env.defaultProvider, model: deps.env.defaultModel }
-    : null;
-}
-
-function assertLocalPiActor(deps: RouterDeps, actor: Actor): void {
-  if (deps.env.agentRuntime === "pi-local" && !actor.isDeploymentOwner) {
+function assertLocalPiActor(actor: Actor): void {
+  if (!actor.isDeploymentOwner) {
     throw new ORPCError("FORBIDDEN", {
       message: "Local Pi is available only to the deployment owner",
     });
   }
 }
 
-function runtimeCatalog(deps: RouterDeps): ModelCatalogEntry[] {
-  return [
-    ...listPiCatalog(),
-    scriptedCatalogEntry,
-    ...(deps.env.agentRuntime === "pi-local" ? [LOCAL_PI_CATALOG_ENTRY] : []),
-  ];
+function rejectModelManagement(): never {
+  throw new ORPCError("BAD_REQUEST", { message: "Models are configured in Pi" });
+}
+
+async function piOwnedCatalog(
+  deps: RouterDeps,
+  actor: Actor,
+  signal?: AbortSignal,
+): Promise<ModelCatalogEntry[]> {
+  assertLocalPiActor(actor);
+  if (!deps.piModels) throw new ORPCError("SERVICE_UNAVAILABLE");
+  try {
+    return (await deps.piModels.read(signal)).catalog;
+  } catch {
+    throw new ORPCError("SERVICE_UNAVAILABLE", { message: "Pi model runtime is unavailable" });
+  }
 }
 
 async function reconcilePendingConnections(
@@ -484,7 +468,8 @@ export interface RouterDeps {
   memoryProviders: MemoryProviderResolver;
   home: AgentHomeStore;
   secrets: EncryptedSecretStore;
-  oauthLogins: PiOAuthLogins;
+  piModels?: PiModelRuntimeService;
+  resolveOfficeModelRuntime?: OfficeModelRuntimeResolver;
   composio?: ComposioProvider;
   mcpOAuth?: McpOAuthBroker;
   connectors: ConnectorRegistry;
@@ -544,7 +529,7 @@ export function createRouter(deps: RouterDeps) {
 
   const authed = os.use(async ({ context, next }) => {
     if (!context.actor) throw new ORPCError("UNAUTHORIZED");
-    assertLocalPiActor(deps, context.actor);
+    if (deps.env.agentRuntime === "pi-local") assertLocalPiActor(context.actor);
     return next({ context: { ...context, actor: context.actor } });
   });
   const machines =
@@ -818,246 +803,72 @@ export function createRouter(deps: RouterDeps) {
       }),
     },
     models: {
-      getVisibility: authed.models.getVisibility.handler(({ context }) =>
-        getOwnerModelVisibility(deps.prisma, context.actor),
+      runtime: authed.models.runtime.handler(({ context, input }) => {
+        assertLocalPiActor(context.actor);
+        return readPiModelRuntime({
+          prisma: deps.prisma,
+          actor: context.actor,
+          scope: input,
+          models: deps.piModels,
+          signal: context.signal,
+        });
+      }),
+      getVisibility: authed.models.getVisibility.handler(({ context }) => {
+        assertLocalPiActor(context.actor);
+        return { hide: [] };
+      }),
+      setVisibility: authed.models.setVisibility.handler(() => rejectModelManagement()),
+      listForVisibility: authed.models.listForVisibility.handler(({ context }) =>
+        piOwnedCatalog(deps, context.actor, context.signal),
       ),
-      setVisibility: authed.models.setVisibility.handler(({ context, input }) =>
-        setOwnerModelVisibility(deps.prisma, context.actor, input),
-      ),
-      listForVisibility: authed.models.listForVisibility.handler(async () => runtimeCatalog(deps)),
-      getSelection: authed.models.getSelection.handler(({ context, input }) =>
-        getModelSelection(deps.prisma, context.actor, input, deploymentModelFor(deps)),
-      ),
-      setWorkerSelection: authed.models.setWorkerSelection.handler(({ context, input }) =>
-        setWorkerModelSelection(
+      getSelection: authed.models.getSelection.handler(({ context, input }) => {
+        assertLocalPiActor(context.actor);
+        return getPiModelSelection(deps.prisma, context.actor, input);
+      }),
+      setWorkerSelection: authed.models.setWorkerSelection.handler(({ context, input }) => {
+        assertLocalPiActor(context.actor);
+        return setWorkerModelSelection(
           deps.prisma,
           context.actor,
           input,
           async (selection) => {
-            const credential = await findModelCredential(
-              deps.prisma,
-              context.actor,
-              selection.provider,
-            );
-            const deployment = deploymentModelFor(deps);
-            if (
-              !credential &&
-              !matchesDeploymentModel(selection.provider, selection.modelId, deployment)
-            )
-              throw new ORPCError("BAD_REQUEST", { message: "Connect this model provider first" });
-            const secret = credential
-              ? await deps.prisma.secret.findFirst({
-                  where: { id: credential.secretId, userId: context.actor.userId, spaceId: null },
-                  select: { ciphertext: true },
-                })
-              : null;
-            if (credential && !secret)
-              throw new ORPCError("BAD_REQUEST", { message: "Model connection unavailable" });
-            if (
-              !credential &&
-              deps.env.agentRuntime === "pi-local" &&
-              matchesDeploymentModel(selection.provider, selection.modelId, deployment)
-            ) {
-              if (selection.thinkingLevel !== null) {
-                throw new ORPCError("BAD_REQUEST", {
-                  message: "The Pi configured model controls its own reasoning level",
-                });
-              }
-              return;
+            const checkpoint = await getAuthorizedModelState(deps.prisma, context.actor, input);
+            if (deps.piModels?.supportsCheckpoint?.(checkpoint) !== true) {
+              throw new ORPCError("SERVICE_UNAVAILABLE", {
+                message: "Pi model runtime is unavailable for this project",
+              });
             }
             try {
-              const connection =
-                credential && secret
-                  ? modelCredentialDto(
-                      credential,
-                      deps.secrets.load(secret.ciphertext, credential.secretId),
-                    )
-                  : undefined;
-              const model = modelsForRequest(
-                {
-                  model: {
-                    provider: selection.provider,
-                    id: selection.modelId,
-                    baseUrl: connection?.baseUrl,
-                    reasoning: connection?.reasoning,
-                  },
-                },
-                selection.provider,
-              ).getModel(selection.provider, selection.modelId);
-              if (
-                !model ||
-                (selection.thinkingLevel !== null &&
-                  thinkingLevelFor(model, selection.thinkingLevel) !== selection.thinkingLevel)
-              )
-                throw new Error("Unsupported selection");
+              await deps.piModels.validate(selection, context.signal);
             } catch {
               throw new ORPCError("BAD_REQUEST", {
-                message: "Model or reasoning level is unavailable for this connection",
+                message: "Model or reasoning level is unavailable in Pi",
               });
             }
           },
-          deploymentModelFor(deps),
-        ),
-      ),
-      getRouting: authed.models.getRouting.handler(({ context, input }) =>
-        getModelRouting(deps.prisma, context.actor, input.credentialId),
-      ),
-      setRouting: authed.models.setRouting.handler(({ context, input }) =>
-        setModelRouting(deps.prisma, context.actor, input, listPiCatalog()),
-      ),
+          null,
+          true,
+        );
+      }),
+      getRouting: authed.models.getRouting.handler(() => rejectModelManagement()),
+      setRouting: authed.models.setRouting.handler(() => rejectModelManagement()),
       list: authed.models.list.handler(({ context }) =>
-        visibleModelCatalog(deps.prisma, context.actor, runtimeCatalog(deps)),
+        piOwnedCatalog(deps, context.actor, context.signal),
       ),
-      credentials: authed.models.credentials.handler(async ({ context }) => {
-        const rows = await deps.prisma.userModelCredential.findMany({
-          where: { userId: context.actor.userId },
-          include: {
-            preferences: {
-              where: { userId: context.actor.userId, spaceId: context.actor.spaceId },
-            },
-          },
-          orderBy: newestModelCredentialOrder,
-        });
-        const compatibleRows = rows.filter((row) => row.provider === OPENAI_COMPATIBLE_PROVIDER_ID);
-        const secrets = compatibleRows.length
-          ? await deps.prisma.secret.findMany({
-              where: {
-                id: { in: compatibleRows.map((row) => row.secretId) },
-                userId: context.actor.userId,
-                spaceId: null,
-              },
-              select: { id: true, ciphertext: true },
-            })
-          : [];
-        const ciphertextById = new Map(secrets.map((secret) => [secret.id, secret.ciphertext]));
-        return rows.map((row) => {
-          const preference = row.preferences[0];
-          const selected = {
-            ...row,
-            isDefault: preference?.isDefault ?? false,
-            defaultModel: preference?.modelId ?? null,
-          };
-          const ciphertext = ciphertextById.get(row.secretId);
-          if (!ciphertext) return modelCredentialDto(selected);
-          try {
-            return modelCredentialDto(selected, deps.secrets.load(ciphertext, row.secretId));
-          } catch {
-            return modelCredentialDto(selected);
-          }
-        });
+      credentials: authed.models.credentials.handler(({ context }) => {
+        assertLocalPiActor(context.actor);
+        return [];
       }),
-      connect: authed.models.connect.handler(async ({ context, input }) => {
-        let plaintext: string;
-        try {
-          let previousPlaintext: string | undefined;
-          if (input.provider === OPENAI_COMPATIBLE_PROVIDER_ID && input.apiKey === undefined) {
-            const credential = await findModelCredential(
-              deps.prisma,
-              context.actor,
-              input.provider,
-            );
-            if (credential) {
-              const secret = await deps.prisma.secret.findFirst({
-                where: { id: credential.secretId, userId: context.actor.userId, spaceId: null },
-                select: { ciphertext: true },
-              });
-              if (secret)
-                previousPlaintext = deps.secrets.load(secret.ciphertext, credential.secretId);
-            }
-          }
-          plaintext = buildModelConnectPlaintext(input, previousPlaintext);
-        } catch (error) {
-          throw new ORPCError("BAD_REQUEST", {
-            message: error instanceof Error ? error.message : "Invalid model connection",
-          });
-        }
-        return persistModelCredential(deps, context.actor, {
-          provider: input.provider,
-          plaintext,
-          label: input.label,
-          modelId: input.modelId,
-          signal: context.signal,
-        });
-      }),
-      probeOpenAiCompatible: authed.models.probeOpenAiCompatible.handler(
-        async ({ context, input }) => {
-          try {
-            const models = await probeOpenAiCompatibleModels(input, fetch, context.signal);
-            return { models };
-          } catch (error) {
-            throw new ORPCError("BAD_REQUEST", {
-              message: error instanceof Error ? error.message : "Could not list models",
-            });
-          }
-        },
+      connect: authed.models.connect.handler(() => rejectModelManagement()),
+      probeOpenAiCompatible: authed.models.probeOpenAiCompatible.handler(() =>
+        rejectModelManagement(),
       ),
-      beginOAuth: authed.models.beginOAuth.handler(async ({ context, input }) => {
-        return deps.oauthLogins.begin({
-          userId: context.actor.userId,
-          spaceId: context.actor.spaceId,
-          provider: input.provider,
-          modelId: input.modelId,
-          label: input.label,
-          signal: context.signal,
-        });
-      }),
-      submitOAuthCode: authed.models.submitOAuthCode.handler(async ({ context, input }) => {
-        return deps.oauthLogins.submit(input.loginId, context.actor, input.code);
-      }),
-      completeOAuth: authed.models.completeOAuth.handler(async ({ context, input }) => {
-        const result = await deps.oauthLogins.complete(input.loginId, {
-          userId: context.actor.userId,
-          spaceId: context.actor.spaceId,
-        });
-        return result.status === "connected" ? { status: "ready" as const } : result;
-      }),
-      finishOAuth: authed.models.finishOAuth.handler(async ({ context, input }) => {
-        throwIfAborted(context.signal);
-        const result = await deps.oauthLogins.finish(
-          input.loginId,
-          context.actor,
-          async (login) => {
-            return persistModelCredential(deps, context.actor, {
-              provider: login.provider,
-              plaintext: serializeModelSecret({ kind: "oauth", credential: login.credential }),
-              label: login.label ?? "ChatGPT Plus/Pro",
-              modelId: login.modelId,
-              signal: login.signal,
-            });
-          },
-        );
-        if (result.status === "pending") {
-          throw new ORPCError("CONFLICT", { message: "Sign-in has not finished yet." });
-        }
-        if (result.status === "error") {
-          throw new ORPCError("NOT_FOUND", { message: result.error });
-        }
-        return result.value;
-      }),
-      cancelOAuth: authed.models.cancelOAuth.handler(async ({ context, input }) => {
-        await deps.oauthLogins.cancel(input.loginId, context.actor);
-        return { ok: true as const };
-      }),
-      setDefault: authed.models.setDefault.handler(async ({ context, input }) => {
-        await withSerializableRetry(() =>
-          deps.prisma.$transaction(
-            async (tx) => {
-              const credential = await tx.userModelCredential.findFirst({
-                where: { userId: context.actor.userId, provider: input.provider },
-                orderBy: newestModelCredentialOrder,
-              });
-              if (!credential) {
-                throw new ORPCError("NOT_FOUND", {
-                  message: `No model credential is connected for ${input.provider}.`,
-                });
-              }
-              await selectSpaceModelPreference(tx, context.actor, credential.id, input.modelId);
-            },
-            { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-          ),
-        );
-        return { ok: true as const };
-      }),
+      beginOAuth: authed.models.beginOAuth.handler(() => rejectModelManagement()),
+      submitOAuthCode: authed.models.submitOAuthCode.handler(() => rejectModelManagement()),
+      completeOAuth: authed.models.completeOAuth.handler(() => rejectModelManagement()),
+      finishOAuth: authed.models.finishOAuth.handler(() => rejectModelManagement()),
+      cancelOAuth: authed.models.cancelOAuth.handler(() => rejectModelManagement()),
+      setDefault: authed.models.setDefault.handler(() => rejectModelManagement()),
     },
     bots: {
       list: authed.bots.list.handler(async ({ context }) => repos.listBots(context.actor)),
@@ -1132,89 +943,56 @@ export function createRouter(deps: RouterDeps) {
           });
           if (!section) throw new IsolationError();
         }
-        if (
-          input.modelProvider &&
-          input.modelId &&
-          (input.modelProvider !== existing.modelProvider || input.modelId !== existing.modelId)
-        ) {
-          try {
-            assertModelVisible(
-              await getOwnerModelVisibility(deps.prisma, context.actor),
-              input.modelProvider,
-              input.modelId,
-            );
-          } catch (error) {
-            if (!(error instanceof ModelHiddenError)) throw error;
-            throw new ORPCError("BAD_REQUEST", { message: error.message });
-          }
-        }
-        if (input.modelProvider && input.modelId) {
-          const credential = await findModelCredential(
-            deps.prisma,
-            context.actor,
-            input.modelProvider,
-          );
-          const deploymentPin = matchesDeploymentModel(
-            input.modelProvider,
-            input.modelId,
-            deploymentModelFor(deps),
-          );
-          if (!credential && !deploymentPin) {
-            throw new ORPCError("BAD_REQUEST", { message: "Connect that model provider first" });
-          }
-          const knownModels = [...listPiCatalog(), scriptedCatalogEntry];
-          const inCatalog = knownModels.some(
-            (item) => item.provider === input.modelProvider && item.id === input.modelId,
-          );
-          if (!inCatalog && !deploymentPin && credential?.defaultModel !== input.modelId) {
-            throw new ORPCError("BAD_REQUEST", { message: "Unknown model for that provider" });
-          }
-        }
-        const thinkingLevel = input.thinkingLevel;
-        if (input.thinkingLevel) {
+        const changesModel =
+          input.modelProvider !== undefined ||
+          input.modelId !== undefined ||
+          input.thinkingLevel !== undefined;
+        if (changesModel) {
+          assertLocalPiActor(context.actor);
           const provider =
             input.modelProvider !== undefined ? input.modelProvider : existing.modelProvider;
           const modelId = input.modelId !== undefined ? input.modelId : existing.modelId;
-          const me = await meDto(deps, context.actor);
-          const effectiveProvider = provider ?? me.defaultProvider;
-          const effectiveModelId = modelId ?? me.defaultModel;
-          if (effectiveProvider && effectiveModelId) {
-            const entry = listPiCatalog().find(
-              (item) => item.provider === effectiveProvider && item.id === effectiveModelId,
-            );
-            let allowed = entry?.thinkingLevels;
-            if (effectiveProvider === OPENAI_COMPATIBLE_PROVIDER_ID) {
-              allowed = ["off"];
-              const credential = await findModelCredential(
-                deps.prisma,
-                context.actor,
-                effectiveProvider,
-              );
-              if (credential && credential.defaultModel === effectiveModelId) {
-                const secret = await deps.prisma.secret.findFirst({
-                  where: { id: credential.secretId, userId: context.actor.userId, spaceId: null },
-                  select: { ciphertext: true },
-                });
-                if (secret) {
-                  try {
-                    allowed =
-                      modelCredentialDto(
-                        credential,
-                        deps.secrets.load(secret.ciphertext, credential.secretId),
-                      ).thinkingLevels ?? allowed;
-                  } catch {
-                    // Unreadable connections must not advertise reasoning support.
-                  }
-                }
-              }
-            }
-            if (allowed && !allowed.includes(input.thinkingLevel)) {
-              throw new ORPCError("BAD_REQUEST", {
-                message: `Thinking level must be one of: ${allowed.join(", ")}`,
+          if (provider && modelId) {
+            if (!deps.piModels) {
+              throw new ORPCError("SERVICE_UNAVAILABLE", {
+                message: "Pi model runtime is unavailable",
               });
             }
+            if (!existing.thread) throw new IsolationError();
+            const checkpoint = await getAuthorizedModelState(deps.prisma, context.actor, {
+              botId: input.botId,
+              threadId: existing.thread.id,
+            });
+            if (deps.piModels.supportsCheckpoint?.(checkpoint) !== true) {
+              throw new ORPCError("SERVICE_UNAVAILABLE", {
+                message: "Pi model runtime is unavailable for this project",
+              });
+            }
+            const existingThinking = ThinkingLevelSchema.safeParse(existing.thinkingLevel);
+            try {
+              await deps.piModels.validate(
+                {
+                  provider,
+                  modelId,
+                  thinkingLevel:
+                    input.thinkingLevel !== undefined
+                      ? input.thinkingLevel
+                      : existingThinking.success
+                        ? existingThinking.data
+                        : null,
+                },
+                context.signal,
+              );
+            } catch {
+              throw new ORPCError("BAD_REQUEST", {
+                message: "Model or reasoning level is unavailable in Pi",
+              });
+            }
+          } else if (input.thinkingLevel) {
+            throw new ORPCError("BAD_REQUEST", { message: "Choose a Pi model first" });
           }
         }
+        const thinkingLevel = input.thinkingLevel;
         const emitBotUpdated = botProfileLabelsChanged(input);
         if (emitBotUpdated && !existing.thread) throw new IsolationError();
         await commitBotUpdate({
@@ -1224,6 +1002,7 @@ export function createRouter(deps: RouterDeps) {
           threadId: existing.thread?.id ?? "",
           botId: input.botId,
           emitBotUpdated,
+          requireStableComputer: changesModel,
           data: {
             name: input.name,
             title: input.title,
@@ -1236,15 +1015,19 @@ export function createRouter(deps: RouterDeps) {
             sectionId: input.sectionId,
             voiceId: input.voiceId,
             autoSpeak: input.autoSpeak,
-            ...(input.modelProvider !== undefined
-              ? { modelProvider: input.modelProvider, modelId: input.modelId ?? null }
-              : {}),
+            ...(input.modelProvider !== undefined ? { modelProvider: input.modelProvider } : {}),
+            ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
             ...(input.thinkingLevel !== undefined ? { thinkingLevel } : {}),
             ...(input.teamChatAmbientEnabled !== undefined
               ? { teamChatAmbientEnabled: input.teamChatAmbientEnabled }
               : {}),
             ...(input.teamChatRules !== undefined ? { teamChatRules: input.teamChatRules } : {}),
           },
+        }).catch((error) => {
+          if (error instanceof BotComputerSwitchingError) {
+            throw new ORPCError("CONFLICT", { message: error.message });
+          }
+          throw error;
         });
         const bots = await repos.listBots(context.actor);
         const bot = bots.find((b) => b.id === input.botId);
@@ -1573,9 +1356,6 @@ export function createRouter(deps: RouterDeps) {
         }
       }),
       send: authed.threads.send.handler(async ({ context, input }) => {
-        if ((await modelSetup(deps, context.actor)).needsModel) {
-          throw new ORPCError("BAD_REQUEST", { message: "Connect a model to start a run." });
-        }
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
         if (target.kind === "bot") {
           await assertTeachingSendAllowed(deps.prisma, context.actor.spaceId, target.botId);
@@ -4960,9 +4740,9 @@ async function loadAutoReviewSettings(deps: RouterDeps, actor: Actor) {
 }
 
 async function meDto(deps: RouterDeps, actor: Actor): Promise<Me> {
-  const [user, setup] = await Promise.all([
+  const [user, settings] = await Promise.all([
     deps.prisma.user.findUniqueOrThrow({ where: { id: actor.userId } }),
-    modelSetup(deps, actor),
+    deps.prisma.deploymentSettings.findUnique({ where: { id: "default" } }),
   ]);
   return {
     userId: actor.userId,
@@ -4970,31 +4750,14 @@ async function meDto(deps: RouterDeps, actor: Actor): Promise<Me> {
     name: user.name,
     spaceId: actor.spaceId,
     isDeploymentOwner: actor.isDeploymentOwner,
-    needsModel: setup.needsModel,
+    needsModel: false,
     hasOnboarded: Boolean(user.onboardedAt),
-    defaultProvider:
-      setup.credential?.provider ??
-      setup.settings?.defaultModelProvider ??
-      deps.env.defaultProvider,
-    defaultModel:
-      setup.credential?.defaultModel ?? setup.settings?.defaultModelId ?? deps.env.defaultModel,
-    computerHost: computerHostFor(setup.settings?.computerHost, deps.env.sandboxProvider),
+    defaultProvider: null,
+    defaultModel: null,
+    computerHost: computerHostFor(settings?.computerHost, deps.env.sandboxProvider),
     canChooseHostComputer: actor.isDeploymentOwner && deps.env.sandboxProvider === "docker",
     sandboxProvider: deps.env.sandboxProvider,
     avatarStyle: user.avatarStyle === "organic" ? "organic" : "robot",
-  };
-}
-
-async function modelSetup(deps: RouterDeps, actor: Actor) {
-  const [credential, settings] = await Promise.all([
-    findDefaultModelCredential(deps.prisma, actor),
-    deps.prisma.deploymentSettings.findUnique({ where: { id: "default" } }),
-  ]);
-  const hasDeployment = Boolean(deploymentModelFor(deps));
-  return {
-    credential,
-    settings,
-    needsModel: deps.env.agentRuntime !== "scripted" && !credential && !hasDeployment,
   };
 }
 
@@ -5186,85 +4949,6 @@ function computerHostFor(
   if (sandboxProvider !== "docker") return null;
   if (stored === "this-mac" || stored === "docker") return stored;
   return null;
-}
-
-async function persistModelCredential(
-  deps: RouterDeps,
-  actor: Actor,
-  input: {
-    provider: string;
-    plaintext: string;
-    label?: string;
-    modelId?: string;
-    signal?: AbortSignal;
-  },
-) {
-  throwIfAborted(input.signal);
-  const stored = await deps.secrets.put(input.plaintext, {
-    operationId: "cred",
-    traceId: "cred",
-    spaceId: actor.spaceId,
-    userId: actor.userId,
-    signal: input.signal ?? new AbortController().signal,
-  });
-  throwIfAborted(input.signal);
-  const cred = await withSerializableRetry(() =>
-    deps.prisma.$transaction(
-      async (tx) => {
-        throwIfAborted(input.signal);
-        const existing = await tx.userModelCredential.findFirst({
-          where: { userId: actor.userId, provider: input.provider },
-          orderBy: newestModelCredentialOrder,
-        });
-        throwIfAborted(input.signal);
-        const secret = await tx.secret.create({
-          data: {
-            id: stored.id,
-            userId: actor.userId,
-            spaceId: null,
-            kind: "model",
-            ciphertext: stored.ciphertext,
-          },
-        });
-        throwIfAborted(input.signal);
-        const credential = !existing
-          ? await tx.userModelCredential.create({
-              data: {
-                userId: actor.userId,
-                provider: input.provider,
-                label: input.label ?? input.provider,
-                secretId: secret.id,
-              },
-            })
-          : await tx.userModelCredential.update({
-              where: { id: existing.id },
-              data: {
-                label: input.label ?? input.provider,
-                secretId: secret.id,
-              },
-            });
-        throwIfAborted(input.signal);
-        const defaultModel = input.modelId ?? deps.env.defaultModel;
-        await selectSpaceModelPreference(tx, actor, credential.id, defaultModel);
-        throwIfAborted(input.signal);
-        if (existing) {
-          await deleteUnreferencedCredentialSecret(tx, {
-            credentialKind: "model",
-            credentialId: existing.id,
-            secretId: existing.secretId,
-          });
-          throwIfAborted(input.signal);
-        }
-        return { ...credential, isDefault: true, defaultModel };
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    ),
-  );
-  return modelCredentialDto(cred, input.plaintext);
-}
-
-function throwIfAborted(signal?: AbortSignal) {
-  if (signal?.aborted) throw signal.reason ?? new Error("Request cancelled");
 }
 
 function nextRoutineDate(crons: string[], timezone: string): Date {

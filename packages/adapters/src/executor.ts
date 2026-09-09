@@ -37,8 +37,10 @@ import {
   isAttachmentImageMimeType,
   isValidServiceName,
   ModelHiddenError,
+  ModelSelectionSchema,
   ServiceChangesInputSchema,
   ServiceDeclareInputSchema,
+  ThinkingLevelSchema,
   WorkToolName,
 } from "@rakazo/contracts";
 import {
@@ -250,9 +252,11 @@ import {
   MODEL_CANNOT_SEE_MESSAGE,
   modelAcceptsImageInput,
 } from "./model-vision.js";
+import type { OfficeModelRuntimeResolver } from "./office-model-preflight.js";
 import { manageOfficeTool } from "./office-tools.js";
 import { resolveParticipantModel } from "./participant-model.js";
 import { toOAuthCredential } from "./pi-credentials.js";
+import type { PiModelRuntimeService } from "./pi-model-runtime.js";
 import {
   parseModelSecret,
   resolveModelAuth,
@@ -501,10 +505,29 @@ function runtimeFallbackModel(runtime: AgentRuntime) {
   return runtime.describe().capabilities.scripted ? { provider: "scripted", id: "scripted" } : null;
 }
 
+export function resolvePiModelIntent(
+  bot: { modelProvider?: string | null; modelId?: string | null; thinkingLevel?: string | null },
+  preference?: unknown,
+): AgentRunRequest["model"] {
+  const participant = ModelSelectionSchema.safeParse(preference);
+  const botThinking = ThinkingLevelSchema.safeParse(bot.thinkingLevel);
+  return {
+    provider:
+      (participant.success ? participant.data.provider : null) ?? bot.modelProvider ?? "pi-local",
+    id: (participant.success ? participant.data.modelId : null) ?? bot.modelId ?? "default",
+    thinkingLevel:
+      (participant.success ? participant.data.thinkingLevel : undefined) ??
+      (botThinking.success ? botThinking.data : undefined),
+    apiKey: "",
+  };
+}
+
 export interface ExecutorDeps {
   prisma: PrismaClient;
   events: ThreadEvents;
   runtime: AgentRuntime;
+  piModels?: PiModelRuntimeService;
+  resolveOfficeModelRuntime?: OfficeModelRuntimeResolver;
   sandbox: SandboxProvider;
   memory: MemoryStore;
   memoryProviders: MemoryProviderResolver;
@@ -737,12 +760,13 @@ export async function assertLocalPiRunAllowed(
 
 function configuredDeploymentModel(deps: ExecutorDeps) {
   if (deps.runtime.describe().id === "pi-local") {
-    return deps.deploymentModel ?? { provider: "pi-local", model: "default" };
+    return { provider: "pi-local", model: "default" };
   }
   return deps.deploymentModelKey ? (deps.deploymentModel ?? resolveDeploymentModel()) : null;
 }
 
 export function createRunExecutor(deps: ExecutorDeps) {
+  const resolveOfficeModelRuntime = deps.resolveOfficeModelRuntime;
   const web = deps.web ?? createWebProvider();
   const browser = deps.browser ?? createBrowserProvider(undefined, { sandbox: deps.sandbox });
   const cloudAgent = deps.cloudAgent;
@@ -768,6 +792,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
             select: { modelProvider: true, modelId: true, thinkingLevel: true },
           })
         : null;
+      if (deps.runtime.describe().id === "pi-local") {
+        return resolvePiModelIntent(override ?? {});
+      }
       const hasOverride = Boolean(override?.modelProvider && override.modelId);
       const [overrideCredential, defaultCredential, settings] = await Promise.all([
         hasOverride
@@ -1051,6 +1078,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
       heartbeat.unref?.();
 
       const runSecrets = [...deps.secrets];
+      const localPiRuntime = deps.runtime.describe().id === "pi-local";
       try {
         const sourceBlocks =
           run.trigger === "messaging" && run.sourceMessageId
@@ -1076,6 +1104,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           savedSkills,
           agentSkills,
           agentSecretRows,
+          participantModelPreference,
         ] = await Promise.all([
           deps.prisma.bot.findUniqueOrThrow({
             where: { id: run.botId },
@@ -1098,8 +1127,10 @@ export function createRunExecutor(deps: ExecutorDeps) {
               status: true,
             },
           }),
-          findDefaultModelCredential(deps.prisma, run),
-          deps.prisma.deploymentSettings.findUnique({ where: { id: "default" } }),
+          localPiRuntime ? Promise.resolve(null) : findDefaultModelCredential(deps.prisma, run),
+          localPiRuntime
+            ? Promise.resolve(null)
+            : deps.prisma.deploymentSettings.findUnique({ where: { id: "default" } }),
           deps.memoryProviders.resolve(run.spaceId),
           deps.prisma.taughtSkill.findMany({
             where: { botId: run.botId, spaceId: run.spaceId, status: "saved" },
@@ -1115,6 +1146,19 @@ export function createRunExecutor(deps: ExecutorDeps) {
               secret: { select: { id: true, ciphertext: true } },
             },
           }),
+          localPiRuntime
+            ? deps.prisma.runtimeModelPreference.findUnique({
+                where: {
+                  spaceId_threadId_botId_participantId: {
+                    spaceId: run.spaceId,
+                    threadId: run.threadId,
+                    botId: run.botId,
+                    participantId: run.id,
+                  },
+                },
+                select: { selection: true },
+              })
+            : Promise.resolve(null),
         ]);
         const dispatchedWork = bot.temporary
           ? await deps.prisma.dispatchedWork.findUnique({ where: { runId } })
@@ -1138,7 +1182,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
         const agentEnvironmentInstruction = formatAgentEnvironmentInstruction(agentEnvironment);
         const hasModelOverride = Boolean(bot.modelProvider && bot.modelId);
         const overrideCredential =
-          hasModelOverride && bot.modelProvider
+          !localPiRuntime && hasModelOverride && bot.modelProvider
             ? await findModelCredential(deps.prisma, run, bot.modelProvider)
             : null;
         runAbortController = new AbortController();
@@ -1222,7 +1266,6 @@ export function createRunExecutor(deps: ExecutorDeps) {
           messagingChannelRun,
         );
         const managedRuntime = deps.runtime.describe().id === "pi";
-        const localPiRuntime = deps.runtime.describe().id === "pi-local";
         const durableRuntime = isDurablePiRuntime(deps.runtime);
         const privateRuntime =
           durableRuntime &&
@@ -1326,15 +1369,21 @@ export function createRunExecutor(deps: ExecutorDeps) {
         }
         const runDeployment = configuredDeploymentModel(deps);
         const runtimeFallback = runtimeFallbackModel(deps.runtime);
-        const selected = selectConfiguredModel({
-          bot,
-          overrideCredential,
-          defaultCredential,
-          settings,
-          deployment: runDeployment,
-        });
+        const selected = localPiRuntime
+          ? {
+              ...resolvePiModelIntent(bot, participantModelPreference?.selection),
+              credential: null,
+            }
+          : selectConfiguredModel({
+              bot,
+              overrideCredential,
+              defaultCredential,
+              settings,
+              deployment: runDeployment,
+            });
         const { credential, thinkingLevel } = selected;
         if (
+          !localPiRuntime &&
           hasModelOverride &&
           !credential &&
           !matchesDeploymentModel(selected.provider, selected.id, runDeployment)
@@ -1383,15 +1432,19 @@ export function createRunExecutor(deps: ExecutorDeps) {
           }
           return;
         }
-        await assertModelVisibleForOwner(deps.prisma, run, runModelProvider, runModelId);
-        const resolved = await resolveModelKey(
-          deps,
-          run.userId,
-          run.spaceId,
-          credential,
-          runModelProvider,
-          (values) => runSecrets.push(...values),
-        );
+        if (!localPiRuntime) {
+          await assertModelVisibleForOwner(deps.prisma, run, runModelProvider, runModelId);
+        }
+        const resolved = localPiRuntime
+          ? { apiKey: "", redact: [], baseUrl: undefined, reasoning: undefined, oauth: undefined }
+          : await resolveModelKey(
+              deps,
+              run.userId,
+              run.spaceId,
+              credential,
+              runModelProvider,
+              (values) => runSecrets.push(...values),
+            );
         runSecrets.push(...resolved.redact);
         const modelRouting = managedRuntime
           ? await resolveExecutorModelRouting({
@@ -2295,7 +2348,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
               throw new Error("Explicit office approval required");
             return finish(
               await manageOfficeTool(
-                { prisma: deps.prisma, runtime: deps.runtime.describe().id },
+                {
+                  prisma: deps.prisma,
+                  runtime: deps.runtime.describe().id,
+                  resolveOfficeModelRuntime,
+                },
                 { userId: run.userId, spaceId: run.spaceId },
                 { botId: bot.id, runId, leaseOwner: workerId, leaseFence: fence },
                 args,

@@ -19,12 +19,16 @@ if (process.argv.includes("--version")) {
 
 const args = process.argv.slice(2);
 const sessionIndex = args.indexOf("--session");
-const sessionFile = args[sessionIndex + 1];
-const header = JSON.parse((await readFile(sessionFile, "utf8")).split("\\n", 1)[0]);
+const sessionFile = sessionIndex >= 0 ? args[sessionIndex + 1] : join(cwd, "probe-session.jsonl");
+const header = JSON.parse(
+  await readFile(sessionFile, "utf8")
+    .then((value) => value.split("\\n", 1)[0])
+    .catch(() => JSON.stringify({ id: "probe" })),
+);
 const messagePath = sessionFile + ".emulator-messages.json";
 let persistedMessages = JSON.parse(await readFile(messagePath, "utf8").catch(() => "[]"));
 const metadata = ["PI_SESSION_ID", "PI_SESSION_FILE", "PI_PROVIDER", "PI_MODEL", "PI_REASONING_LEVEL"];
-await log({ type: "start", args, metadata: Object.fromEntries(metadata.map((name) => [name, process.env[name]])) });
+await log({ type: "start", pid: process.pid, args, metadata: Object.fromEntries(metadata.map((name) => [name, process.env[name]])) });
 if (scenario.spawnChild) {
   const descendant = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
   descendant.unref();
@@ -66,12 +70,13 @@ process.stdin.on("data", (chunk) => {
     process.exit(8);
   }
 });
-const bootstrap = await bridge("bootstrap");
+const modelProbe = process.env.RAKAZO_PI_MODEL_PROBE === "1";
+const bootstrap = modelProbe ? { tools: [] } : await bridge("bootstrap");
 if (scenario.startupUiMethod) {
   send({ type: "extension_ui_request", id: "startup-ui", method: scenario.startupUiMethod, title: "Startup dialog" });
   await new Promise((resolve) => { startupUiResolve = resolve; });
 }
-await bridge("ready");
+if (!modelProbe) await bridge("ready");
 
 async function finishPrompt(command) {
   send({ type: "agent_start" });
@@ -141,14 +146,28 @@ async function finishPrompt(command) {
 
 async function handle(command) {
   await log({ type: "command", command });
+  if (scenario.exitOnCommand === command.type && (!scenario.faultModel || scenario.model === scenario.faultModel)) process.exit(9);
+  if (scenario.hangOnCommand === command.type && (!scenario.faultModel || scenario.model === scenario.faultModel)) return;
+  if (command.type === "get_available_models") {
+    response(command, true, {
+      models: scenario.availableModels ?? [
+        { provider: "offline", id: "offline-model", name: "Offline", reasoning: true },
+      ],
+    });
+    return;
+  }
+  if (command.type === "get_available_thinking_levels") {
+    response(command, true, { levels: scenario.thinkingLevels ?? ["off", "medium"] });
+    return;
+  }
   if (command.type === "get_messages") {
     response(command, true, { messages: persistedMessages });
     return;
   }
   if (command.type === "get_state") {
     response(command, true, {
-      model: { provider: "offline", id: "offline-model" },
-      thinkingLevel: "medium",
+      model: { provider: scenario.provider ?? "offline", id: scenario.model ?? "offline-model" },
+      thinkingLevel: scenario.thinkingLevel ?? "medium",
       isStreaming: false,
       isCompacting: false,
       sessionFile,
@@ -159,6 +178,16 @@ async function handle(command) {
     return;
   }
   if (command.type === "set_model" || command.type === "set_thinking_level") {
+    if (scenario.ignoreModelSelection) {
+      response(command, true);
+      return;
+    }
+    if (command.type === "set_model") {
+      scenario.provider = command.provider;
+      scenario.model = command.modelId;
+    } else {
+      scenario.thinkingLevel = command.level;
+    }
     response(command, true, command.type === "set_model" ? { provider: command.provider, id: command.modelId } : undefined);
     return;
   }

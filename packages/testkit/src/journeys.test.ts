@@ -18,6 +18,7 @@ import {
 } from "@rakazo/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sessionCookieHeader } from "./index.js";
+import { LEGACY_MODEL_FIXTURE_KEY, seedLegacyModelCredential } from "./legacy-model-fixture.js";
 
 type App = { request: (input: string, init?: RequestInit) => Promise<Response> };
 process.env.WAKEUP_DRIVER = "memory";
@@ -119,6 +120,7 @@ describeJourneys("required product journeys", () => {
     const handles = await createApp({
       databaseUrl: process.env.DATABASE_URL!,
       dataDir,
+      encryptionKey: LEGACY_MODEL_FIXTURE_KEY,
       sandboxProvider: "fake",
       agentRuntime: "scripted",
       composio: new ComposioEmulator(),
@@ -1197,12 +1199,16 @@ describeJourneys("required product journeys", () => {
     });
     const before = connector.records.length;
     const secret = "test-openrouter-key-not-a-real-secret";
-    await rpc(app, cookie, "models/connect", {
-      provider: "openrouter",
-      apiKey: secret,
-      label: "test",
-      modelId: "scripted",
-    });
+    await seedLegacyModelCredential(
+      prisma,
+      await rpc<{ userId: string; spaceId: string }>(app, cookie, "me"),
+      {
+        provider: "openrouter",
+        apiKey: secret,
+        label: "test",
+        modelId: "scripted",
+      },
+    );
     await sendAndWait(app, cookie, bot.id, "write this to the destination crm as a note");
     expect(connector.records.length).toBeGreaterThan(before);
     const snap = await rpc<Snap>(app, cookie, "threads/get", { botId: bot.id });
@@ -1252,12 +1258,16 @@ describeJourneys("required product journeys", () => {
       notifyOnFinish: true,
     });
     const secret = "test-openrouter-key-not-a-real-secret";
-    await rpc(app, cookie, "models/connect", {
-      provider: "openrouter",
-      apiKey: secret,
-      label: "hidden",
-      modelId: "scripted",
-    });
+    await seedLegacyModelCredential(
+      prisma,
+      await rpc<{ userId: string; spaceId: string }>(app, cookie, "me"),
+      {
+        provider: "openrouter",
+        apiKey: secret,
+        label: "hidden",
+        modelId: "scripted",
+      },
+    );
     await sendAndWait(
       app,
       cookie,

@@ -9,6 +9,13 @@ import { hasActiveComputerControl } from "./computer-control.js";
 import { toComputerRef } from "./computer-support.js";
 import { checkpointAndRecordComputerWorkspace } from "./computer-workspace.js";
 import { LocalAgentHomeStore } from "./home.js";
+import { inspectOfficeModels, type OfficeModelDeps } from "./office-model-preflight.js";
+
+export {
+  createLocalOfficeModelResolver,
+  type OfficeModelRuntimeResolver,
+} from "./office-model-preflight.js";
+
 import { copyAgentHome, teamBotAreaFilter } from "./workspace-transfer.js";
 
 export class MachineRelocationError extends Error {
@@ -38,7 +45,7 @@ export interface RelocationComputer {
   controlLeaseExpiresAt: Date | null;
 }
 
-export interface MachineRelocationDeps {
+export interface MachineRelocationDeps extends OfficeModelDeps {
   prisma: PrismaClient;
   sandbox: SandboxProvider;
   home: AgentHomeStore;
@@ -147,6 +154,12 @@ export async function relocateBotMachine(
     : computerScopeKey("dedicated", actor.spaceId, input.botId);
 
   if (current) await refuseBusyComputer(prisma, input.botId, current);
+  const models = await inspectOfficeModels(deps, actor, input.botId, machineId);
+  if (models.status !== "available")
+    throw new MachineRelocationError("BAD_REQUEST", {
+      message: models.error ?? "Pi model authority is unavailable",
+    });
+  deps.assertMoveClaim?.();
 
   let frozenState: string | null = null;
   let committed = false;

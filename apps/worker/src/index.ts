@@ -10,6 +10,7 @@ import {
   createCloudAgentConnection,
   createConnectorStack,
   createJobReconciler,
+  createLocalOfficeModelResolver,
   createMachineFetch,
   createMachineRouting,
   createMachinesService,
@@ -31,12 +32,12 @@ import {
   isPipedreamEnabled,
   LocalAgentHomeStore,
   LocalArtifactStore,
+  LocalPiModelRuntimeService,
   LocalPiRuntime,
   McpConnector,
   McpOAuthBroker,
   messagingEnvFromProcess,
   messagingPlatformsFromEnv,
-  PiAgentRuntime,
   PipedreamConnector,
   PostgresRealtimeFanout,
   pipedreamConfigFromEnv,
@@ -66,6 +67,16 @@ const logger = createRootLogger(SERVICE_NAMES.worker);
 async function main() {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) throw new Error("DATABASE_URL is required");
+  const dataDir = process.env.DATA_DIR ?? "./data";
+  const runtimeMode = process.env.AGENT_RUNTIME ?? "pi";
+  const localPi = resolveLocalPiRuntimeOptions(process.env, dataDir);
+  if (runtimeMode !== "scripted" && !localPi) {
+    throw new Error(
+      "AGENT_RUNTIME=pi broker-backed model routing is retired; configure the native Pi RPC runtime with AGENT_RUNTIME=pi-local on a trusted loopback deployment",
+    );
+  }
+  const runtime =
+    runtimeMode === "scripted" ? new ScriptedAgentRuntime() : new LocalPiRuntime(localPi!);
   const { prisma, pool } = createDb(databaseUrl);
   const officeMovePool = createOfficeMovePool(databaseUrl);
   const realtime = new PostgresRealtimeFanout({
@@ -77,11 +88,9 @@ async function main() {
     runSecretWriter: createRunSecretWriter(secrets),
   });
   const machines = createMachinesService({ store: createPrismaMachineStore(prisma) });
-  const dataDir = process.env.DATA_DIR ?? "./data";
   // Same resolver the API uses, so both processes agree on provider, model and key.
   const deploymentModel = resolveDeploymentModel();
   const { key: deploymentModelKey } = deploymentModel;
-  const localPi = resolveLocalPiRuntimeOptions(process.env, dataDir);
   const sandboxProvider = resolveSandboxProvider(process.env);
   const fallbackSandbox = createRunSandbox(sandboxProvider, {
     supervisorUrl: process.env.SANDBOX_SUPERVISOR_URL ?? "http://127.0.0.1:7091",
@@ -111,12 +120,8 @@ async function main() {
       : undefined,
   });
   const sandbox = machineRouting.sandbox;
-  const runtime =
-    process.env.AGENT_RUNTIME === "scripted"
-      ? new ScriptedAgentRuntime()
-      : localPi
-        ? new LocalPiRuntime(localPi)
-        : new PiAgentRuntime({ host: machineRouting.host });
+  const piModels = localPi ? new LocalPiModelRuntimeService(localPi) : undefined;
+  const resolveOfficeModelRuntime = createLocalOfficeModelResolver(prisma, piModels);
   const mcpOAuth = new McpOAuthBroker(prisma, secrets);
   const mcp = new McpConnector(
     prisma,
@@ -171,6 +176,8 @@ async function main() {
   const executor = createRunExecutor({
     prisma,
     runtime,
+    piModels,
+    resolveOfficeModelRuntime,
     sandbox,
     memory: new MarkdownMemoryStore(prisma),
     memoryProviders,
@@ -211,6 +218,7 @@ async function main() {
       home,
       pool: officeMovePool,
       defaultComputerKind: sandboxProvider,
+      resolveOfficeModelRuntime,
     },
     workerId: process.pid.toString(),
     runtime,

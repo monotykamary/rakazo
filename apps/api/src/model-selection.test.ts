@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { getModelSelection, setWorkerModelSelection } from "./model-selection.js";
 import { createRouter, type RouterDeps } from "./router.js";
 
-const actor = { userId: "owner", spaceId: "space" } as Actor;
+const actor = { userId: "owner", spaceId: "space", isDeploymentOwner: true } as Actor;
 const scope = { botId: "bot", threadId: "thread", participantId: "worker" };
 const old: ModelSelection = { provider: "openai-compatible", modelId: "old", thinkingLevel: "low" };
 const selection: ModelSelection = { ...old, modelId: "new", thinkingLevel: "high" };
@@ -27,6 +27,7 @@ function fixture() {
     modelProvider: old.provider,
     modelId: old.modelId,
     thinkingLevel: old.thinkingLevel,
+    computerSwitching: false,
   };
   let preference: any;
   const credential = {
@@ -44,8 +45,11 @@ function fixture() {
     },
     thread: { findFirst: vi.fn(async () => ({ id: "thread" })) },
     bot: {
-      findFirst: vi.fn(async () => bot),
+      findFirst: vi.fn(async (args?: any) =>
+        args?.where?.computerSwitching === false && bot.computerSwitching ? null : bot,
+      ),
       updateMany: vi.fn(async (args: any) => {
+        if (args.where?.computerSwitching === false && bot.computerSwitching) return { count: 0 };
         Object.assign(bot, args.data);
         return { count: 1 };
       }),
@@ -68,12 +72,20 @@ function fixture() {
     userModelCredential: { findFirst: vi.fn(async () => credential) },
     deploymentSettings: { findUnique: vi.fn(async () => null) },
     secret: { findFirst: vi.fn(async () => ({ ciphertext: "fake-encrypted" })) },
-  };
+  } as any;
+  db.$queryRaw = vi.fn(async () => [{ id: bot.id }]);
+  db.$transaction = vi.fn(async (run: (tx: typeof db) => unknown) => run(db));
   const prisma = db as unknown as PrismaClient;
-  const client = (authenticated = true, env: Record<string, unknown> = {}) =>
+  const piModels = {
+    read: vi.fn(async () => ({ catalog: [], profileDefault: null })),
+    validate: vi.fn(async () => {}),
+    supportsCheckpoint: vi.fn(() => true),
+  };
+  const client = (authenticated = true, env: Record<string, unknown> = {}, owner = true) =>
     createRouterClient(
       createRouter({
         prisma,
+        piModels,
         secrets: {
           load: () =>
             JSON.stringify({
@@ -89,9 +101,9 @@ function fixture() {
         events: {},
         jobs: {},
       } as unknown as RouterDeps),
-      { context: { actor: authenticated ? actor : null } },
+      { context: { actor: authenticated ? { ...actor, isDeploymentOwner: owner } : null } },
     );
-  return { db, prisma, client, state, bot };
+  return { db, prisma, client, state, bot, piModels };
 }
 describe("model selection routes", () => {
   it("registers both authenticated model methods and rejects anonymous callers before storage", async () => {
@@ -150,7 +162,13 @@ describe("model selection routes", () => {
     );
     expect(result).toMatchObject({ requested: selection, effective: old, status: "pending" });
     expect(f.db.bot.updateMany).toHaveBeenCalledWith({
-      where: { id: "bot", spaceId: "space", userId: "owner", archivedAt: null },
+      where: {
+        id: "bot",
+        spaceId: "space",
+        userId: "owner",
+        archivedAt: null,
+        computerSwitching: false,
+      },
       data: {
         modelProvider: selection.provider,
         modelId: selection.modelId,
@@ -159,6 +177,25 @@ describe("model selection routes", () => {
     });
     expect(f.db.runtimeModelPreference.upsert).not.toHaveBeenCalled();
   });
+  it("rejects root and participant model writes while the bot is moving", async () => {
+    const f = fixture();
+    f.bot.computerSwitching = true;
+
+    await expect(
+      setWorkerModelSelection(
+        f.prisma,
+        actor,
+        { botId: "bot", threadId: "thread", selection },
+        async () => {},
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(
+      setWorkerModelSelection(f.prisma, actor, { ...scope, selection }, async () => {}),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(f.db.$queryRaw).toHaveBeenCalledOnce();
+    expect(f.db.runtimeModelPreference.upsert).not.toHaveBeenCalled();
+  });
+
   it("rejects foreign thread access and fabricated participants before validation or writes", async () => {
     const f = fixture();
     const validate = vi.fn(async () => {});
@@ -255,78 +292,69 @@ describe("model selection routes", () => {
     f.state.participants.worker.session.modelSelection = failure;
     expect(await f.client().models.setWorkerSelection({ ...scope, selection })).toEqual(failure);
   });
-  it("keeps hidden requested pins visible as failed without rerouting or changing effective state", async () => {
+  it("validates Pi intent in scripted execution without reading legacy credentials", async () => {
     const f = fixture();
-    await f.client().models.setWorkerSelection({ ...scope, selection });
-    f.db.user.findUnique.mockResolvedValue({
-      modelVisibility: { hide: [{ provider: selection.provider, model: selection.modelId }] },
-    });
-    expect(await f.client().models.getSelection(scope)).toMatchObject({
-      requested: selection,
-      effective: old,
-      status: "failed",
-      error: expect.stringContaining("hidden"),
-    });
-    expect(f.db.user.findUnique).toHaveBeenCalledWith({
-      where: { id: actor.userId },
-      select: { modelVisibility: true },
-    });
-    f.db.runtimeModelPreference.upsert.mockClear();
+    await f
+      .client(true, { agentRuntime: "scripted" })
+      .models.setWorkerSelection({ ...scope, selection });
+    expect(f.piModels.validate).toHaveBeenCalledWith(selection, undefined);
+    expect(f.db.secret.findFirst).not.toHaveBeenCalled();
+  });
+  it("rejects a non-owner null reset before storage", async () => {
+    const f = fixture();
+    await expect(
+      f.client(true, {}, false).models.setWorkerSelection({ ...scope, selection: null }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(f.db.thread.findFirst).not.toHaveBeenCalled();
+    expect(f.db.runtimeModelPreference.deleteMany).not.toHaveBeenCalled();
+  });
+  it("rejects mismatched project validation before probing", async () => {
+    const f = fixture();
+    f.piModels.supportsCheckpoint.mockReturnValue(false);
     await expect(
       f.client().models.setWorkerSelection({ ...scope, selection }),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: expect.stringContaining("hidden") });
-    expect(f.db.runtimeModelPreference.upsert).not.toHaveBeenCalled();
-    expect(await f.client().models.setWorkerSelection({ ...scope, selection: null })).toMatchObject(
-      { requested: old, effective: old, status: "applied" },
-    );
-  });
-  it("preserves a hidden bot pin rather than showing the Space default", async () => {
-    const f = fixture();
-    f.db.user.findUnique.mockResolvedValue({
-      modelVisibility: { hide: [{ provider: old.provider }] },
-    });
-    expect(
-      await f.client().models.getSelection({ botId: scope.botId, threadId: scope.threadId }),
-    ).toMatchObject({
-      requested: old,
-      effective: old,
-      status: "failed",
-      error: expect.stringContaining("hidden"),
-    });
-  });
-  it("pins the deployment default through the authenticated worker route without a credential row", async () => {
-    const f = fixture();
-    f.db.spaceModelPreference.findFirst.mockResolvedValue(null as never);
-    f.db.userModelCredential.findFirst.mockResolvedValue(null as never);
-    const selected = { provider: "openai", modelId: "gpt-4o", thinkingLevel: null };
-    const env = {
-      defaultProvider: selected.provider,
-      defaultModel: selected.modelId,
-      deploymentModelKey: "fake-deployment-key",
-    };
-    expect(
-      await f.client(true, env).models.setWorkerSelection({ ...scope, selection: selected }),
-    ).toMatchObject({ requested: selected, effective: old, status: "pending" });
-    expect(f.db.secret.findFirst).not.toHaveBeenCalled();
-    f.db.runtimeModelPreference.upsert.mockClear();
-    await expect(
-      f.client().models.setWorkerSelection({ ...scope, selection: selected }),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
-    f.db.user.findUnique.mockResolvedValueOnce({
-      modelVisibility: { hide: [{ provider: selected.provider }] },
-    });
-    await expect(
-      f.client(true, env).models.setWorkerSelection({ ...scope, selection: selected }),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: expect.stringContaining("hidden") });
+    ).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE" });
+    expect(f.piModels.validate).not.toHaveBeenCalled();
     expect(f.db.runtimeModelPreference.upsert).not.toHaveBeenCalled();
   });
-  it("validates connected models through the actual authorized route", async () => {
+  it("honors a move latch acquired during Pi validation, including reset", async () => {
     const f = fixture();
-    const result = await f.client().models.setWorkerSelection({ ...scope, selection });
-    expect(result).toMatchObject({ requested: selection, effective: old, status: "pending" });
-    expect(f.db.secret.findFirst).toHaveBeenCalledWith({
-      where: { id: "secret", userId: actor.userId, spaceId: null },
-      select: { ciphertext: true },
+    f.piModels.validate.mockImplementation(async () => {
+      f.bot.computerSwitching = true;
     });
+    await expect(
+      f.client().models.setWorkerSelection({ ...scope, selection }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(
+      f.client().models.setWorkerSelection({ ...scope, selection: null }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(f.db.runtimeModelPreference.upsert).not.toHaveBeenCalled();
+    expect(f.db.runtimeModelPreference.deleteMany).not.toHaveBeenCalled();
   });
+  it.each(["scripted", "pi-local"])(
+    "retires public model management in %s",
+    async (agentRuntime) => {
+      const f = fixture();
+      const models = f.client(true, { agentRuntime }).models;
+      const calls = [
+        () => models.setVisibility({ hide: [] }),
+        () => models.connect({ provider: "openai", apiKey: "fake-test-key" }),
+        () => models.setDefault({ provider: "openai", modelId: "fake" }),
+        () => models.beginOAuth({ provider: "openai-codex" }),
+        () => models.cancelOAuth({ loginId: "fake" }),
+        () => models.submitOAuthCode({ loginId: "fake", code: "fake" }),
+        () => models.completeOAuth({ loginId: "fake" }),
+        () => models.finishOAuth({ loginId: "fake" }),
+        () => models.getRouting({ credentialId: "fake" }),
+        () => models.setRouting({ credentialId: "fake", routing: null }),
+        () => models.probeOpenAiCompatible({ baseUrl: "https://offline.invalid/v1" }),
+      ];
+      for (const call of calls)
+        await expect(call()).rejects.toMatchObject({
+          code: "BAD_REQUEST",
+          message: "Models are configured in Pi",
+        });
+      expect(f.db.secret.findFirst).not.toHaveBeenCalled();
+    },
+  );
 });

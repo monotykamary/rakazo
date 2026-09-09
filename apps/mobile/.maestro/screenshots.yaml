@@ -83,17 +83,10 @@ tags:
 
 - openLink: "rakazo:///models"
 - extendedWaitUntil:
-    visible: "Active model"
+    visible: "Pi profile default"
     timeout: 10000
-- scrollUntilVisible:
-    element: "Show more"
-    direction: DOWN
+- assertVisible: "Search models"
 - takeScreenshot: "11-models"
-- tapOn: "Show more"
-- scrollUntilVisible:
-    element: "Show less"
-    direction: DOWN
-- takeScreenshot: "11b-all-providers"
 
 - openLink: "rakazo:///voice"
 - extendedWaitUntil:

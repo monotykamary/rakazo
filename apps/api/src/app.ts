@@ -12,7 +12,6 @@ import type {
   TransactionalEmailProvider,
 } from "@rakazo/adapter-kit";
 import {
-  type AgentProcessHost,
   applyMessagingOutboundStatus,
   ChatSdkMessagingSurface,
   type ComposioProvider,
@@ -21,6 +20,7 @@ import {
   createCloudAgentConnection,
   createConnectorStack,
   createJobReconciler,
+  createLocalOfficeModelResolver,
   createMachineFetch,
   createMachineRouting,
   createMachinesService,
@@ -45,12 +45,13 @@ import {
   isPipedreamEnabled,
   LocalAgentHomeStore,
   LocalArtifactStore,
+  LocalPiModelRuntimeService,
   LocalPiRuntime,
   McpConnector,
   McpOAuthBroker,
   messagingPlatformsFromEnv,
-  PiAgentRuntime,
-  PiOAuthLogins,
+  type OfficeModelRuntimeResolver,
+  type PiModelRuntimeService,
   PipedreamConnector,
   PostgresRealtimeFanout,
   pipedreamConfigFromEnv,
@@ -140,7 +141,6 @@ export interface AppHandles {
 
 export function createConfiguredAgentRuntime(
   env: Pick<AppEnv, "agentRuntime" | "localPi">,
-  managedHost: AgentProcessHost,
 ): AgentRuntime {
   if (env.agentRuntime === "scripted") return new ScriptedAgentRuntime();
   if (env.agentRuntime === "pi-local") {
@@ -149,7 +149,9 @@ export function createConfiguredAgentRuntime(
     }
     return new LocalPiRuntime(env.localPi);
   }
-  return new PiAgentRuntime({ host: managedHost });
+  throw new Error(
+    "AGENT_RUNTIME=pi broker-backed model routing is retired; configure the native Pi RPC runtime with AGENT_RUNTIME=pi-local on a trusted loopback deployment",
+  );
 }
 
 export async function createApp(
@@ -158,6 +160,8 @@ export async function createApp(
     realtime?: RealtimeFanout;
     sandbox?: SandboxProvider;
     runtime?: AgentRuntime;
+    piModels?: PiModelRuntimeService;
+    resolveOfficeModelRuntime?: OfficeModelRuntimeResolver;
     composio?: ComposioProvider;
     pipedream?: ManagedConnectorProvider;
     messaging?: MessagingSurface;
@@ -171,6 +175,8 @@ export async function createApp(
     realtime: realtimeOverride,
     sandbox: sandboxOverride,
     runtime: runtimeOverride,
+    piModels: piModelsOverride,
+    resolveOfficeModelRuntime: officeModelsOverride,
     composio: composioOverride,
     pipedream: pipedreamOverride,
     messaging: messagingOverride,
@@ -180,6 +186,7 @@ export async function createApp(
     ...envOverrides
   } = overrides;
   const env = { ...loadEnv(process.env), ...envOverrides };
+  const runtime = runtimeOverride ?? createConfiguredAgentRuntime(env);
   const logger = loggerOverride ?? createServiceLogger({ service: SERVICE_NAMES.api });
   installLogger(logger);
   const created = prismaOverride
@@ -261,7 +268,6 @@ export async function createApp(
   const sandbox = machineRouting.sandbox;
   const mcpOAuth = new McpOAuthBroker(prisma, secrets, remoteConnectors);
   const memoryProviders = new SpaceMemoryProviderResolver(prisma, secrets);
-  const oauthLogins = new PiOAuthLogins();
   const home = new LocalAgentHomeStore(env.dataDir);
   const artifacts = new LocalArtifactStore(env.dataDir);
   const memory = new MarkdownMemoryStore(prisma);
@@ -318,7 +324,14 @@ export async function createApp(
   await connector.start();
   void stack.composio?.warmDirectory().catch(() => undefined);
   void pipedream?.warmDirectory?.().catch(() => undefined);
-  const runtime = runtimeOverride ?? createConfiguredAgentRuntime(env, machineRouting.host);
+  const piModels =
+    piModelsOverride ??
+    (env.agentRuntime === "pi-local" && env.localPi
+      ? new LocalPiModelRuntimeService(env.localPi)
+      : undefined);
+  const resolveOfficeModelRuntime =
+    officeModelsOverride ??
+    createLocalOfficeModelResolver(prisma, env.agentRuntime === "pi-local" ? piModels : undefined);
   const notifications = new ExpoPushProvider(env.dataDir);
   const auth = createAuth(prisma, {
     secret: env.authSecret,
@@ -372,6 +385,8 @@ export async function createApp(
   const executor = createRunExecutor({
     prisma,
     runtime,
+    piModels,
+    resolveOfficeModelRuntime,
     sandbox,
     memory,
     memoryProviders,
@@ -415,6 +430,7 @@ export async function createApp(
           home,
           pool: officeMovePool,
           defaultComputerKind: env.sandboxProvider,
+          resolveOfficeModelRuntime,
         }
       : undefined,
     workerId: "api",
@@ -452,7 +468,6 @@ export async function createApp(
     memoryProviders,
     home,
     secrets,
-    oauthLogins,
     mcpOAuth,
     composio: stack.composio,
     connectors: stack.connector,
@@ -464,6 +479,8 @@ export async function createApp(
       providers: messaging?.platforms().map((platform) => platform.provider) ?? [],
       openSignup: env.messagingOpenSignup,
     },
+    piModels,
+    resolveOfficeModelRuntime,
     env: {
       agentRuntime: env.agentRuntime,
       defaultProvider: env.defaultProvider,
@@ -851,7 +868,6 @@ export async function createApp(
       // Abort in-flight continueRun boot waits before draining jobs so stop() cannot sit
       // on waitForComputerReady for the full boot-wait window during shared Postgres journeys.
       shutdown.abort();
-      oauthLogins.abortAll();
       messagingStopped = true;
       clearMessagingRetryDelay?.();
       clearTeamChatRetryDelay?.();

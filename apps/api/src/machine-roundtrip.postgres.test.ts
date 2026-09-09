@@ -20,6 +20,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runForwarder } from "../../../packages/runner/src/forwarder.js";
 import { TunnelClient } from "../../../packages/runner/src/tunnel-client.js";
 import { assignBotMachine, mountMachineRunnerRoutes } from "./machines.js";
+import { resolveFixtureOfficeModels } from "./pi-office-fixture.js";
 
 const postgres = process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe : describe.skip;
 
@@ -287,7 +288,12 @@ postgres(
           }),
       });
       const home = new LocalAgentHomeStore(join(root, "move-server"));
-      const deps = { prisma: db.prisma, sandbox: routing.sandbox, home };
+      const deps = {
+        prisma: db.prisma,
+        sandbox: routing.sandbox,
+        home,
+        resolveOfficeModelRuntime: resolveFixtureOfficeModels,
+      };
       await home.writeFile(scope.computer.homeKey, "project/source.txt", "original", context);
       const originalRef = await provisionComputer(deps, scope.computer.id, context);
       await assignBotMachine(deps, actor, { botId: scope.bot.id, machineId: second.machineId });

@@ -2,8 +2,9 @@ import type { AgentHomeStore, SandboxProvider } from "@rakazo/adapter-kit";
 import type { Actor } from "@rakazo/contracts";
 import { type MachineAssignmentResult, machineAssignment, type PrismaClient } from "@rakazo/db";
 import { MachineRelocationError, relocateBotMachine } from "./machine-relocation.js";
+import type { OfficeModelDeps } from "./office-model-preflight.js";
 
-export interface MachineAssignDeps {
+export interface MachineAssignDeps extends OfficeModelDeps {
   prisma: PrismaClient;
   sandbox: SandboxProvider;
   home: AgentHomeStore;
@@ -130,6 +131,7 @@ export async function assignBotMachine(
           prisma,
           sandbox: deps.sandbox,
           home: deps.home,
+          resolveOfficeModelRuntime: deps.resolveOfficeModelRuntime,
           defaultComputerKind: deps.defaultComputerKind,
           intentId: input.intentId,
           intentClaimToken: input.intentClaimToken,
@@ -147,6 +149,7 @@ export async function assignBotMachine(
         prisma,
         sandbox: deps.sandbox,
         home: deps.home,
+        resolveOfficeModelRuntime: deps.resolveOfficeModelRuntime,
         defaultComputerKind: deps.defaultComputerKind,
         intentId: input.intentId,
         intentClaimToken: input.intentClaimToken,

@@ -1,10 +1,37 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  ModelTeamChatEngagementJudge,
   parseTeamChatEngagementDecision,
   renderTeamChatEngagementPrompt,
 } from "./team-chat-judge.js";
 
 describe("team chat engagement judge", () => {
+  it("does not run an unleased ambient classifier through native Pi", async () => {
+    const run = vi.fn();
+    const findUnique = vi.fn();
+    const judge = new ModelTeamChatEngagementJudge({
+      runtime: { describe: () => ({ id: "pi-local" }), run },
+      prisma: { deploymentSettings: { findUnique } },
+    } as unknown as ConstructorParameters<typeof ModelTeamChatEngagementJudge>[0]);
+    await expect(
+      judge.decide({
+        bot: {
+          id: "bot",
+          spaceId: "space",
+          userId: "owner",
+          name: "Bot",
+          modelProvider: null,
+          modelId: null,
+        },
+        channelId: "room",
+        rules: "",
+        messages: [],
+      }),
+    ).resolves.toEqual({ act: false });
+    expect(run).not.toHaveBeenCalled();
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
   it("renders untrusted messages without treating them as instructions", () => {
     const prompt = renderTeamChatEngagementPrompt({
       botName: "Arthur",

@@ -1,4 +1,11 @@
 export const ZH_MESSAGES: Record<string, string> = {
+  Current: "当前",
+  Requested: "请求的模型",
+  "No models": "暂无模型",
+  "Pi selection": "Pi 选择",
+  "Bot model": "Bot 模型",
+  "Pi profile default": "Pi 配置默认模型",
+  "Use Pi selection": "使用 Pi 选择",
   Office: "办公室",
   "Link office": "连接办公室",
   "Move office": "迁移办公室",

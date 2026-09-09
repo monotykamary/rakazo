@@ -1,6 +1,6 @@
 import { createRouterClient } from "@orpc/server";
 import type { Actor, ModelVisibility } from "@rakazo/contracts";
-import { assertModelVisibleForOwner, getModelVisibility, type PrismaClient } from "@rakazo/db";
+import { getModelVisibility, type PrismaClient } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
 import { createRouter, type RouterDeps } from "./router.js";
 
@@ -65,39 +65,13 @@ describe("authenticated model visibility", () => {
     expect(f.db.user.findUnique).not.toHaveBeenCalled();
     expect(f.db.user.updateMany).not.toHaveBeenCalled();
   });
-  it("hides/unhides the real catalog per owner across spaces without credential mutation", async () => {
+  it("retires visibility writes without touching stored preferences", async () => {
     const f = fixture();
-    const client = f.client();
-    const all = await client.models.listForVisibility();
-    const model = all.find((entry) => !entry.placeholder)!;
-    expect(model).toBeDefined();
-    const rule = { provider: model.provider, model: model.id };
-    expect(await client.models.setVisibility({ hide: [rule, rule] })).toEqual({ hide: [rule] });
-    expect(await f.client("owner", "another-space").models.getVisibility()).toEqual({
-      hide: [rule],
+    await expect(f.client().models.setVisibility({ hide: [] })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "Models are configured in Pi",
     });
-    expect(await client.models.list()).not.toContainEqual(model);
-    expect(await f.client("other").models.list()).toContainEqual(model);
-    expect(await client.models.listForVisibility()).toContainEqual(model);
-    await expect(
-      assertModelVisibleForOwner(f.prisma, { userId: "owner" }, model.provider, model.id),
-    ).rejects.toThrow("Unhide it");
-    await expect(
-      assertModelVisibleForOwner(f.prisma, { userId: "other" }, model.provider, model.id),
-    ).resolves.toBeUndefined();
-    await client.models.setVisibility({ hide: [{ provider: model.provider }] });
-    expect((await client.models.list()).some((entry) => entry.provider === model.provider)).toBe(
-      false,
-    );
-    await client.models.setVisibility({ hide: [] });
-    expect(await client.models.list()).toEqual(all);
-    await expect(
-      assertModelVisibleForOwner(f.prisma, { userId: "owner" }, model.provider, model.id),
-    ).resolves.toBeUndefined();
-    expect(f.db.secret.update).not.toHaveBeenCalled();
-    expect(f.db.secret.delete).not.toHaveBeenCalled();
-    expect(f.db.userModelCredential.update).not.toHaveBeenCalled();
-    expect(f.db.userModelCredential.delete).not.toHaveBeenCalled();
+    expect(f.db.user.updateMany).not.toHaveBeenCalled();
   });
   it("rejects authority injection and unsafe patterns before storage", async () => {
     const f = fixture();
@@ -113,11 +87,9 @@ describe("authenticated model visibility", () => {
   });
   it("does not silently enable models for missing owners or corrupt preferences", async () => {
     const f = fixture();
-    await expect(f.client("missing").models.getVisibility()).rejects.toMatchObject({
-      code: "NOT_FOUND",
-    });
+    await expect(getModelVisibility(f.prisma, { userId: "missing" })).rejects.toThrow();
     await expect(f.client("missing").models.setVisibility({ hide: [] })).rejects.toMatchObject({
-      code: "NOT_FOUND",
+      code: "BAD_REQUEST",
     });
     f.users.get("owner")!.modelVisibility = { hide: [{ provider: "test", model: "*" }] };
     await expect(getModelVisibility(f.prisma, { userId: "owner" })).rejects.toThrow();

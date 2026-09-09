@@ -1,99 +1,136 @@
 import { t } from "@lingui/core/macro";
-import type { ModelSelection, ModelSelectionStatus, ThinkingLevel } from "@rakazo/contracts";
-import { isModelHidden } from "@rakazo/contracts";
-import { connectedModelOptions, modelOptionKey } from "@rakazo/core";
-import { Button, NativeSelect, NativeSelectOption } from "@rakazo/ui-web";
-import { useEffect, useState } from "react";
+import type { ModelSelection } from "@rakazo/contracts";
+import { Button } from "@rakazo/ui-web";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { rpc } from "../lib/rpc";
+import { PiModelPicker, PiModelStatus } from "./PiModelPicker";
 
-export function WorkerModelSettings({
-  botId,
-  threadId,
-  participantId,
-}: {
-  botId: string;
-  threadId: string;
-  participantId: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [options, setOptions] = useState<ReturnType<typeof connectedModelOptions>>([]);
-  const [status, setStatus] = useState<ModelSelectionStatus>();
-  const [key, setKey] = useState("");
-  const [thinking, setThinking] = useState<ThinkingLevel | "">("");
+type ModelScope = { botId: string; threadId: string; participantId?: string };
+
+export function PiRuntimeModelSettings({ botId, threadId, participantId }: ModelScope) {
+  const [runtime, setRuntime] = useState<Awaited<ReturnType<typeof rpc.models.runtime>>>();
+  const [selection, setSelection] = useState<ModelSelection | null>(null);
   const [error, setError] = useState<string>();
+  const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [ready, setReady] = useState(false);
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    setReady(false);
-    setStatus(undefined);
+  const revision = useRef(0);
+  const edited = useRef(false);
+  const saving = useRef(false);
+  const refresh = useCallback(async () => {
+    if (saving.current) return;
+    const request = ++revision.current;
+    setLoading(true);
     setError(undefined);
-    void Promise.all([
-      rpc.models.credentials(),
-      rpc.models.list(),
-      rpc.models.getSelection({ botId, threadId, participantId }),
-      rpc.models.getVisibility(),
-    ])
-      .then(([credentials, catalog, selection, visibility]) => {
-        if (cancelled) return;
-        setOptions(
-          connectedModelOptions(credentials, catalog).filter(
-            (option) => !isModelHidden(visibility, option.provider, option.modelId),
-          ),
-        );
-        setStatus(selection);
-        setReady(true);
-        const model = selection.requested;
-        setKey(model ? modelOptionKey(model.provider, model.modelId) : "");
-        setThinking(model?.thinkingLevel ?? "");
-      })
-      .catch((cause) => {
-        if (!cancelled) setError(String(cause));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, botId, threadId, participantId]);
+    try {
+      const next = await rpc.models.runtime({ botId, threadId, participantId });
+      if (request !== revision.current) return;
+      setRuntime(next);
+      if (!edited.current) setSelection(next.selection?.requested ?? next.current);
+    } catch {
+      if (request === revision.current) setError(t`Could not refresh models`);
+    } finally {
+      if (request === revision.current) setLoading(false);
+    }
+  }, [botId, threadId, participantId]);
   useEffect(() => {
-    if (!open || status?.status !== "pending") return;
-    let cancelled = false;
-    const timer = setInterval(() => {
-      void rpc.models
-        .getSelection({ botId, threadId, participantId })
-        .then((next) => {
-          if (!cancelled) setStatus(next);
-        })
-        .catch((cause) => {
-          if (!cancelled) setError(String(cause));
-        });
-    }, 2000);
+    edited.current = false;
+    saving.current = false;
+    setBusy(false);
+    setRuntime(undefined);
+    setSelection(null);
+    void refresh();
     return () => {
-      cancelled = true;
-      clearInterval(timer);
+      revision.current += 1;
     };
-  }, [open, status?.status, botId, threadId, participantId]);
-  const selected = options.find((option) => option.key === key);
-  async function save(selection: ModelSelection | null) {
-    if (!ready || busy) return;
+  }, [refresh]);
+  useEffect(() => {
+    if (runtime?.selection?.status !== "pending" || busy) return;
+    const timer = setTimeout(() => void refresh(), 2000);
+    return () => clearTimeout(timer);
+  }, [runtime, busy, refresh]);
+  async function save(nextSelection: ModelSelection | null) {
+    if (saving.current || loading || runtime?.availability.status !== "available") return;
+    saving.current = true;
+    const request = ++revision.current;
     setBusy(true);
     setError(undefined);
     try {
-      const next = await rpc.models.setWorkerSelection({
+      const status = await rpc.models.setWorkerSelection({
         botId,
         threadId,
         participantId,
-        selection,
+        selection: nextSelection,
       });
-      setStatus(next);
-      setKey(next.requested ? modelOptionKey(next.requested.provider, next.requested.modelId) : "");
-      setThinking(next.requested?.thinkingLevel ?? "");
-    } catch (cause) {
-      setError(String(cause));
+      if (request !== revision.current) return;
+      setRuntime(
+        (current) => current && { ...current, selection: status, current: status.effective },
+      );
+      edited.current = false;
+      setSelection(status.requested ?? status.effective);
+    } catch {
+      if (request === revision.current) setError(t`Could not switch model`);
     } finally {
-      setBusy(false);
+      if (request === revision.current) {
+        saving.current = false;
+        setBusy(false);
+      }
     }
   }
+  const selected = runtime?.catalog.find(
+    (entry) => entry.provider === selection?.provider && entry.id === selection?.modelId,
+  );
+  const available = runtime?.availability.status === "available";
+  const supportedThinking =
+    !selection?.thinkingLevel || selected?.thinkingLevels?.includes(selection.thinkingLevel);
+  return (
+    <div className="space-y-3">
+      <PiModelStatus current={runtime?.current ?? null} status={runtime?.selection} />
+      {runtime?.availability.status === "unavailable" && (
+        <p role="alert" className="text-sm text-destructive">{t`Pi unavailable`}</p>
+      )}
+      {error && (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      )}
+      {available && runtime.catalog.length === 0 && (
+        <p className="text-sm text-muted-foreground">{t`No models available`}</p>
+      )}
+      <PiModelPicker
+        catalog={runtime?.catalog ?? []}
+        selection={selection}
+        disabled={busy || !available}
+        onChange={(next) => {
+          edited.current = true;
+          setSelection(next);
+        }}
+      />
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          disabled={busy || loading || !available || !selected || !supportedThinking}
+          onClick={() => void save(selection)}
+        >
+          {busy ? t`Switching…` : t`Use model`}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={busy || loading || !available}
+          onClick={() => void save(null)}
+        >
+          {participantId ? t`Use bot model` : t`Use Pi selection`}
+        </Button>
+        <Button size="sm" variant="ghost" disabled={busy || loading} onClick={() => void refresh()}>
+          {loading ? t`Refreshing…` : t`Refresh`}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+export function WorkerModelSettings(scope: ModelScope) {
+  const [open, setOpen] = useState(false);
   return (
     <div className="space-y-2">
       <Button
@@ -103,77 +140,10 @@ export function WorkerModelSettings({
         onClick={() => setOpen(!open)}
       >{t`Model`}</Button>
       {open && (
-        <div className="space-y-2">
-          <NativeSelect
-            aria-label={t`Model`}
-            value={key}
-            disabled={busy}
-            onChange={(event) => {
-              setKey(event.target.value);
-              setThinking("");
-            }}
-          >
-            <NativeSelectOption value="">{t`Model`}</NativeSelectOption>
-            {key && !selected && (
-              <NativeSelectOption value={key} disabled>
-                {status?.requested?.modelId ?? key} · {t`Unavailable`}
-              </NativeSelectOption>
-            )}
-            {options.map((option) => (
-              <NativeSelectOption key={option.key} value={option.key}>
-                {option.label}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-          {selected?.thinkingLevels.length ? (
-            <NativeSelect
-              aria-label={t`Thinking`}
-              value={thinking}
-              disabled={busy}
-              onChange={(event) => setThinking(event.target.value as ThinkingLevel | "")}
-            >
-              <NativeSelectOption value="">{t`Default`}</NativeSelectOption>
-              {selected.thinkingLevels.map((level) => (
-                <NativeSelectOption key={level} value={level}>
-                  {level}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          ) : null}
-          {status &&
-            status.status !== "applied" &&
-            (status.status === "pending" || status.effective) && (
-              <p className="text-xs text-muted-foreground">
-                {status.status === "pending" ? t`Pending` : ""}
-                {status.effective
-                  ? `${status.status === "pending" ? " · " : ""}${t`Effective`}: ${status.effective.modelId}`
-                  : ""}
-              </p>
-            )}
-          {(error || status?.error) && (
-            <p role="alert" className="text-xs text-destructive">
-              {error || status?.error}
-            </p>
-          )}
-          <Button
-            size="sm"
-            disabled={busy || !ready || !selected}
-            onClick={() =>
-              selected &&
-              void save({
-                provider: selected.provider,
-                modelId: selected.modelId,
-                thinkingLevel: thinking || null,
-              })
-            }
-          >{t`Save`}</Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={busy || !ready}
-            onClick={() => void save(null)}
-          >{t`Use bot model`}</Button>
-        </div>
+        <PiRuntimeModelSettings
+          key={`${scope.botId}:${scope.threadId}:${scope.participantId ?? ""}`}
+          {...scope}
+        />
       )}
     </div>
   );

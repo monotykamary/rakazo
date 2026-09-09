@@ -80,6 +80,7 @@ import {
   ModelRoutingSchema,
   ModelRoutingSetInputSchema,
 } from "./model-routing.js";
+import { ModelRuntimeScopeSchema, ModelRuntimeSnapshotSchema } from "./model-runtime.js";
 import {
   ModelSelectionScopeSchema,
   ModelSelectionStatusSchema,
@@ -228,6 +229,7 @@ export const appContract = {
     previewUrl: oc.input(ServicePreviewUrlInputSchema).output(ServicePreviewUrlOutputSchema),
   },
   models: {
+    runtime: oc.input(ModelRuntimeScopeSchema).output(ModelRuntimeSnapshotSchema),
     getVisibility: oc.output(ModelVisibilitySchema),
     setVisibility: oc.input(ModelVisibilitySchema).output(ModelVisibilitySchema),
     listForVisibility: oc.output(z.array(ModelCatalogEntrySchema)),

@@ -8,6 +8,7 @@ export * from "./ids.js";
 export * from "./machines.js";
 export * from "./mcp.js";
 export * from "./model-routing.js";
+export * from "./model-runtime.js";
 export * from "./model-selection.js";
 export * from "./model-visibility.js";
 export * from "./openai-compatible-ui.js";

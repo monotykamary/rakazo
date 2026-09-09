@@ -1,6 +1,6 @@
 import * as z from "zod";
 import { ThreadMessageSchema } from "./events.js";
-import { ThinkingLevelSchema } from "./model-selection.js";
+import { ModelSelectionSchema, ThinkingLevelSchema } from "./model-selection.js";
 
 export { type ThinkingLevel, ThinkingLevelSchema } from "./model-selection.js";
 
@@ -304,8 +304,8 @@ export const UpdateBotInput = z
     sectionId: Id.nullable().optional(),
     voiceId: z.string().max(120).nullable().optional(),
     autoSpeak: z.boolean().optional(),
-    modelProvider: z.string().trim().min(1).max(80).nullable().optional(),
-    modelId: z.string().trim().min(1).max(200).nullable().optional(),
+    modelProvider: ModelSelectionSchema.shape.provider.nullable().optional(),
+    modelId: ModelSelectionSchema.shape.modelId.nullable().optional(),
     thinkingLevel: ThinkingLevelSchema.nullable().optional(),
     teamChatAmbientEnabled: z.boolean().optional(),
     teamChatRules: z.string().max(TEAM_CHAT_RULES_MAX_LENGTH).optional(),

@@ -158,19 +158,15 @@ describe("model setup gate", () => {
     return response;
   }
 
-  it("refuses to start a run when no model is configured", async () => {
-    const { actor, handler } = modelGateDeps({ agentRuntime: "pi" });
-
-    const response = await call(handler, actor, "threads/send", {
-      botId: "bot-1",
-      text: "hello",
-    });
-
-    expect(response.status).toBe(400);
+  it("does not gate onboarding on Rakazo model credentials", async () => {
+    const { actor, handler } = modelGateDeps({ agentRuntime: "pi-local" });
+    const response = await call(handler, actor, "me", null);
+    expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       json: expect.objectContaining({
-        code: "BAD_REQUEST",
-        message: "Connect a model to start a run.",
+        needsModel: false,
+        defaultProvider: null,
+        defaultModel: null,
       }),
     });
   });
@@ -186,7 +182,7 @@ describe("model setup gate", () => {
     });
   });
 
-  it("accepts a deployment model key as model configuration", async () => {
+  it("does not require app configuration when a legacy deployment key exists", async () => {
     const { actor, handler } = modelGateDeps({
       agentRuntime: "pi",
       deploymentModelKey: "fake-deployment-key",
@@ -200,7 +196,7 @@ describe("model setup gate", () => {
     });
   });
 
-  it("uses local Pi onboarding and model listing without a duplicate credential", async () => {
+  it("uses Pi onboarding without inventing a model when its profile is unavailable", async () => {
     const { actor, handler } = modelGateDeps({ agentRuntime: "pi-local" });
 
     const me = await call(handler, actor, "me", null);
@@ -208,18 +204,13 @@ describe("model setup gate", () => {
     await expect(me.json()).resolves.toEqual({
       json: expect.objectContaining({
         needsModel: false,
-        defaultProvider: "pi-local",
-        defaultModel: "default",
+        defaultProvider: null,
+        defaultModel: null,
       }),
     });
 
     const models = await call(handler, actor, "models/list", null);
-    expect(models.status).toBe(200);
-    await expect(models.json()).resolves.toEqual({
-      json: expect.arrayContaining([
-        expect.objectContaining({ provider: "pi-local", id: "default" }),
-      ]),
-    });
+    expect(models.status).toBe(503);
   });
 
   it("rejects every authenticated RPC for non-owners while local Pi is active", async () => {
@@ -250,7 +241,11 @@ describe("model setup gate", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      json: expect.objectContaining({ needsModel: true }),
+      json: expect.objectContaining({
+        needsModel: false,
+        defaultProvider: null,
+        defaultModel: null,
+      }),
     });
   });
 });

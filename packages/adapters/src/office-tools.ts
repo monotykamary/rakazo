@@ -4,11 +4,17 @@ import { toolRequiresExplicitApproval } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
 import { z } from "zod";
 import { machineStatusOf } from "./machine-tunnel.js";
+import { inspectOfficeModels, type OfficeModelDeps } from "./office-model-preflight.js";
 import { enqueueApprovedOfficeMove } from "./office-move-intents.js";
 
 export const OfficeToolInputSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("inspect") }).strict(),
-  z.object({ action: z.literal("plan") }).strict(),
+  z
+    .object({
+      action: z.literal("plan"),
+      machineId: z.string().min(1).max(128).nullable().optional(),
+    })
+    .strict(),
   z
     .object({ action: z.literal("move"), machineId: z.string().min(1).max(128).nullable() })
     .strict(),
@@ -27,7 +33,7 @@ export function officeActionRequiresExplicitApproval(value: unknown): boolean {
   return !parsed.success || toolRequiresExplicitApproval("manage_office", parsed.data);
 }
 
-export interface OfficeToolDeps {
+export interface OfficeToolDeps extends OfficeModelDeps {
   prisma: PrismaClient;
   /** Supplied by the trusted composition root, never tool arguments. */
   runtime: string;
@@ -74,15 +80,23 @@ export async function manageOfficeTool(
     take: 100,
   });
   if (
-    input.action === "move" &&
-    input.machineId !== null &&
+    input.action !== "inspect" &&
+    input.machineId != null &&
     !machines.some((machine) => machine.id === input.machineId)
   ) {
     throw new Error("Target unavailable; inspect paired machines first");
   }
   const native = deps.runtime === "pi-local";
+  if (input.action === "move" && !native && !approvedEffectId)
+    throw new Error("Explicit approval receipt required");
+  const models = await inspectOfficeModels(
+    deps,
+    actor,
+    scope.botId,
+    input.action === "inspect" ? undefined : input.machineId,
+  );
   let queuedIntent: { id: string; status: string } | undefined;
-  if (input.action === "move" && !native) {
+  if (input.action === "move" && !native && models.status === "available") {
     if (!approvedEffectId) throw new Error("Explicit approval receipt required");
     queuedIntent = await enqueueApprovedOfficeMove(deps, actor, {
       botId: scope.botId,
@@ -105,6 +119,7 @@ export async function manageOfficeTool(
     queued: queuedIntent?.status === "pending" || queuedIntent?.status === "processing",
     intent: queuedIntent ?? null,
     moves,
+    models,
     computer: bot.computer
       ? {
           id: bot.computer.id,
@@ -121,7 +136,11 @@ export async function manageOfficeTool(
     })),
     capabilities: {
       pairedComputeRequiresOriginalControlPlane: true,
-      automatedRelocation: !native,
+      automatedRelocation:
+        !native &&
+        input.action !== "inspect" &&
+        input.machineId !== undefined &&
+        models.status === "available",
       pairing: "secure_manual_settings",
       nativeRemoteAssignment: false,
       nativeAutomaticExport: false,
@@ -132,6 +151,7 @@ export async function manageOfficeTool(
         ? "Native cutover is unsupported. An independent deployment can use native Pi/Fabric host tools with a separately reviewed script; do not automatically export credentials or native state."
         : queuedIntent
           ? "Inspect the intent after this run ends. Queued means pending, not moved; active work is preserved."
-          : "Pairing requires the existing secure manual settings flow. Managed moves require explicit approval; autonomous control-plane migration is unsupported.",
+          : (models.error ??
+            "Pairing requires the existing secure manual settings flow. Managed moves require explicit approval; autonomous control-plane migration is unsupported."),
   };
 }

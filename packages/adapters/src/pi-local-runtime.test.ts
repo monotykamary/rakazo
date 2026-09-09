@@ -137,7 +137,7 @@ describe("LocalPiRuntime", () => {
     expect(String(prompts[1]?.message)).not.toContain("Prior product history");
   });
 
-  it("uses set_model only for an explicit non-default Pi selection", async () => {
+  it("uses Pi set_model for an explicit selection without Rakazo visibility policy", async () => {
     const allowed = vi.fn(async () => undefined);
     const runtime = new LocalPiRuntime({ command, cwd, sessionDir });
     await collect(
@@ -154,7 +154,70 @@ describe("LocalPiRuntime", () => {
     expect(commands(log, "set_thinking_level")).toEqual([
       expect.objectContaining({ level: "high" }),
     ]);
-    expect(allowed).toHaveBeenCalledWith("anthropic", "configured-model");
+    expect(allowed).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "checkpoints Pi state acknowledgment for explicit selection: %s",
+    async (explicit) => {
+      const checkpoints: unknown[] = [];
+      await collect(
+        new LocalPiRuntime({ command, cwd, sessionDir }),
+        request({
+          ...(explicit
+            ? { model: { provider: "offline", id: "selected", thinkingLevel: "high" as const } }
+            : {}),
+          session: {
+            save: async (value) => {
+              checkpoints.push(structuredClone(value));
+            },
+          },
+        }),
+      );
+      expect(checkpoints).toContainEqual(
+        expect.objectContaining({
+          modelSelection: {
+            requested: explicit
+              ? { provider: "offline", modelId: "selected", thinkingLevel: "high" }
+              : null,
+            effective: {
+              provider: "offline",
+              modelId: explicit ? "selected" : "offline-model",
+              thinkingLevel: explicit ? "high" : "medium",
+            },
+            status: "applied",
+            error: null,
+          },
+        }),
+      );
+    },
+  );
+
+  it("records failed state acknowledgment and never prompts with an unacknowledged model", async () => {
+    await writeLocalPiScenario(cwd, { ignoreModelSelection: true });
+    let saved: unknown;
+    await expect(
+      collect(
+        new LocalPiRuntime({ command, cwd, sessionDir }),
+        request({
+          model: { provider: "offline", id: "selected" },
+          session: {
+            save: async (value) => {
+              saved = structuredClone(value);
+            },
+          },
+        }),
+      ),
+    ).rejects.toThrow("did not acknowledge");
+    expect(saved).toMatchObject({
+      modelSelection: {
+        requested: { provider: "offline", modelId: "selected", thinkingLevel: null },
+        effective: null,
+        status: "failed",
+        error: "Model change was not acknowledged by Pi",
+      },
+    });
+    expect(commands(await readLocalPiEmulatorLog(cwd), "prompt")).toHaveLength(0);
   });
 
   it("forwards product tools and exposes bounded tool code, output, details, and usage", async () => {

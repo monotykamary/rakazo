@@ -103,6 +103,15 @@ describe("contracts", () => {
     expect(UpdateBotInput.safeParse({ botId: "bot-1", name: "   " }).success).toBe(false);
   });
 
+  it("accepts the same Pi identities for bot and worker selection", () => {
+    const input = { botId: "bot", modelProvider: "p".repeat(100), modelId: "m".repeat(300) };
+    expect(UpdateBotInput.parse(input)).toEqual(input);
+    expect(UpdateBotInput.safeParse({ ...input, modelProvider: "p".repeat(101) }).success).toBe(
+      false,
+    );
+    expect(UpdateBotInput.safeParse({ ...input, modelId: "m".repeat(301) }).success).toBe(false);
+  });
+
   it("rejects partial model override clears on bot update", () => {
     expect(UpdateBotInput.safeParse({ botId: "bot-1", modelId: null }).success).toBe(false);
     expect(UpdateBotInput.safeParse({ botId: "bot-1", modelProvider: null }).success).toBe(false);

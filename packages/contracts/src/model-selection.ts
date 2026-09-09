@@ -12,7 +12,7 @@ export const ThinkingLevelSchema = z.enum([
 ]);
 export type ThinkingLevel = z.infer<typeof ThinkingLevelSchema>;
 
-/** Public identity only. Credentials and connection configuration stay in the backend. */
+/** Public identity only. Credentials and connection configuration remain in Pi. */
 export const ModelSelectionSchema = z
   .object({
     provider: z.string().trim().min(1).max(100),

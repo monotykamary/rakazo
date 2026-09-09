@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRunRequest } from "@rakazo/adapter-kit";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { startModelEmulator } from "./model-emulator.js";
+import { resolveFixtureOfficeModels } from "../../../apps/api/src/pi-office-fixture.js";
 
 const integration =
   process.env.VERIFY_DATABASE === "1" && process.env.DATABASE_URL ? describe : describe.skip;
@@ -14,19 +14,21 @@ integration("executor durable runtime boundary", () => {
   let botId: string;
   let threadId: string;
   const requests: AgentRunRequest[] = [];
-  let model: Awaited<ReturnType<typeof startModelEmulator>>;
   let inspectRequest: ((request: AgentRunRequest) => Promise<void>) | undefined;
   let rpc: (name: string, json?: unknown) => Promise<any>;
   beforeAll(async () => {
     const { createApp } = await import("../../../apps/api/src/app.js");
+    const model = (await (await resolveFixtureOfficeModels()).read()).profileDefault!;
     app = await createApp({
       databaseUrl: process.env.DATABASE_URL!,
       dataDir: dir,
       sandboxProvider: "fake",
       agentRuntime: "scripted",
       wakeupDriver: "memory",
-      defaultProvider: "scripted",
-      defaultModel: "scripted",
+      defaultProvider: model.provider,
+      defaultModel: model.modelId,
+      deploymentModelKey: "fixture-unused-key",
+      resolveOfficeModelRuntime: resolveFixtureOfficeModels,
     });
     const signup = await app.app.request("/api/auth/sign-up/email", {
       method: "POST",
@@ -48,13 +50,6 @@ integration("executor durable runtime boundary", () => {
       expect(response.status).toBeLessThan(400);
       return ((await response.json()) as { json: any }).json;
     };
-    model = await startModelEmulator({ steps: [], apiKey: "fixture-model-key" });
-    await rpc("models/connect", {
-      provider: model.model.provider,
-      modelId: model.model.id,
-      baseUrl: model.baseUrl,
-      apiKey: "fixture-model-key",
-    });
     const me = await rpc("me");
     owner = { userId: me.userId, spaceId: me.spaceId };
     botId = (
@@ -66,11 +61,6 @@ integration("executor durable runtime boundary", () => {
         notifyOnFinish: false,
       })
     ).id;
-    await rpc("bots/update", {
-      botId,
-      modelProvider: model.model.provider,
-      modelId: model.model.id,
-    });
     threadId = (await app.prisma.thread.findUniqueOrThrow({ where: { botId } })).id;
     const descriptor = app.runtime.describe();
     vi.spyOn(app.runtime, "describe").mockReturnValue({
@@ -84,7 +74,19 @@ integration("executor durable runtime boundary", () => {
       await request.session?.save({
         version: 1,
         marker: "private transcript",
-        participants: { child: { marker: "durable child" } },
+        modelSelection: { requested: null, effective: model, status: "applied", error: null },
+        rootParticipantId: "root",
+        participants: {
+          child: {
+            marker: "durable child",
+            participantId: "child",
+            parentParticipantId: "root",
+            status: "completed",
+            session: {
+              modelSelection: { requested: null, effective: model, status: "applied", error: null },
+            },
+          },
+        },
       });
       yield {
         type: "execution",
@@ -101,7 +103,6 @@ integration("executor durable runtime boundary", () => {
   afterAll(async () => {
     vi.restoreAllMocks();
     await app?.stop();
-    await model?.close();
     rmSync(dir, { recursive: true, force: true });
   });
   const run = async (trigger = "user", destination = threadId, prompt = "Continue") => {
@@ -288,7 +289,10 @@ integration("executor durable runtime boundary", () => {
           ),
         { timeout: 10000 },
       );
-      expect(receipt).toMatchObject({ queued: true, changed: false });
+      expect(receipt, receipt?.models?.error ?? undefined).toMatchObject({
+        queued: true,
+        changed: false,
+      });
       const intent = await app.prisma.officeMoveIntent.findFirstOrThrow({
         where: { runId: row.id },
       });
@@ -299,6 +303,7 @@ integration("executor durable runtime boundary", () => {
         home: new LocalAgentHomeStore(dir),
         pool,
         defaultComputerKind: "fake",
+        resolveOfficeModelRuntime: resolveFixtureOfficeModels,
       };
       await handleOfficeMoveIntent(deps, { intentId: intent.id });
       const moved = await app.prisma.officeMoveIntent.findUniqueOrThrow({

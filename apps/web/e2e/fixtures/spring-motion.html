@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8" /><title>Spring motion fixture</title></head>
+  <body><div id="root"></div><script type="module">
+    import { SpringAside, SpringDisclosure } from "@rakazo/ui-web/components/ui/motion";
+    import { createElement as h, useState } from "react";
+    import { createRoot } from "react-dom/client";
+
+    function Fixture() {
+      const [open, setOpen] = useState(true);
+      return h("main", {}, h("button", {type:"button",onClick:()=>setOpen(!open)}, "Toggle"),
+        h(SpringAside, {animate:{width:open?316:0}, "data-testid":"spring"},
+          h(SpringDisclosure, {open}, h("button", {type:"button"}, "Content"))));
+    }
+    createRoot(document.getElementById("root")).render(h(Fixture));
+  </script></body>
+</html>

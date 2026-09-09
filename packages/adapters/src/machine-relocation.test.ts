@@ -1,5 +1,6 @@
 import type { Actor } from "@rakazo/contracts";
 import { describe, expect, it, vi } from "vitest";
+import { checkpointAndRecordComputerWorkspace } from "./computer-workspace.js";
 import { assignBotMachine } from "./machine-assignment.js";
 import {
   type MachineRelocationDeps,
@@ -12,6 +13,7 @@ vi.mock("./workspace-transfer.js", () => ({ copyAgentHome: vi.fn(), teamBotAreaF
 vi.mock("./computer-workspace.js", () => ({ checkpointAndRecordComputerWorkspace: vi.fn() }));
 const actor = { spaceId: "space", userId: "owner" } as Actor;
 function fixture() {
+  vi.mocked(checkpointAndRecordComputerWorkspace).mockClear();
   const current: RelocationComputer = {
     id: "source",
     scope: "dedicated",
@@ -26,7 +28,32 @@ function fixture() {
     controlLeaseExpiresAt: null,
   };
   const bot = { id: "bot", computer: current };
+  const selected = {
+    provider: "pi-provider",
+    modelId: "actual-model",
+    thinkingLevel: "low" as const,
+  };
+  const modelRuntime = {
+    read: vi.fn().mockResolvedValue({ catalog: [], profileDefault: selected }),
+    validate: vi.fn().mockResolvedValue(undefined),
+  };
+  const resolveOfficeModelRuntime = vi.fn().mockResolvedValue(modelRuntime);
   const prisma = {
+    runtimeSession: {
+      findMany: vi.fn().mockResolvedValue([
+        {
+          state: {
+            modelSelection: {
+              requested: null,
+              effective: selected,
+              status: "applied",
+              error: null,
+            },
+          },
+        },
+      ]),
+    },
+    runtimeModelPreference: { findMany: vi.fn().mockResolvedValue([]) },
     run: { findFirst: vi.fn().mockResolvedValue(null) },
     bot: {
       findFirst: vi.fn().mockResolvedValue(bot),
@@ -42,7 +69,11 @@ function fixture() {
       findUnique: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({}),
     },
-    machine: { findFirst: vi.fn().mockResolvedValue({ id: "target" }) },
+    machine: {
+      findFirst: vi
+        .fn()
+        .mockResolvedValue({ id: "target", status: "paired", lastSeenAt: new Date() }),
+    },
     officeMoveIntent: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     $transaction: vi.fn(),
     $queryRaw: vi.fn().mockResolvedValue([]),
@@ -59,10 +90,70 @@ function fixture() {
     current,
     prisma,
     sandbox,
-    deps: { prisma, sandbox, home: {} } as unknown as MachineRelocationDeps,
+    modelRuntime,
+    resolveOfficeModelRuntime,
+    deps: {
+      prisma,
+      sandbox,
+      home: {},
+      resolveOfficeModelRuntime,
+    } as unknown as MachineRelocationDeps,
   };
 }
 describe("shared verified machine relocation", () => {
+  it.each(["direct", "assignment"])(
+    "%s cannot copy, checkpoint or stop without destination authority",
+    async (route) => {
+      const { deps, current, prisma, sandbox } = fixture();
+      delete deps.resolveOfficeModelRuntime;
+      const move =
+        route === "direct"
+          ? relocateBotMachine(deps, actor, { botId: "bot", current, machineId: "target" })
+          : assignBotMachine(deps, actor, { botId: "bot", machineId: "target" });
+      await expect(move).rejects.toThrow("Pi model authority is unavailable");
+      expect(copyAgentHome).not.toHaveBeenCalled();
+      expect(checkpointAndRecordComputerWorkspace).not.toHaveBeenCalled();
+      expect(sandbox.stop).not.toHaveBeenCalled();
+      expect(prisma.computer.updateMany).not.toHaveBeenCalled();
+      if (route === "assignment")
+        expect(prisma.bot.updateMany).toHaveBeenLastCalledWith({
+          where: { id: "bot" },
+          data: { computerSwitching: false },
+        });
+    },
+  );
+  it.each(["model", "thinking", "default", "offline", "current"])(
+    "keeps source usable when preflight rejects %s",
+    async (failure) => {
+      const { deps, current, prisma, sandbox, modelRuntime } = fixture();
+      if (failure === "model" || failure === "thinking")
+        modelRuntime.validate.mockRejectedValue(new Error("SECRET missing"));
+      if (failure === "default")
+        modelRuntime.read.mockResolvedValueOnce({
+          catalog: [],
+          profileDefault: {
+            provider: "pi-provider",
+            modelId: "source-default",
+            thinkingLevel: "low",
+          },
+        });
+      if (failure === "offline")
+        prisma.machine.findFirst.mockResolvedValue({
+          id: "target",
+          status: "paired",
+          lastSeenAt: new Date(0),
+        });
+      if (failure === "current") prisma.runtimeSession.findMany.mockResolvedValue([{ state: {} }]);
+      await expect(
+        relocateBotMachine(deps, actor, { botId: "bot", current, machineId: "target" }),
+      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      expect(copyAgentHome).not.toHaveBeenCalled();
+      expect(checkpointAndRecordComputerWorkspace).not.toHaveBeenCalled();
+      expect(sandbox.stop).not.toHaveBeenCalled();
+      expect(prisma.computer.updateMany).not.toHaveBeenCalled();
+      expect(prisma.bot.updateMany).not.toHaveBeenCalled();
+    },
+  );
   it("rolls a transfer failure back without switching or stopping the source", async () => {
     const { deps, current, prisma, sandbox } = fixture();
     vi.mocked(copyAgentHome).mockRejectedValue(new Error("verification failed"));
@@ -89,7 +180,9 @@ describe("shared verified machine relocation", () => {
   });
   it("rechecks pairing in the commit after transfer and preserves the source assignment on revocation", async () => {
     const { deps, current, prisma } = fixture();
-    prisma.machine.findFirst.mockResolvedValue(null);
+    prisma.machine.findFirst
+      .mockResolvedValueOnce({ id: "target", status: "paired", lastSeenAt: new Date() })
+      .mockResolvedValueOnce(null);
     await expect(
       relocateBotMachine(deps, actor, { botId: "bot", current, machineId: "target" }),
     ).rejects.toThrow("no longer paired");

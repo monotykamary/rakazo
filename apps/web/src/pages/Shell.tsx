@@ -80,6 +80,12 @@ import {
   useFrameState,
 } from "@rakazo/ui-web";
 import {
+  SpringAside,
+  SpringButton,
+  SpringDisclosure,
+  useMotionMedia,
+} from "@rakazo/ui-web/components/ui/motion";
+import {
   ArrowDown,
   ArrowUp,
   Bell,
@@ -466,6 +472,7 @@ export function ShellPage() {
   const [dismissedRunErrorIds, setDismissedRunErrorIds] =
     useState<ReadonlySet<string>>(readSeenRunErrorIds);
   const [menuOpen, setMenuOpen] = useState(false);
+  const desktopSidebar = useMotionMedia("(min-width: 768px)");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [draggedBotId, setDraggedBotId] = useState<string | null>(null);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
@@ -2197,6 +2204,8 @@ export function ShellPage() {
   }
 
   function setBotsSidebarCollapsedPref(collapsed: boolean) {
+    if (collapsed)
+      document.querySelector<HTMLButtonElement>('[data-testid="bots-sidebar-edge"]')?.focus();
     setBotsSidebarCollapsed(collapsed);
     writeBotsSidebarCollapsed(userId, collapsed);
   }
@@ -2477,325 +2486,357 @@ export function ShellPage() {
           className="absolute inset-y-0 end-0 start-[min(calc(100%-48px),316px)] z-30 bg-overlay md:hidden"
         />
       ) : null}
-      <aside
+      <SpringAside
+        animate={
+          desktopSidebar
+            ? { width: botsSidebarCollapsed ? 0 : 316, x: 0 }
+            : {
+                width: "min(calc(100% - 48px), 316px)",
+                x: mobileSidebarOpen
+                  ? "0%"
+                  : document.documentElement.dir === "rtl"
+                    ? "100%"
+                    : "-100%",
+              }
+        }
         data-testid="bots-sidebar"
         data-collapsed={botsSidebarCollapsed ? "true" : "false"}
-        inert={botsSidebarCollapsed && !mobileSidebarOpen ? true : undefined}
-        className={`absolute inset-y-0 start-0 z-40 flex w-[calc(100%-48px)] max-w-[316px] shrink-0 flex-col border-e border-sidebar-border bg-sidebar transition-[transform,opacity] motion-reduce:transition-none md:static md:z-auto md:translate-x-0 ${
-          mobileSidebarOpen ? "translate-x-0" : "-translate-x-full rtl:translate-x-full"
-        } ${
-          botsSidebarCollapsed
-            ? "md:w-0 md:max-w-0 md:overflow-hidden md:border-e-0 md:opacity-0 md:pointer-events-none"
-            : "md:w-[316px]"
-        }`}
+        inert={desktopSidebar ? botsSidebarCollapsed : !mobileSidebarOpen}
+        aria-hidden={(desktopSidebar ? botsSidebarCollapsed : !mobileSidebarOpen) || undefined}
+        className={`absolute inset-y-0 start-0 z-40 flex shrink-0 flex-col overflow-hidden bg-sidebar md:static md:z-auto ${desktopSidebar && botsSidebarCollapsed ? "pointer-events-none" : "border-e border-sidebar-border"}`}
       >
-        <div className="app-drag flex items-center justify-between px-[18px] pb-3 pt-4">
-          <WindowChrome />
-          <div className="relative flex items-center gap-2.5">
-            <button
-              type="button"
-              aria-label={t`Activity`}
-              aria-pressed={activityMode}
-              title={t`Activity`}
-              data-activity-mode={activityMode ? "on" : "off"}
-              onClick={toggleActivityMode}
-              className={`app-no-drag flex h-7 w-7 items-center justify-center rounded-full ${
-                activityMode
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground/70 hover:text-foreground/75"
-              }`}
-            >
-              <Bell
-                size={15}
-                strokeWidth={1.8}
-                fill={activityMode ? "currentColor" : "none"}
-                aria-hidden="true"
-              />
-            </button>
-            <button
-              type="button"
-              className="app-no-drag hidden h-7 w-7 items-center justify-center rounded-full text-muted-foreground/70 hover:text-foreground/75 md:inline-flex"
-              aria-label={t`Minimize bots`}
-              title={t`Minimize bots`}
-              data-testid="minimize-bots-sidebar"
-              onClick={() => setBotsSidebarCollapsedPref(true)}
-            >
-              <PanelLeftClose size={15} strokeWidth={1.8} aria-hidden="true" />
-            </button>
-            <Popover open={createMenuOpen} onOpenChange={setCreateMenuOpen}>
-              <PopoverTrigger
-                className="app-no-drag text-[21px] text-muted-foreground/70 hover:text-foreground/75"
-                title={t`Create`}
-                data-testid="create-menu-trigger"
+        <div className="flex h-full min-h-0 w-[min(calc(100vw-48px),316px)] shrink-0 flex-col md:w-[316px]">
+          <div className="app-drag flex items-center justify-between px-[18px] pb-3 pt-4">
+            <WindowChrome />
+            <div className="relative flex items-center gap-2.5">
+              <button
+                type="button"
+                aria-label={t`Activity`}
+                aria-pressed={activityMode}
+                title={t`Activity`}
+                data-activity-mode={activityMode ? "on" : "off"}
+                onClick={toggleActivityMode}
+                className={`app-no-drag flex h-7 w-7 items-center justify-center rounded-full ${
+                  activityMode
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground/70 hover:text-foreground/75"
+                }`}
               >
-                +
-              </PopoverTrigger>
-              {/* Unmount with the state change so the panel it opens never coexists with the menu. */}
-              {createMenuOpen ? (
-                <PopoverContent
-                  align="end"
-                  className="app-no-drag w-auto gap-0 overflow-hidden p-0 data-closed:animate-none"
+                <Bell
+                  size={15}
+                  strokeWidth={1.8}
+                  fill={activityMode ? "currentColor" : "none"}
+                  aria-hidden="true"
+                />
+              </button>
+              <button
+                type="button"
+                className="app-no-drag hidden h-7 w-7 items-center justify-center rounded-full text-muted-foreground/70 hover:text-foreground/75 md:inline-flex"
+                aria-label={t`Minimize bots`}
+                title={t`Minimize bots`}
+                data-testid="minimize-bots-sidebar"
+                onClick={() => setBotsSidebarCollapsedPref(true)}
+              >
+                <PanelLeftClose size={15} strokeWidth={1.8} aria-hidden="true" />
+              </button>
+              <Popover open={createMenuOpen} onOpenChange={setCreateMenuOpen}>
+                <PopoverTrigger
+                  className="app-no-drag text-[21px] text-muted-foreground/70 hover:text-foreground/75"
+                  title={t`Create`}
+                  data-testid="create-menu-trigger"
                 >
-                  <BotCreatePicker
-                    bots={bots}
-                    onCreateBot={() => {
-                      setCreateMenuOpen(false);
+                  +
+                </PopoverTrigger>
+                {/* Unmount with the state change so the panel it opens never coexists with the menu. */}
+                {createMenuOpen ? (
+                  <PopoverContent
+                    align="end"
+                    className="app-no-drag w-auto gap-0 overflow-hidden p-0 data-closed:animate-none"
+                  >
+                    <BotCreatePicker
+                      bots={bots}
+                      onCreateBot={() => {
+                        setCreateMenuOpen(false);
+                        setMobileSidebarOpen(false);
+                        setPanel("create");
+                      }}
+                      onOpenBot={(id) => {
+                        setCreateMenuOpen(false);
+                        setMobileSidebarOpen(false);
+                        navigate(`/app/${id}`);
+                      }}
+                      onCreateGroup={() => {
+                        setCreateMenuOpen(false);
+                        setMobileSidebarOpen(false);
+                        setPanel("create-group");
+                      }}
+                      onCreateSpace={() => {
+                        setCreateMenuOpen(false);
+                        setMobileSidebarOpen(false);
+                        setNewSpaceOpen(true);
+                      }}
+                    />
+                  </PopoverContent>
+                ) : null}
+              </Popover>
+            </div>
+          </div>
+          <InputGroup
+            data-testid="sidebar-search"
+            className="mx-2.5 mb-3 w-auto rounded-xl bg-card"
+          >
+            <InputGroupAddon>
+              <Search size={16} strokeWidth={1.8} aria-hidden="true" />
+            </InputGroupAddon>
+            <InputGroupInput
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t`Search`}
+              autoComplete="off"
+              name="sidebar-search"
+            />
+          </InputGroup>
+          <div className="rk-scroll flex flex-1 flex-col gap-0.5 overflow-y-auto px-2.5 pb-2.5">
+            {showSpaceSearch ? (
+              <SpaceSearchResults
+                hits={searchHits}
+                loading={searchLoading}
+                onSelect={(hit) => void jumpToSearchHit(hit)}
+              />
+            ) : (
+              <>
+                {activityMode ? (
+                  <ActivityList
+                    onOpenRun={(run) => {
                       setMobileSidebarOpen(false);
-                      setPanel("create");
-                    }}
-                    onOpenBot={(id) => {
-                      setCreateMenuOpen(false);
-                      setMobileSidebarOpen(false);
-                      navigate(`/app/${id}`);
-                    }}
-                    onCreateGroup={() => {
-                      setCreateMenuOpen(false);
-                      setMobileSidebarOpen(false);
-                      setPanel("create-group");
-                    }}
-                    onCreateSpace={() => {
-                      setCreateMenuOpen(false);
-                      setMobileSidebarOpen(false);
-                      setNewSpaceOpen(true);
+                      if (run.groupId) navigate(`/app/g/${run.groupId}`);
+                      else navigate(`/app/${run.botId}`);
                     }}
                   />
-                </PopoverContent>
-              ) : null}
-            </Popover>
-          </div>
-        </div>
-        <InputGroup data-testid="sidebar-search" className="mx-2.5 mb-3 w-auto rounded-xl bg-card">
-          <InputGroupAddon>
-            <Search size={16} strokeWidth={1.8} aria-hidden="true" />
-          </InputGroupAddon>
-          <InputGroupInput
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t`Search`}
-            autoComplete="off"
-            name="sidebar-search"
-          />
-        </InputGroup>
-        <div className="rk-scroll flex flex-1 flex-col gap-0.5 overflow-y-auto px-2.5 pb-2.5">
-          {showSpaceSearch ? (
-            <SpaceSearchResults
-              hits={searchHits}
-              loading={searchLoading}
-              onSelect={(hit) => void jumpToSearchHit(hit)}
-            />
-          ) : (
-            <>
-              {activityMode ? (
-                <ActivityList
-                  onOpenRun={(run) => {
-                    setMobileSidebarOpen(false);
-                    if (run.groupId) navigate(`/app/g/${run.groupId}`);
-                    else navigate(`/app/${run.botId}`);
-                  }}
-                />
-              ) : null}
-              {sidebarGroups.map((group) => {
-                const collapsed = Boolean(group.title) && collapsedSidebarSections.has(group.key);
-                const groupBotIds = group.bots.flatMap((item) =>
-                  item.kind === "bot" ? [item.chat.id] : [],
-                );
-                return (
-                  <div key={group.key} data-sidebar-group={group.key}>
-                    {group.title ? (
-                      <div className="flex items-center pt-2">
-                        <button
-                          type="button"
-                          className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium text-muted-foreground/80 hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
-                          onClick={() => {
-                            if (group.emptySpaceId) {
-                              openSpaceChat(group.emptySpaceId, "/onboarding");
-                              return;
-                            }
-                            toggleSidebarSection(group.key);
-                          }}
-                          onContextMenu={
-                            group.canDeleteSpace
-                              ? (event) => {
-                                  event.preventDefault();
-                                  spaceMenuAnchor.current = event.currentTarget;
-                                  setSpaceMenu({
-                                    id: group.spaceId,
-                                    position: { x: event.clientX, y: event.clientY },
-                                  });
-                                }
-                              : undefined
-                          }
-                          aria-expanded={group.emptySpaceId ? undefined : !collapsed}
-                          aria-label={
-                            group.emptySpaceId
-                              ? t`Open ${group.title}`
-                              : collapsed
-                                ? t`Expand ${group.title}`
-                                : t`Collapse ${group.title}`
-                          }
-                        >
-                          <span className="flex min-w-0 items-center gap-1.5 truncate">
-                            {group.showLock ? (
-                              <Lock size={11} strokeWidth={2} aria-hidden="true" />
-                            ) : null}
-                            <span className="truncate">{group.title}</span>
-                          </span>
-                          {group.emptySpaceId ? null : (
-                            <ChevronDown
-                              size={14}
-                              strokeWidth={1.8}
-                              className={
-                                collapsed
-                                  ? "-rotate-90 transition-transform"
-                                  : "transition-transform"
+                ) : null}
+                {sidebarGroups.map((group) => {
+                  const collapsed = Boolean(group.title) && collapsedSidebarSections.has(group.key);
+                  const groupBotIds = group.bots.flatMap((item) =>
+                    item.kind === "bot" ? [item.chat.id] : [],
+                  );
+                  return (
+                    <div key={group.key} data-sidebar-group={group.key}>
+                      {group.title ? (
+                        <div className="flex items-center pt-2">
+                          <button
+                            type="button"
+                            className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium text-muted-foreground/80 hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+                            onClick={() => {
+                              if (group.emptySpaceId) {
+                                openSpaceChat(group.emptySpaceId, "/onboarding");
+                                return;
                               }
-                              aria-hidden="true"
-                            />
-                          )}
-                        </button>
-                        {group.canDeleteSpace ? (
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={t`Actions for ${group.spaceName}`}
-                            onClick={(event) => {
-                              const rect = event.currentTarget.getBoundingClientRect();
-                              spaceMenuAnchor.current = event.currentTarget;
-                              setSpaceMenu({
-                                id: group.spaceId,
-                                position: { x: rect.left, y: rect.bottom },
+                              toggleSidebarSection(group.key);
+                            }}
+                            onContextMenu={
+                              group.canDeleteSpace
+                                ? (event) => {
+                                    event.preventDefault();
+                                    spaceMenuAnchor.current = event.currentTarget;
+                                    setSpaceMenu({
+                                      id: group.spaceId,
+                                      position: { x: event.clientX, y: event.clientY },
+                                    });
+                                  }
+                                : undefined
+                            }
+                            aria-expanded={group.emptySpaceId ? undefined : !collapsed}
+                            aria-label={
+                              group.emptySpaceId
+                                ? t`Open ${group.title}`
+                                : collapsed
+                                  ? t`Expand ${group.title}`
+                                  : t`Collapse ${group.title}`
+                            }
+                          >
+                            <span className="flex min-w-0 items-center gap-1.5 truncate">
+                              {group.showLock ? (
+                                <Lock size={11} strokeWidth={2} aria-hidden="true" />
+                              ) : null}
+                              <span className="truncate">{group.title}</span>
+                            </span>
+                            {group.emptySpaceId ? null : (
+                              <ChevronDown
+                                size={14}
+                                strokeWidth={1.8}
+                                className={
+                                  collapsed
+                                    ? "-rotate-90 transition-transform motion-reduce:transition-none"
+                                    : "transition-transform motion-reduce:transition-none"
+                                }
+                                aria-hidden="true"
+                              />
+                            )}
+                          </button>
+                          {group.canDeleteSpace ? (
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={t`Actions for ${group.spaceName}`}
+                              onClick={(event) => {
+                                const rect = event.currentTarget.getBoundingClientRect();
+                                spaceMenuAnchor.current = event.currentTarget;
+                                setSpaceMenu({
+                                  id: group.spaceId,
+                                  position: { x: rect.left, y: rect.bottom },
+                                });
+                              }}
+                            >
+                              <MoreHorizontal size={14} aria-hidden="true" />
+                            </Button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      <SpringDisclosure open={!collapsed}>
+                        {group.bots.map((item) => (
+                          <button
+                            key={`${item.kind}:${item.chat.id}`}
+                            type="button"
+                            draggable={item.kind === "bot"}
+                            data-roster-bot-id={item.kind === "bot" ? item.chat.id : undefined}
+                            aria-keyshortcuts={
+                              item.kind === "bot" ? "Alt+ArrowUp Alt+ArrowDown" : undefined
+                            }
+                            onDragStart={(event) => {
+                              if (item.kind !== "bot") return;
+                              setDraggedBotId(item.chat.id);
+                              event.dataTransfer.effectAllowed = "move";
+                              event.dataTransfer.setData("text/plain", item.chat.id);
+                            }}
+                            onDragOver={(event) => {
+                              if (
+                                item.kind === "bot" &&
+                                draggedBotId &&
+                                groupBotIds.includes(draggedBotId)
+                              ) {
+                                event.preventDefault();
+                                event.dataTransfer.dropEffect = "move";
+                              }
+                            }}
+                            onDrop={(event) => {
+                              if (item.kind !== "bot" || !draggedBotId) return;
+                              event.preventDefault();
+                              reorderRosterBot(draggedBotId, item.chat.id, groupBotIds);
+                              setDraggedBotId(null);
+                            }}
+                            onDragEnd={() => setDraggedBotId(null)}
+                            onKeyDown={(event) => {
+                              if (
+                                item.kind !== "bot" ||
+                                !event.altKey ||
+                                (event.key !== "ArrowUp" && event.key !== "ArrowDown")
+                              )
+                                return;
+                              const index = groupBotIds.indexOf(item.chat.id);
+                              const target =
+                                groupBotIds[index + (event.key === "ArrowUp" ? -1 : 1)];
+                              if (!target) return;
+                              event.preventDefault();
+                              reorderRosterBot(item.chat.id, target, groupBotIds);
+                            }}
+                            onClick={() => {
+                              openSpaceChat(
+                                item.chat.spaceId,
+                                item.kind === "bot"
+                                  ? `/app/${item.chat.id}`
+                                  : `/app/g/${item.chat.id}`,
+                              );
+                            }}
+                            onContextMenu={(event) => {
+                              if (item.chat.spaceId !== bootstrapMe?.spaceId) return;
+                              event.preventDefault();
+                              botMenuAnchor.current = event.currentTarget;
+                              setBotMenu({
+                                kind: item.kind,
+                                id: item.chat.id,
+                                position: { x: event.clientX, y: event.clientY },
                               });
                             }}
+                            className={`flex w-full gap-3 rounded-xl px-2.5 py-[11px] text-start ${
+                              item.kind === "bot" ? "cursor-grab active:cursor-grabbing" : ""
+                            } ${
+                              (item.kind === "bot" && !inGroup && active?.id === item.chat.id) ||
+                              (item.kind === "group" && inGroup && activeGroup?.id === item.chat.id)
+                                ? "bg-card"
+                                : "hover:bg-background"
+                            }`}
+                            style={{
+                              opacity:
+                                item.kind === "bot" && draggedBotId === item.chat.id ? 0.55 : 1,
+                            }}
                           >
-                            <MoreHorizontal size={14} aria-hidden="true" />
-                          </Button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {!collapsed &&
-                      group.bots.map((item) => (
-                        <button
-                          key={`${item.kind}:${item.chat.id}`}
-                          type="button"
-                          draggable={item.kind === "bot"}
-                          data-roster-bot-id={item.kind === "bot" ? item.chat.id : undefined}
-                          aria-keyshortcuts={
-                            item.kind === "bot" ? "Alt+ArrowUp Alt+ArrowDown" : undefined
-                          }
-                          onDragStart={(event) => {
-                            if (item.kind !== "bot") return;
-                            setDraggedBotId(item.chat.id);
-                            event.dataTransfer.effectAllowed = "move";
-                            event.dataTransfer.setData("text/plain", item.chat.id);
-                          }}
-                          onDragOver={(event) => {
-                            if (
-                              item.kind === "bot" &&
-                              draggedBotId &&
-                              groupBotIds.includes(draggedBotId)
-                            ) {
-                              event.preventDefault();
-                              event.dataTransfer.dropEffect = "move";
-                            }
-                          }}
-                          onDrop={(event) => {
-                            if (item.kind !== "bot" || !draggedBotId) return;
-                            event.preventDefault();
-                            reorderRosterBot(draggedBotId, item.chat.id, groupBotIds);
-                            setDraggedBotId(null);
-                          }}
-                          onDragEnd={() => setDraggedBotId(null)}
-                          onKeyDown={(event) => {
-                            if (
-                              item.kind !== "bot" ||
-                              !event.altKey ||
-                              (event.key !== "ArrowUp" && event.key !== "ArrowDown")
-                            )
-                              return;
-                            const index = groupBotIds.indexOf(item.chat.id);
-                            const target = groupBotIds[index + (event.key === "ArrowUp" ? -1 : 1)];
-                            if (!target) return;
-                            event.preventDefault();
-                            reorderRosterBot(item.chat.id, target, groupBotIds);
-                          }}
-                          onClick={() => {
-                            openSpaceChat(
-                              item.chat.spaceId,
-                              item.kind === "bot"
-                                ? `/app/${item.chat.id}`
-                                : `/app/g/${item.chat.id}`,
-                            );
-                          }}
-                          onContextMenu={(event) => {
-                            if (item.chat.spaceId !== bootstrapMe?.spaceId) return;
-                            event.preventDefault();
-                            botMenuAnchor.current = event.currentTarget;
-                            setBotMenu({
-                              kind: item.kind,
-                              id: item.chat.id,
-                              position: { x: event.clientX, y: event.clientY },
-                            });
-                          }}
-                          className={`flex w-full gap-3 rounded-xl px-2.5 py-[11px] text-start ${
-                            item.kind === "bot" ? "cursor-grab active:cursor-grabbing" : ""
-                          } ${
-                            (item.kind === "bot" && !inGroup && active?.id === item.chat.id) ||
-                            (item.kind === "group" && inGroup && activeGroup?.id === item.chat.id)
-                              ? "bg-card"
-                              : "hover:bg-background"
-                          }`}
-                          style={{
-                            opacity:
-                              item.kind === "bot" && draggedBotId === item.chat.id ? 0.55 : 1,
-                          }}
-                        >
-                          {item.kind === "bot" ? (
-                            <BotAvatar
-                              color={item.chat.color}
-                              identity={item.chat.id}
-                              size={38}
-                              status={item.chat.status}
-                            />
-                          ) : (
-                            <GroupAvatar
-                              members={
-                                item.chat.id === activeSnapshot?.groupId
-                                  ? (activeSnapshot.members ?? item.chat.members)
-                                  : item.chat.members
-                              }
-                              size={38}
-                            />
-                          )}
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-baseline justify-between gap-2">
-                              <span
-                                dir="auto"
-                                data-roster-bot-name={item.kind === "bot" ? "" : undefined}
-                                className={`truncate text-[15px] text-foreground ${
-                                  item.chat.unread ? "font-semibold" : "font-medium"
-                                }`}
-                              >
-                                {item.chat.name}
-                                {item.chat.unread ? (
-                                  <span className="sr-only">
-                                    <Trans> (unread)</Trans>
-                                  </span>
-                                ) : null}
-                              </span>
-                              <span className="flex shrink-0 items-center gap-1.5 text-[12.5px] text-muted-foreground/80">
-                                {item.kind === "bot" && item.chat.status !== "idle"
-                                  ? item.chat.status
-                                  : ""}
-                                {item.chat.unread ? (
-                                  <span
-                                    aria-hidden="true"
-                                    className="inline-block h-2 w-2 rounded-full bg-foreground"
-                                  />
-                                ) : null}
-                              </span>
-                            </div>
-                            {item.kind === "bot" && item.chat.title ? (
-                              <>
+                            {item.kind === "bot" ? (
+                              <BotAvatar
+                                color={item.chat.color}
+                                identity={item.chat.id}
+                                size={38}
+                                status={item.chat.status}
+                              />
+                            ) : (
+                              <GroupAvatar
+                                members={
+                                  item.chat.id === activeSnapshot?.groupId
+                                    ? (activeSnapshot.members ?? item.chat.members)
+                                    : item.chat.members
+                                }
+                                size={38}
+                              />
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-baseline justify-between gap-2">
+                                <span
+                                  dir="auto"
+                                  data-roster-bot-name={item.kind === "bot" ? "" : undefined}
+                                  className={`truncate text-[15px] text-foreground ${
+                                    item.chat.unread ? "font-semibold" : "font-medium"
+                                  }`}
+                                >
+                                  {item.chat.name}
+                                  {item.chat.unread ? (
+                                    <span className="sr-only">
+                                      <Trans> (unread)</Trans>
+                                    </span>
+                                  ) : null}
+                                </span>
+                                <span className="flex shrink-0 items-center gap-1.5 text-[12.5px] text-muted-foreground/80">
+                                  {item.kind === "bot" && item.chat.status !== "idle"
+                                    ? item.chat.status
+                                    : ""}
+                                  {item.chat.unread ? (
+                                    <span
+                                      aria-hidden="true"
+                                      className="inline-block h-2 w-2 rounded-full bg-foreground"
+                                    />
+                                  ) : null}
+                                </span>
+                              </div>
+                              {item.kind === "bot" && item.chat.title ? (
+                                <>
+                                  <div
+                                    dir="auto"
+                                    className={`mt-0.5 truncate text-[13.5px] ${
+                                      item.chat.unread
+                                        ? "font-medium text-foreground/75"
+                                        : "text-muted-foreground"
+                                    }`}
+                                  >
+                                    {item.chat.title}
+                                  </div>
+                                  {item.chat.preview ? (
+                                    <div
+                                      dir="auto"
+                                      className="truncate text-[12.5px] text-muted-foreground/80"
+                                    >
+                                      {item.chat.preview}
+                                    </div>
+                                  ) : null}
+                                </>
+                              ) : (
                                 <div
                                   dir="auto"
                                   className={`mt-0.5 truncate text-[13.5px] ${
@@ -2804,244 +2845,231 @@ export function ShellPage() {
                                       : "text-muted-foreground"
                                   }`}
                                 >
-                                  {item.chat.title}
+                                  {item.kind === "bot"
+                                    ? item.chat.preview
+                                    : item.chat.preview ||
+                                      item.chat.members.map((member) => member.name).join(", ")}
                                 </div>
-                                {item.chat.preview ? (
-                                  <div
-                                    dir="auto"
-                                    className="truncate text-[12.5px] text-muted-foreground/80"
-                                  >
-                                    {item.chat.preview}
-                                  </div>
-                                ) : null}
-                              </>
-                            ) : (
-                              <div
-                                dir="auto"
-                                className={`mt-0.5 truncate text-[13.5px] ${
-                                  item.chat.unread
-                                    ? "font-medium text-foreground/75"
-                                    : "text-muted-foreground"
-                                }`}
-                              >
-                                {item.kind === "bot"
-                                  ? item.chat.preview
-                                  : item.chat.preview ||
-                                    item.chat.members.map((member) => member.name).join(", ")}
-                              </div>
-                            )}
-                          </div>
-                        </button>
-                      ))}
-                  </div>
-                );
-              })}
-            </>
-          )}
-          {archivedBots.length + archivedGroups.length > 0 && !showSpaceSearch ? (
-            <div className="mt-2 border-t border-border pt-2">
-              <button
-                type="button"
-                aria-expanded={archivedOpen}
-                onClick={() => setArchivedOpen((open) => !open)}
-                className="flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-[13.5px] text-muted-foreground hover:bg-background"
-              >
-                <span>
-                  <Trans>Archived</Trans>
-                </span>
-                <span>{archivedBots.length + archivedGroups.length}</span>
-              </button>
-              {archivedOpen ? (
-                <>
-                  {archivedBots.map((bot) => (
-                    <div key={bot.id} className="flex items-center gap-2 rounded-lg px-2.5 py-2">
-                      <BotAvatar
-                        color={bot.color}
-                        identity={bot.id}
-                        size={28}
-                        status={bot.status}
-                      />
-                      <span
-                        className="min-w-0 flex-1 truncate text-[14px] text-foreground/75"
-                        dir="auto"
-                      >
-                        {bot.name}
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={() =>
-                          void rpc.bots.restore({ botId: bot.id }).then(() => refreshBots(true))
-                        }
-                      >
-                        <Trans>Restore</Trans>
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        className="text-destructive hover:text-destructive"
-                        aria-label={t`Delete ${bot.name}`}
-                        onClick={() => setDeleteTarget(bot)}
-                      >
-                        <Trans>Delete</Trans>
-                      </Button>
+                              )}
+                            </div>
+                          </button>
+                        ))}
+                      </SpringDisclosure>
                     </div>
-                  ))}
-                  {archivedGroups.map((group) => (
-                    <div key={group.id} className="flex items-center gap-2 rounded-lg px-2.5 py-2">
-                      <GroupAvatar members={group.members} size={28} />
-                      <span
-                        className="min-w-0 flex-1 truncate text-[14px] text-foreground/75"
-                        dir="auto"
+                  );
+                })}
+              </>
+            )}
+            {archivedBots.length + archivedGroups.length > 0 && !showSpaceSearch ? (
+              <div className="mt-2 border-t border-border pt-2">
+                <button
+                  type="button"
+                  aria-expanded={archivedOpen}
+                  onClick={() => setArchivedOpen((open) => !open)}
+                  className="flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-[13.5px] text-muted-foreground hover:bg-background"
+                >
+                  <span>
+                    <Trans>Archived</Trans>
+                  </span>
+                  <span>{archivedBots.length + archivedGroups.length}</span>
+                </button>
+                {archivedOpen ? (
+                  <>
+                    {archivedBots.map((bot) => (
+                      <div key={bot.id} className="flex items-center gap-2 rounded-lg px-2.5 py-2">
+                        <BotAvatar
+                          color={bot.color}
+                          identity={bot.id}
+                          size={28}
+                          status={bot.status}
+                        />
+                        <span
+                          className="min-w-0 flex-1 truncate text-[14px] text-foreground/75"
+                          dir="auto"
+                        >
+                          {bot.name}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          onClick={() =>
+                            void rpc.bots.restore({ botId: bot.id }).then(() => refreshBots(true))
+                          }
+                        >
+                          <Trans>Restore</Trans>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          className="text-destructive hover:text-destructive"
+                          aria-label={t`Delete ${bot.name}`}
+                          onClick={() => setDeleteTarget(bot)}
+                        >
+                          <Trans>Delete</Trans>
+                        </Button>
+                      </div>
+                    ))}
+                    {archivedGroups.map((group) => (
+                      <div
+                        key={group.id}
+                        className="flex items-center gap-2 rounded-lg px-2.5 py-2"
                       >
-                        {group.name}
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={() =>
-                          void rpc.groups
-                            .restore({ groupId: group.id })
-                            .then(() => refreshBots(true))
-                        }
-                      >
-                        <Trans>Restore</Trans>
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        className="text-destructive hover:text-destructive"
-                        aria-label={t`Delete ${group.name}`}
-                        onClick={() => setDeleteGroupTarget(group)}
-                      >
-                        <Trans>Delete</Trans>
-                      </Button>
-                    </div>
-                  ))}
-                </>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-        <button
-          type="button"
-          onClick={() => setPluginsOpen(true)}
-          className="mx-3 mb-1 flex items-center gap-3 rounded-[11px] px-2.5 py-2 hover:bg-background"
-        >
-          <span className="grid h-[30px] w-[30px] place-items-center rounded-full bg-muted text-foreground/75">
-            <Puzzle size={15} strokeWidth={1.7} />
-          </span>
-          <span className="text-[14.5px] text-foreground/90">
-            <Trans>Integrations</Trans>
-          </span>
-        </button>
-        <Popover open={menuOpen} onOpenChange={setMenuOpen}>
-          <PopoverTrigger
-            data-testid="user-menu-trigger"
-            className="flex items-center gap-[11px] px-[18px] py-3.5"
+                        <GroupAvatar members={group.members} size={28} />
+                        <span
+                          className="min-w-0 flex-1 truncate text-[14px] text-foreground/75"
+                          dir="auto"
+                        >
+                          {group.name}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          onClick={() =>
+                            void rpc.groups
+                              .restore({ groupId: group.id })
+                              .then(() => refreshBots(true))
+                          }
+                        >
+                          <Trans>Restore</Trans>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          className="text-destructive hover:text-destructive"
+                          aria-label={t`Delete ${group.name}`}
+                          onClick={() => setDeleteGroupTarget(group)}
+                        >
+                          <Trans>Delete</Trans>
+                        </Button>
+                      </div>
+                    ))}
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={() => setPluginsOpen(true)}
+            className="mx-3 mb-1 flex items-center gap-3 rounded-[11px] px-2.5 py-2 hover:bg-background"
           >
-            <span className="grid h-8 w-8 place-items-center rounded-full bg-accent text-[12px] text-foreground/75">
-              {initials}
+            <span className="grid h-[30px] w-[30px] place-items-center rounded-full bg-muted text-foreground/75">
+              <Puzzle size={15} strokeWidth={1.7} />
             </span>
-            <span className="text-[14.5px] text-foreground/90">{userName}</span>
-          </PopoverTrigger>
-          {menuOpen ? (
-            <PopoverContent
-              side="top"
-              align="start"
-              className="w-[calc(316px-1.5rem)] max-w-[calc(100vw-3rem)] gap-0 p-1 data-closed:animate-none"
+            <span className="text-[14.5px] text-foreground/90">
+              <Trans>Integrations</Trans>
+            </span>
+          </button>
+          <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+            <PopoverTrigger
+              data-testid="user-menu-trigger"
+              className="flex items-center gap-[11px] px-[18px] py-3.5"
             >
-              <Button
-                variant="ghost"
-                className="w-full justify-start font-normal"
-                aria-label={t`Settings`}
-                onClick={() => {
-                  setMenuOpen(false);
-                  setAccountSettingsFocusUsage(false);
-                  setAccountSettingsOpen(true);
-                }}
+              <span className="grid h-8 w-8 place-items-center rounded-full bg-accent text-[12px] text-foreground/75">
+                {initials}
+              </span>
+              <span className="text-[14.5px] text-foreground/90">{userName}</span>
+            </PopoverTrigger>
+            {menuOpen ? (
+              <PopoverContent
+                side="top"
+                align="start"
+                className="w-[calc(316px-1.5rem)] max-w-[calc(100vw-3rem)] gap-0 p-1 data-closed:animate-none"
               >
-                <span className="text-muted-foreground">⚙</span>
-                <Trans>Settings</Trans>
-              </Button>
-              <Button
-                variant="ghost"
-                className="w-full justify-start font-normal"
-                onClick={() => {
-                  setMenuOpen(false);
-                  setModelsOpen(true);
-                }}
-              >
-                <Cpu size={16} strokeWidth={1.7} className="text-muted-foreground" />
-                <Trans>Models</Trans>
-              </Button>
-              <Button
-                variant="ghost"
-                className="w-full justify-start font-normal"
-                onClick={() => {
-                  setMenuOpen(false);
-                  setMemorySettingsOpen(true);
-                }}
-              >
-                <span aria-hidden="true" className="text-muted-foreground">
-                  ◇
-                </span>
-                <Trans>Memory</Trans>
-              </Button>
-              <Button
-                variant="ghost"
-                className="w-full justify-start font-normal"
-                onClick={() => {
-                  setMenuOpen(false);
-                  setVoiceOpen(true);
-                }}
-              >
-                <Volume2 size={16} strokeWidth={1.7} className="text-muted-foreground" />
-                <Trans>Voice</Trans>
-              </Button>
-              <Button
-                variant="ghost"
-                className="w-full justify-start font-normal"
-                onClick={async () => {
-                  setUsage(await rpc.usage.summary());
-                }}
-              >
-                <Gauge size={16} strokeWidth={1.7} className="text-muted-foreground" />
-                <Trans>Usage</Trans>
-              </Button>
-              {usage ? (
-                <p className="px-2.5 pb-2 text-[12.5px] text-muted-foreground">
-                  <Trans>
-                    {usage.runs} runs · {usage.inputTokens + usage.outputTokens} tokens
-                  </Trans>
-                </p>
-              ) : null}
-              <Button
-                variant="ghost"
-                className="w-full justify-start font-normal"
-                onClick={() =>
-                  void authClient.signOut().then(() => {
-                    clearSpaceSelection();
-                    navigate("/");
-                  })
-                }
-              >
-                <LogOut size={16} strokeWidth={1.7} className="text-muted-foreground" />
-                <Trans>Log out</Trans>
-              </Button>
-            </PopoverContent>
-          ) : null}
-        </Popover>
-      </aside>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start font-normal"
+                  aria-label={t`Settings`}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setAccountSettingsFocusUsage(false);
+                    setAccountSettingsOpen(true);
+                  }}
+                >
+                  <span className="text-muted-foreground">⚙</span>
+                  <Trans>Settings</Trans>
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start font-normal"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setModelsOpen(true);
+                  }}
+                >
+                  <Cpu size={16} strokeWidth={1.7} className="text-muted-foreground" />
+                  <Trans>Models</Trans>
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start font-normal"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setMemorySettingsOpen(true);
+                  }}
+                >
+                  <span aria-hidden="true" className="text-muted-foreground">
+                    ◇
+                  </span>
+                  <Trans>Memory</Trans>
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start font-normal"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setVoiceOpen(true);
+                  }}
+                >
+                  <Volume2 size={16} strokeWidth={1.7} className="text-muted-foreground" />
+                  <Trans>Voice</Trans>
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start font-normal"
+                  onClick={async () => {
+                    setUsage(await rpc.usage.summary());
+                  }}
+                >
+                  <Gauge size={16} strokeWidth={1.7} className="text-muted-foreground" />
+                  <Trans>Usage</Trans>
+                </Button>
+                {usage ? (
+                  <p className="px-2.5 pb-2 text-[12.5px] text-muted-foreground">
+                    <Trans>
+                      {usage.runs} runs · {usage.inputTokens + usage.outputTokens} tokens
+                    </Trans>
+                  </p>
+                ) : null}
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start font-normal"
+                  onClick={() =>
+                    void authClient.signOut().then(() => {
+                      clearSpaceSelection();
+                      navigate("/");
+                    })
+                  }
+                >
+                  <LogOut size={16} strokeWidth={1.7} className="text-muted-foreground" />
+                  <Trans>Log out</Trans>
+                </Button>
+              </PopoverContent>
+            ) : null}
+          </Popover>
+        </div>
+      </SpringAside>
 
-      <button
+      <SpringButton
         type="button"
         data-testid="bots-sidebar-edge"
         aria-label={botsSidebarCollapsed ? t`Show bots` : t`Hide bots`}
         aria-pressed={!botsSidebarCollapsed}
-        className={`absolute inset-y-0 z-50 hidden w-2 cursor-ew-resize touch-none border-0 bg-transparent p-0 md:block ${
-          botsSidebarCollapsed ? "start-0" : "start-[308px]"
-        }`}
+        animate={{ insetInlineStart: botsSidebarCollapsed ? 0 : 308 }}
+        className="absolute inset-y-0 z-50 hidden w-2 cursor-ew-resize touch-none border-0 bg-transparent p-0 md:block"
+        onClick={(event) => {
+          if (event.detail === 0) setBotsSidebarCollapsedPref(!botsSidebarCollapsed);
+        }}
         onPointerDown={(event) => {
           event.currentTarget.setPointerCapture(event.pointerId);
           botsSidebarEdgeDragRef.current = {
@@ -3353,7 +3381,8 @@ export function ShellPage() {
         ) : null}
       </main>
 
-      <aside
+      <SpringAside
+        animate={{ width: panel && (active || activeGroup) ? (desktopSidebar ? 384 : "100%") : 0 }}
         data-testid="side-panel"
         data-panel={panel ?? "closed"}
         className={`absolute inset-y-0 end-0 z-20 flex min-h-0 shrink-0 flex-col overflow-hidden bg-background md:relative ${
@@ -3363,7 +3392,7 @@ export function ShellPage() {
         }`}
       >
         {panel && (active || activeGroup) ? (
-          <div className="rk-panel-enter rk-scroll h-full w-full overflow-y-auto px-5 py-[17px] md:w-[384px]">
+          <div className="rk-scroll h-full w-full overflow-y-auto px-5 py-[17px] md:w-[384px]">
             {panel !== "routine" &&
             panel !== "create" &&
             panel !== "create-group" &&
@@ -3736,7 +3765,7 @@ export function ShellPage() {
             ) : null}
           </div>
         ) : null}
-      </aside>
+      </SpringAside>
 
       <Suspense fallback={null}>
         {contextChat && botMenu ? (

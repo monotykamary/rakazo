@@ -6,6 +6,7 @@ import { ComposioEmulator, PiAgentRuntime } from "@rakazo/adapters";
 import { describe, expect, it } from "vitest";
 import { createTestProcessHost } from "../../adapters/src/pi-rpc-test-host.js";
 import { sessionCookieHeader } from "./index.js";
+import { LEGACY_MODEL_FIXTURE_KEY, seedLegacyModelCredential } from "./legacy-model-fixture.js";
 import { startModelEmulator } from "./model-emulator.js";
 
 type App = { request: (input: string, init?: RequestInit) => Promise<Response> };
@@ -59,10 +60,11 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
         dataDir,
         sandboxProvider: "fake",
         agentRuntime: "pi",
+        runtime: new PiAgentRuntime({ host: createTestProcessHost() }),
         wakeupDriver: "memory",
         signupsEnabled: "true",
         composio: new ComposioEmulator(),
-        encryptionKey: "offline-model-fixture-encryption-key",
+        encryptionKey: LEGACY_MODEL_FIXTURE_KEY,
       });
       const runtime = new PiAgentRuntime({ host: createTestProcessHost() });
       handles.runtime.run = runtime.run.bind(runtime);
@@ -78,12 +80,16 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
       });
       expect(signup.status).toBeLessThan(400);
       const cookie = sessionCookieHeader(signup);
-      await rpc(handles.app, cookie, "models/connect", {
-        provider: model.model.provider,
-        modelId: model.model.id,
-        baseUrl: model.baseUrl,
-        apiKey: fixtureKey,
-      });
+      await seedLegacyModelCredential(
+        handles.prisma,
+        await rpc<{ userId: string; spaceId: string }>(handles.app, cookie, "me"),
+        {
+          provider: model.model.provider,
+          modelId: model.model.id,
+          baseUrl: model.baseUrl,
+          apiKey: fixtureKey,
+        },
+      );
       const bot = await rpc<{ id: string }>(handles.app, cookie, "bots/create", {
         name: "File fixture",
         title: "",
@@ -91,10 +97,9 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
         instructions: "Complete the task.",
         notifyOnFinish: false,
       });
-      await rpc(handles.app, cookie, "bots/update", {
-        botId: bot.id,
-        modelProvider: model.model.provider,
-        modelId: model.model.id,
+      await handles.prisma.bot.update({
+        where: { id: bot.id },
+        data: { modelProvider: model.model.provider, modelId: model.model.id },
       });
       const sent = await rpc<{ runId: string }>(handles.app, cookie, "threads/send", {
         botId: bot.id,

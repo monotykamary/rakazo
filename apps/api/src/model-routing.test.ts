@@ -110,7 +110,7 @@ describe("model routing settings", () => {
       ).toBeNull();
     },
   );
-  it("cannot bypass hidden routing validation with an explicitly configured custom connection", async () => {
+  it("retires public routing even with an explicitly configured custom connection", async () => {
     const f = fixture();
     f.tx.userModelCredential.findMany.mockResolvedValue([
       { id: "primary", provider: "openai-compatible", preferences: [{ modelId: "custom-model" }] },
@@ -135,12 +135,9 @@ describe("model routing settings", () => {
         credentialId: "primary",
         routing: { ...routing, credentialIds: ["primary"], modelId: "custom-model", fallbacks: [] },
       }),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: expect.stringContaining("hidden") });
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: "Models are configured in Pi" });
     expect(f.tx.spaceModelPreference.upsert).not.toHaveBeenCalled();
-    expect(f.tx.user.findUnique).toHaveBeenCalledWith({
-      where: { id: actor.userId },
-      select: { modelVisibility: true },
-    });
+    expect(f.tx.user.findUnique).not.toHaveBeenCalled();
   });
   it("reads only the actor's scoped preference", async () => {
     const { prisma, tx } = fixture();

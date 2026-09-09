@@ -1,13 +1,8 @@
-import { t } from "@lingui/core/macro";
 import { Trans, useLingui } from "@lingui/react/macro";
 import type {
   AgentSkillCatalogEntry,
   Bot,
   ComputerMode,
-  Me,
-  ModelCatalogEntry,
-  ModelCredential,
-  ModelVisibility,
   ThinkingLevel,
   VoiceInfo,
 } from "@rakazo/contracts";
@@ -16,14 +11,8 @@ import {
   BOT_DESCRIPTION_MAX_LENGTH,
   BOT_NAME_MAX_LENGTH,
   BOT_TITLE_MAX_LENGTH,
-  isModelHidden,
 } from "@rakazo/contracts";
-import {
-  type BotPromptHandler,
-  connectedModelOptions,
-  modelOptionKey,
-  parseModelOptionKey,
-} from "@rakazo/core";
+import { type BotPromptHandler, modelOptionKey, parseModelOptionKey } from "@rakazo/core";
 import {
   BotAvatar,
   Button,
@@ -35,9 +24,10 @@ import {
   Toggle,
 } from "@rakazo/ui-web";
 import { X } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useId, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState } from "react";
 import { BotRunsOn } from "../../components/BotRunsOn";
 import { BotServices } from "../../components/BotServices";
+import { PiModelPicker, PiModelStatus } from "../../components/PiModelPicker";
 import { rpc } from "../../lib/rpc";
 
 const ScratchpadSection = lazy(() =>
@@ -253,60 +243,68 @@ export function BotSettings({
     bot.modelProvider && bot.modelId ? modelOptionKey(bot.modelProvider, bot.modelId) : "",
   );
   const [thinkingLevel, setThinkingLevel] = useState(bot.thinkingLevel ?? "");
-  const [credentials, setCredentials] = useState<ModelCredential[]>([]);
-  const [catalog, setCatalog] = useState<ModelCatalogEntry[]>([]);
-  const [visibility, setVisibility] = useState<ModelVisibility>({ hide: [] });
-  const [me, setMe] = useState<Me | null>(null);
-  const [modelMetaReady, setModelMetaReady] = useState(false);
+  const [runtime, setRuntime] = useState<Awaited<ReturnType<typeof rpc.models.runtime>>>();
+  const [modelLoading, setModelLoading] = useState(false);
+  const [modelError, setModelError] = useState(false);
+  const [modelEdited, setModelEdited] = useState(false);
+  const modelRevision = useRef(0);
+  const modelScope = useRef<string | undefined>(bot.id);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  async function refreshModels() {
+    if (modelScope.current !== bot.id) return;
+    const revision = ++modelRevision.current;
+    setModelLoading(true);
+    setModelError(false);
+    try {
+      const next = await rpc.models.runtime({ botId: bot.id });
+      if (revision === modelRevision.current) setRuntime(next);
+    } catch {
+      if (revision === modelRevision.current) setModelError(true);
+    } finally {
+      if (revision === modelRevision.current) setModelLoading(false);
+    }
+  }
   useEffect(() => {
+    modelScope.current = bot.id;
+    setRuntime(undefined);
+    setModelEdited(false);
+    setModelKey(
+      bot.modelProvider && bot.modelId ? modelOptionKey(bot.modelProvider, bot.modelId) : "",
+    );
+    setThinkingLevel(bot.thinkingLevel ?? "");
+    setSaving(false);
+    let cancelled = false;
     void rpc.voice
       .voices({})
-      .then(setVoices)
-      .catch(() => setVoices([]));
-    void Promise.all([
-      rpc.models.credentials(),
-      rpc.models.list(),
-      rpc.me(),
-      rpc.models.getVisibility(),
-    ])
-      .then(([nextCredentials, nextCatalog, nextMe, nextVisibility]) => {
-        setCredentials(nextCredentials);
-        setCatalog(nextCatalog);
-        setVisibility(nextVisibility);
-        setMe(nextMe);
-        // Only mark ready on success — a failed catalog load must not clear
-        // an existing thinkingLevel override on save.
-        setModelMetaReady(true);
+      .then((next) => {
+        if (!cancelled) setVoices(next);
       })
       .catch(() => undefined);
-  }, []);
-
-  const connectedOptions = connectedModelOptions(credentials, catalog).filter(
-    (option) => !isModelHidden(visibility, option.provider, option.modelId),
-  );
-
-  const effectiveProvider = modelKey
-    ? parseModelOptionKey(modelKey)?.provider
-    : (me?.defaultProvider ?? null);
-  const effectiveModelId = modelKey
-    ? parseModelOptionKey(modelKey)?.modelId
-    : (me?.defaultModel ?? null);
-  const effectiveEntry =
-    effectiveProvider && effectiveModelId
-      ? catalog.find(
-          (entry) => entry.provider === effectiveProvider && entry.id === effectiveModelId,
-        )
-      : undefined;
-  const effectiveCredential = credentials.find(
-    (entry) => entry.provider === effectiveProvider && entry.modelId === effectiveModelId,
-  );
-  const thinkingOptions = (
-    effectiveCredential?.thinkingLevels ??
-    effectiveEntry?.thinkingLevels ??
-    []
-  ).filter((level) => level !== "off");
+    void refreshModels();
+    return () => {
+      cancelled = true;
+      modelScope.current = undefined;
+      modelRevision.current += 1;
+    };
+  }, [bot.id]);
+  useEffect(() => {
+    if (runtime?.selection?.status !== "pending" || saving || modelLoading) return;
+    const timer = setTimeout(() => void refreshModels(), 2000);
+    return () => clearTimeout(timer);
+  }, [runtime, saving, modelLoading]);
+  const draft = parseModelOptionKey(modelKey);
+  const selectedModel = draft
+    ? { ...draft, thinkingLevel: (thinkingLevel || null) as ThinkingLevel | null }
+    : null;
+  const selectedAvailable =
+    !draft ||
+    runtime?.catalog.some(
+      (entry) =>
+        entry.provider === draft.provider &&
+        entry.id === draft.modelId &&
+        (!thinkingLevel || entry.thinkingLevels?.includes(thinkingLevel as ThinkingLevel)),
+    );
 
   return (
     <div data-testid="bot-settings">
@@ -395,53 +393,47 @@ export function BotSettings({
             <KnowledgeSection botId={bot.id} onSkillsChange={onSkillsChange} />
           ) : null}
         </Suspense>
-        <label htmlFor={`${ids}-model`} className={fieldLabelClass}>
-          <Trans>Model</Trans>
-          <NativeSelect
-            id={`${ids}-model`}
-            className="mt-2 w-full"
-            value={modelKey}
-            onChange={(event) => {
-              setModelKey(event.target.value);
-              setThinkingLevel("");
+        <div className="mt-4 space-y-3">
+          <PiModelStatus current={runtime?.current ?? null} status={runtime?.selection} />
+          {modelError ? (
+            <p role="alert" className="text-sm text-destructive">{t`Could not refresh models`}</p>
+          ) : runtime?.availability.status === "unavailable" ? (
+            <p role="alert" className="text-sm text-destructive">{t`Pi unavailable`}</p>
+          ) : null}
+          {runtime?.availability.status === "available" && !runtime.catalog.length && (
+            <p className="text-sm text-muted-foreground">{t`No models available`}</p>
+          )}
+          <PiModelPicker
+            catalog={runtime?.catalog ?? []}
+            selection={selectedModel}
+            disabled={saving || runtime?.availability.status !== "available"}
+            onChange={(next) => {
+              setModelKey(modelOptionKey(next.provider, next.modelId));
+              setThinkingLevel(next.thinkingLevel ?? "");
+              setModelEdited(true);
             }}
-          >
-            <NativeSelectOption value="">
-              {t`Space default`}
-              {me?.defaultModel
-                ? ` (${catalogLabel(catalog, me.defaultProvider, me.defaultModel) ?? me.defaultModel})`
-                : ""}
-            </NativeSelectOption>
-            {modelKey && !connectedOptions.some((option) => option.key === modelKey) ? (
-              <NativeSelectOption value={modelKey} disabled>
-                {parseModelOptionKey(modelKey)?.modelId ?? modelKey} · {t`Unavailable`}
-              </NativeSelectOption>
-            ) : null}
-            {connectedOptions.map((option) => (
-              <NativeSelectOption key={option.key} value={option.key}>
-                {option.label}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </label>
-        {thinkingOptions.length ? (
-          <label htmlFor={`${ids}-thinking`} className={fieldLabelClass}>
-            <Trans>Thinking</Trans>
-            <NativeSelect
-              id={`${ids}-thinking`}
-              className="mt-2 w-full"
-              value={thinkingLevel}
-              onChange={(event) => setThinkingLevel(event.target.value)}
+          />
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={saving || runtime?.availability.status !== "available"}
+              onClick={() => {
+                setModelKey("");
+                setThinkingLevel("");
+                setModelEdited(true);
+              }}
+            >{t`Use Pi selection`}</Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={saving || modelLoading}
+              onClick={() => void refreshModels()}
             >
-              <NativeSelectOption value="">{t`Default (medium)`}</NativeSelectOption>
-              {thinkingOptions.map((level) => (
-                <NativeSelectOption key={level} value={level}>
-                  {thinkingLevelLabel(level)}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </label>
-        ) : null}
+              {modelLoading ? t`Refreshing…` : t`Refresh`}
+            </Button>
+          </div>
+        </div>
         {memoryProviderConfigured ? (
           <div className="mt-4 text-[14px] text-muted-foreground">
             <Trans>Memory scope</Trans>
@@ -502,7 +494,11 @@ export function BotSettings({
       {error ? <p className="mt-2 text-[13px] text-destructive">{error}</p> : null}
       <div className="mt-5 flex flex-col items-start gap-3">
         <Button
-          disabled={saving}
+          disabled={
+            saving ||
+            (modelEdited &&
+              (modelLoading || runtime?.availability.status !== "available" || !selectedAvailable))
+          }
           onClick={() => {
             setSaving(true);
             setError(null);
@@ -523,23 +519,25 @@ export function BotSettings({
               memoryScope,
               autoSpeak,
               voiceId: voiceId || null,
-              modelProvider: selected?.provider ?? null,
-              modelId: selected?.modelId ?? null,
-              // Only clear thinking when catalog metadata is available; otherwise
-              // preserve the stored override if models.list failed or is still loading.
-              ...(modelMetaReady
+              ...(modelEdited
                 ? {
-                    thinkingLevel:
-                      thinkingOptions.length ||
-                      (selected?.provider === bot.modelProvider &&
-                        selected?.modelId === bot.modelId)
-                        ? ((thinkingLevel || null) as ThinkingLevel | null)
-                        : null,
+                    modelProvider: selected?.provider ?? null,
+                    modelId: selected?.modelId ?? null,
+                    thinkingLevel: (thinkingLevel || null) as ThinkingLevel | null,
                   }
                 : {}),
             })
-              .catch((err) => setError(err instanceof Error ? err.message : t`Could not save`))
-              .finally(() => setSaving(false));
+              .then(() => {
+                if (modelScope.current !== bot.id) return;
+                setModelEdited(false);
+                void refreshModels();
+              })
+              .catch(() => {
+                if (modelScope.current === bot.id) setError(t`Could not save`);
+              })
+              .finally(() => {
+                if (modelScope.current === bot.id) setSaving(false);
+              });
           }}
         >
           <Trans>Save</Trans>
@@ -558,23 +556,4 @@ export function BotSettings({
       </div>
     </div>
   );
-}
-
-function thinkingLevelLabel(level: ThinkingLevel) {
-  if (level === "xhigh") return t`Extra high`;
-  if (level === "low") return t`Low`;
-  if (level === "medium") return t`Medium`;
-  if (level === "high") return t`High`;
-  if (level === "minimal") return t`Minimal`;
-  if (level === "max") return t`Max`;
-  return `${level.slice(0, 1).toUpperCase()}${level.slice(1)}`;
-}
-
-function catalogLabel(
-  catalog: ModelCatalogEntry[],
-  provider: string | null | undefined,
-  modelId: string,
-) {
-  if (!provider) return undefined;
-  return catalog.find((entry) => entry.provider === provider && entry.id === modelId)?.label;
 }

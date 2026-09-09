@@ -14,7 +14,14 @@ import type {
   AgentToolExecutionResult,
   ConnectorTool,
 } from "@rakazo/adapter-kit";
-import type { QueueControlCommand, QueueControlResult } from "@rakazo/contracts";
+import {
+  type ModelSelection,
+  type ModelSelectionStatus,
+  ModelSelectionStatusSchema,
+  type QueueControlCommand,
+  type QueueControlResult,
+  ThinkingLevelSchema,
+} from "@rakazo/contracts";
 import { PI_RUNTIME_VERSION } from "@rakazo/pi-kit";
 import { isToolPauseResult } from "./approval-effect.js";
 import { boundedExecutionEvidence } from "./pi-execution-evidence.js";
@@ -35,7 +42,22 @@ const MINIMUM_PI_VERSION = PI_RUNTIME_VERSION.split(".").map(Number);
 const BRIDGE_ENV = "RAKAZO_LOCAL_PI_BRIDGE_ENDPOINT";
 const MAX_BRIDGE_BODY_BYTES = 16 * 1024 * 1024;
 const LOCAL_EXTENSION = fileURLToPath(new URL("./pi-local-extension.ts", import.meta.url));
-const BLOCKING_UI_METHODS = new Set(["select", "confirm", "input", "editor"]);
+export const LOCAL_PI_MODEL_PROBE_ENV = "RAKAZO_PI_MODEL_PROBE";
+export const BLOCKING_PI_UI_METHODS = new Set(["select", "confirm", "input", "editor"]);
+
+export type LocalPiRuntimeOptions = { command?: string; cwd: string; sessionDir: string };
+
+export function localPiRpcArguments(sessionFile?: string): string[] {
+  return [
+    "--mode",
+    "rpc",
+    ...(sessionFile ? ["--session", sessionFile] : ["--no-session"]),
+    "--extension",
+    LOCAL_EXTENSION,
+    "--skill",
+    RAKAZO_SKILL_PATH,
+  ];
+}
 const INHERITED_SESSION_ENV = [
   "PI_SESSION_ID",
   "PI_SESSION_FILE",
@@ -65,6 +87,7 @@ type LocalCheckpoint = {
   pendingSourceMessageId?: string;
   lastCompletedSourceMessageId?: string;
   boundaryState?: unknown;
+  modelSelection?: ModelSelectionStatus;
   outbox?: LocalOutboxMessage[];
 };
 
@@ -102,6 +125,20 @@ function stringValue(value: unknown): string | undefined {
 
 function numberValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function piModelSelection(value: unknown): ModelSelection | null {
+  const state = object(value);
+  const model = object(state?.model);
+  const provider = stringValue(model?.provider);
+  const modelId = stringValue(model?.id);
+  if (!provider || !modelId) return null;
+  const thinking = ThinkingLevelSchema.safeParse(state?.thinkingLevel);
+  return {
+    provider,
+    modelId,
+    thinkingLevel: thinking.success ? thinking.data : null,
+  };
 }
 
 function storeMessage(message: AgentSteeringMessage): LocalOutboxMessage {
@@ -148,7 +185,7 @@ function deliveryMarker(id: string): string {
   return `<rakazo-queue-delivery id="${hash(id)}" />`;
 }
 
-function sanitizedEnvironment(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+export function sanitizedLocalPiEnvironment(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env = { ...process.env };
   for (const name of INHERITED_SESSION_ENV) delete env[name];
   delete env[BRIDGE_ENV];
@@ -269,7 +306,12 @@ function parseCheckpoint(
           typeof object(item)?.text === "string",
       )
     : [];
-  return { ...(candidate as LocalCheckpoint), outbox };
+  const modelSelection = ModelSelectionStatusSchema.safeParse(candidate.modelSelection);
+  return {
+    ...(candidate as LocalCheckpoint),
+    outbox,
+    modelSelection: modelSelection.success ? modelSelection.data : undefined,
+  };
 }
 
 async function readJson(path: string): Promise<Record<string, unknown> | undefined> {
@@ -862,7 +904,10 @@ class LocalToolBridge {
   }
 }
 
-function killOwnedProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+export function killOwnedProcessTree(
+  child: ChildProcessWithoutNullStreams,
+  signal: NodeJS.Signals,
+): void {
   if (!child.pid) return;
   if (process.platform !== "win32") {
     try {
@@ -883,7 +928,7 @@ function killOwnedProcessTree(child: ChildProcessWithoutNullStreams, signal: Nod
   } else child.kill(signal);
 }
 
-function childPort(child: ChildProcessWithoutNullStreams): PrivateDuplex {
+export function localPiChildPort(child: ChildProcessWithoutNullStreams): PrivateDuplex {
   return {
     incoming: child.stdout as AsyncIterable<Uint8Array>,
     write: (frame) =>
@@ -932,7 +977,7 @@ export class LocalPiRuntime implements AgentRuntime {
   private readonly cwd: string;
   private readonly sessionDir: string;
 
-  constructor(options: { command?: string; cwd: string; sessionDir: string }) {
+  constructor(options: LocalPiRuntimeOptions) {
     if (!options.cwd || !isAbsolute(options.cwd)) throw new Error("Local Pi cwd must be absolute");
     if (!options.sessionDir || !isAbsolute(options.sessionDir))
       throw new Error("Local Pi sessionDir must be absolute");
@@ -1038,7 +1083,7 @@ export class LocalPiRuntime implements AgentRuntime {
       );
     }
     signal.throwIfAborted();
-    const env = sanitizedEnvironment();
+    const env = sanitizedLocalPiEnvironment();
     await verifyPiVersion(this.command, cwd, env);
     signal.throwIfAborted();
 
@@ -1239,31 +1284,15 @@ export class LocalPiRuntime implements AgentRuntime {
         return;
       }
       const endpoint = await bridge.start();
-      const childEnv = sanitizedEnvironment({ [BRIDGE_ENV]: endpoint });
-      child = spawn(
-        this.command,
-        [
-          "--mode",
-          "rpc",
-          "--session",
-          session.file,
-          "--extension",
-          LOCAL_EXTENSION,
-          "--skill",
-          RAKAZO_SKILL_PATH,
-        ],
-        {
-          cwd,
-          env: childEnv,
-          shell: false,
-          windowsHide: true,
-          detached: process.platform !== "win32",
-          stdio: ["pipe", "pipe", "pipe"],
-        },
-      );
-      if (!child.pid) throw new Error("Pi RPC did not expose an owned process id");
-      await session.recordChild(child.pid);
-      child.stderr.resume();
+      const childEnv = sanitizedLocalPiEnvironment({ [BRIDGE_ENV]: endpoint });
+      child = spawn(this.command, localPiRpcArguments(session.file), {
+        cwd,
+        env: childEnv,
+        shell: false,
+        windowsHide: true,
+        detached: process.platform !== "win32",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
       const childExit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
         (resolveExit, reject) => {
           child!.once("error", reject);
@@ -1278,8 +1307,18 @@ export class LocalPiRuntime implements AgentRuntime {
         },
       );
       void childExit.catch(() => undefined);
+      if (!child.pid) {
+        try {
+          await childExit;
+        } catch (error) {
+          throw new Error("Pi RPC could not start", { cause: error });
+        }
+        throw new Error("Pi RPC did not expose an owned process id");
+      }
+      await session.recordChild(child.pid);
+      child.stderr.resume();
       peer = new JsonPeer(
-        childPort(child),
+        localPiChildPort(child),
         async () => {
           throw new Error("Stock Pi RPC sent an unexpected reverse request");
         },
@@ -1290,7 +1329,7 @@ export class LocalPiRuntime implements AgentRuntime {
             value.type === "extension_ui_request" &&
             id &&
             method &&
-            BLOCKING_UI_METHODS.has(method)
+            BLOCKING_PI_UI_METHODS.has(method)
           ) {
             queueMicrotask(() => {
               void peer
@@ -1327,21 +1366,69 @@ export class LocalPiRuntime implements AgentRuntime {
         const restoredOutbox = (session.checkpoint.outbox ?? []).map(restoreMessage);
         for (const message of restoredOutbox) await authorizeMessage(message);
 
-        const useConfiguredDefault =
+        const configuredByPi =
           request.model.provider === "pi-local" && request.model.id === "default";
-        if (!useConfiguredDefault) {
-          await request.assertModelAllowed?.(request.model.provider, request.model.id);
-          const modelActive = await request.assertActive?.({ effects: false });
-          if (modelActive === "pause") gracefulPaused = true;
-          else
+        const requested: ModelSelection | null = configuredByPi
+          ? null
+          : {
+              provider: request.model.provider,
+              modelId: request.model.id,
+              thinkingLevel: request.model.thinkingLevel ?? null,
+            };
+        const previous = session.checkpoint.modelSelection?.effective ?? null;
+        const pending: ModelSelectionStatus = {
+          requested,
+          effective: previous,
+          status: "pending",
+          error: null,
+        };
+        await saveCheckpoint({ modelSelection: pending });
+        try {
+          if (!configuredByPi) {
+            const modelActive = await request.assertActive?.({ effects: false });
+            if (modelActive === "pause") gracefulPaused = true;
+            else
+              await peer.request(
+                "set_model",
+                { provider: request.model.provider, modelId: request.model.id },
+                signal,
+              );
+          }
+          if (request.model.thinkingLevel && !gracefulPaused)
             await peer.request(
-              "set_model",
-              { provider: request.model.provider, modelId: request.model.id },
+              "set_thinking_level",
+              { level: request.model.thinkingLevel },
               signal,
             );
+          if (!gracefulPaused) {
+            const acknowledged = piModelSelection(await peer.request("get_state", {}, signal));
+            if (
+              !acknowledged ||
+              (requested &&
+                (acknowledged.provider !== requested.provider ||
+                  acknowledged.modelId !== requested.modelId ||
+                  (requested.thinkingLevel !== null &&
+                    acknowledged.thinkingLevel !== requested.thinkingLevel)))
+            )
+              throw new Error("Pi did not acknowledge the requested model configuration");
+            await saveCheckpoint({
+              modelSelection: {
+                ...pending,
+                effective: acknowledged,
+                status: "applied",
+              },
+            });
+          }
+        } catch (error) {
+          await saveCheckpoint({
+            modelSelection: {
+              ...pending,
+              status: "failed",
+              error: "Model change was not acknowledged by Pi",
+            },
+          });
+          throw error;
         }
-        if (request.model.thinkingLevel && !gracefulPaused)
-          await peer.request("set_thinking_level", { level: request.model.thinkingLevel }, signal);
 
         const initialMessages = [...restoredOutbox, ...(await runBoundary("idle"))].filter(
           (message, index, messages) =>

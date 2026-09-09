@@ -84,6 +84,7 @@ export * from "./openai-voice.js";
 export * from "./page-browser-session.js";
 export * from "./pi-credentials.js";
 export * from "./pi-local-runtime.js";
+export * from "./pi-model-runtime.js";
 export * from "./pi-models.js";
 export * from "./pi-oauth.js";
 export * from "./pi-openai-compatible-provider.js";

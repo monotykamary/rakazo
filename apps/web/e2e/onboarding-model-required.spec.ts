@@ -1,27 +1,24 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, signup } from "./helpers";
+import { captureScreenshot } from "./helpers";
 
-test("onboarding requires a model when the deployment has none", async ({ page }, testInfo) => {
-  await page.route("**/rpc/me", async (route) => {
-    const response = await route.fetch();
-    const body = (await response.json()) as { json: Record<string, unknown> };
+test("Pi onboarding never requires Rakazo model credentials", async ({ page }, testInfo) => {
+  const calls: string[] = [];
+  await page.route("**/rpc/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    calls.push(path);
     await route.fulfill({
-      response,
-      json: { json: { ...body.json, needsModel: true } },
+      json: {
+        json:
+          path === "/rpc/me" ? { hasOnboarded: false, needsModel: true } : { id: "bot-fixture" },
+      },
     });
   });
-
-  const stamp = Date.now();
-  await signup(
-    page,
-    `model-required-${stamp}@rakazo.test`,
-    "password12",
-    `Model required ${stamp}`,
-  );
-  await expect(page.getByRole("heading", { name: "Connect a model" })).toBeVisible({
-    timeout: 20_000,
-  });
-
-  await expect(page.getByRole("button", { name: "Skip for now" })).toBeHidden();
-  await captureScreenshot(page, testInfo, "onboarding-model-required");
+  await page.goto("/e2e/fixtures/pi-models.html?onboarding");
+  await expect(page.getByRole("heading", { name: "Create your first bot" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Connect a model" })).toHaveCount(0);
+  await page.getByLabel("Name", { exact: true }).fill("First bot");
+  await captureScreenshot(page, testInfo, "pi-onboarding-no-credentials");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect.poll(() => calls.includes("/rpc/bots/create")).toBe(true);
+  expect(calls.some((path) => path.startsWith("/rpc/models/"))).toBe(false);
 });

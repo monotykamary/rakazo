@@ -3,7 +3,7 @@ import { expectAlignedControls } from "../../../packages/testkit/src/playwright-
 import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
 
 // Normal CI stack: exercise the mounted app screens, not fixture-only chrome.
-test("thread queue, retained Flow, and routing settings screens", async ({ page }, testInfo) => {
+test("thread queue, retained Flow, and Pi inventory screens", async ({ page }, testInfo) => {
   const stamp = Date.now();
   const userName = `Queue Screens ${stamp}`;
   await signup(page, `queue-screens-${stamp}@rakazo.test`, "password12", userName);
@@ -81,16 +81,35 @@ test("thread queue, retained Flow, and routing settings screens", async ({ page 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.keyboard.press("Escape");
 
-  await rpc(page, "models/connect", {
-    provider: "openai-compatible",
-    baseUrl: "http://127.0.0.1:8090/v1",
-    modelId: "fixture-model",
-  });
+  // Exercise the real mounted overlay with an offline Pi inventory, never a host profile.
+  await page.route("**/rpc/models/runtime", (route) =>
+    route.fulfill({
+      json: {
+        json: {
+          catalog: [
+            { provider: "custom-extension", id: "research-model", label: "Research", billing: "" },
+          ],
+          profileDefault: {
+            provider: "custom-extension",
+            modelId: "research-model",
+            thinkingLevel: null,
+          },
+          current: null,
+          selection: null,
+          availability: { status: "available", error: null },
+        },
+      },
+    }),
+  );
   await page.getByRole("button", { name: new RegExp(userName) }).click();
   await page.getByRole("button", { name: "Models", exact: true }).click();
-  await page.getByPlaceholder("Search providers").fill("openai-compatible");
-  await page.getByRole("button", { name: /OpenAI-compatible/ }).click();
-  await page.getByRole("button", { name: "Rotation and fallback", exact: true }).click();
-  await expect(page.getByRole("textbox", { name: "Pool model" })).toHaveValue("fixture-model");
-  await captureScreenshot(page, testInfo, "app-model-routing");
+  await page.getByRole("combobox", { name: "Search models" }).fill("research-model");
+  await expect(page.getByTestId("pi-profile-default")).toContainText(
+    "custom-extension/research-model",
+  );
+  await expect(page.getByRole("option")).toContainText("custom-extension/research-model");
+  await expect(
+    page.getByRole("button", { name: "Rotation and fallback", exact: true }),
+  ).toHaveCount(0);
+  await captureScreenshot(page, testInfo, "app-pi-model-inventory");
 });

@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { buildRakazoGuidance } from "./rakazo-guidance.js";
 
 const endpoint = process.env.RAKAZO_LOCAL_PI_BRIDGE_ENDPOINT;
+const modelProbe = process.env.RAKAZO_PI_MODEL_PROBE === "1";
 
 type BootstrapTool = {
   handle: string;
@@ -39,6 +40,7 @@ async function bridge<T>(action: string, body: unknown = {}, signal?: AbortSigna
 }
 
 export default function localPiExtension(pi: ExtensionAPI) {
+  if (modelProbe) return;
   let instructions = "";
   const productTools = new Set<string>();
 

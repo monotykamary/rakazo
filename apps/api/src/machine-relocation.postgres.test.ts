@@ -13,8 +13,9 @@ import {
   createRepos,
   WorkScopeError,
 } from "@rakazo/db";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { assignBotMachine } from "./machines.js";
+import { resolveFixtureOfficeModels } from "./pi-office-fixture.js";
 
 const enabled = process.env.VERIFY_DATABASE === "1" && Boolean(process.env.DATABASE_URL);
 const describeDatabase = enabled ? describe : describe.skip;
@@ -53,7 +54,13 @@ describeDatabase("verified workspace relocation (PostgreSQL)", { concurrent: fal
   let machineB: { id: string };
   let foreignMachine: { id: string };
 
-  const deps = () => ({ prisma, sandbox, home, defaultComputerKind: "e2b" });
+  const deps = () => ({
+    prisma,
+    sandbox,
+    home,
+    defaultComputerKind: "e2b",
+    resolveOfficeModelRuntime: resolveFixtureOfficeModels,
+  });
 
   const makeBot = async (computerMode: "dedicated" | "team" = "dedicated") => {
     const bot = await createRepos(prisma).createBot(actor, {
@@ -173,6 +180,13 @@ describeDatabase("verified workspace relocation (PostgreSQL)", { concurrent: fal
     machineA = await mkMachine(user.id);
     machineB = await mkMachine(user.id);
     foreignMachine = await mkMachine(other.id);
+  });
+
+  beforeEach(async () => {
+    await prisma.machine.updateMany({
+      where: { id: { in: [machineA.id, machineB.id] } },
+      data: { lastSeenAt: new Date() },
+    });
   });
 
   afterAll(async () => {

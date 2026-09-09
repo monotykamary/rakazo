@@ -5,7 +5,7 @@ import type { PrismaClient } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { Pool } from "pg";
 import { assignBotMachine, type MachineAssignDeps } from "./machine-assignment.js";
-import { refuseBusyComputer } from "./machine-relocation.js";
+import { MachineRelocationError, refuseBusyComputer } from "./machine-relocation.js";
 
 export interface OfficeMoveIntentDeps extends MachineAssignDeps {
   jobs: JobPublisher;
@@ -206,7 +206,13 @@ export async function handleOfficeMoveIntent(
       // Do not replace a commit receipt if only source-retirement bookkeeping failed.
       await deps.prisma.officeMoveIntent.updateMany({
         where: { id: intent.id, status: "processing", claimToken },
-        data: { status: "failed", error: "Relocation failed; inspect the source before retrying." },
+        data: {
+          status: "failed",
+          error:
+            error instanceof MachineRelocationError
+              ? error.message
+              : "Relocation failed; inspect the source before retrying.",
+        },
       });
     }
   } catch (error) {

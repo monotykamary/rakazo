@@ -1,11 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRunExecutor } from "./executor.js";
+import { createRunExecutor, resolvePiModelIntent } from "./executor.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
-function fixture(deploymentModelKey?: string) {
+function fixture(deploymentModelKey?: string, runtimeId = "pi") {
   const scope = { userId: "owner", spaceId: "space", botId: "bot" };
-  const bot = { modelProvider: "openai-compatible", modelId: "bot-model", thinkingLevel: "high" };
+  const bot = {
+    modelProvider: "openai-compatible" as string | null,
+    modelId: "bot-model" as string | null,
+    thinkingLevel: "high" as string | null,
+    temporary: false,
+    computer: null,
+  };
   const pin = {
     id: "pin",
     provider: bot.modelProvider,
@@ -26,7 +32,11 @@ function fixture(deploymentModelKey?: string) {
       })),
     },
     bot: { findFirst: vi.fn(async () => bot) },
-    deploymentSettings: { findUnique: vi.fn(async () => null) },
+    deploymentSettings: {
+      findUnique: vi.fn(async (args?: any) =>
+        args?.select?.ownerUserId ? { ownerUserId: scope.userId } : null,
+      ),
+    },
     spaceModelPreference: {
       findFirst: vi.fn(async (args: any) =>
         args.where.isDefault
@@ -52,7 +62,7 @@ function fixture(deploymentModelKey?: string) {
   const executor = createRunExecutor({
     runtime: {
       describe: () => ({
-        id: "pi",
+        id: runtimeId,
         contractVersion: "1",
         adapterVersion: "0.1.0",
         capabilities: { streaming: true, compaction: true, tools: true },
@@ -63,7 +73,8 @@ function fixture(deploymentModelKey?: string) {
     deploymentModelKey,
     web: {},
     browser: {},
-    sandbox: {},
+    sandbox: { describe: () => ({ id: "desktop", capabilities: {} }) },
+    localPiCwd: "/tmp",
   } as unknown as Parameters<typeof createRunExecutor>[0]);
   return {
     scope,
@@ -78,6 +89,53 @@ function fixture(deploymentModelKey?: string) {
 }
 
 describe("executor model authority", () => {
+  it("resolves participant Pi intent before bot intent without credentials", () => {
+    const bot = { modelProvider: "bot-provider", modelId: "bot-model", thinkingLevel: "low" };
+    expect(
+      resolvePiModelIntent(bot, {
+        provider: "worker-provider",
+        modelId: "worker-model",
+        thinkingLevel: "high",
+      }),
+    ).toEqual({
+      provider: "worker-provider",
+      id: "worker-model",
+      thinkingLevel: "high",
+      apiKey: "",
+    });
+    expect(resolvePiModelIntent(bot, null)).toMatchObject({
+      provider: "bot-provider",
+      id: "bot-model",
+      thinkingLevel: "low",
+    });
+    expect(resolvePiModelIntent({}, { invalid: true })).toMatchObject({
+      provider: "pi-local",
+      id: "default",
+      apiKey: "",
+    });
+  });
+  it("delegates native model authority to Pi without reading Rakazo credentials", async () => {
+    const f = fixture(undefined, "pi-local");
+
+    await expect(f.executor.resolveModel(f.scope)).resolves.toMatchObject({
+      provider: "openai-compatible",
+      id: "bot-model",
+      thinkingLevel: "high",
+      apiKey: "",
+    });
+    expect(f.prisma.spaceModelPreference.findFirst).not.toHaveBeenCalled();
+    expect(f.prisma.secret.findFirst).not.toHaveBeenCalled();
+    expect(f.prisma.user.findUnique).not.toHaveBeenCalled();
+
+    f.bot.modelProvider = null;
+    f.bot.modelId = null;
+    f.bot.thinkingLevel = null;
+    await expect(f.executor.resolveModel(f.scope)).resolves.toMatchObject({
+      provider: "pi-local",
+      id: "default",
+      apiKey: "",
+    });
+  });
   it("allows an exact deployment-default pin without a user credential row", async () => {
     vi.stubEnv("PI_DEFAULT_PROVIDER", "deployment-provider");
     vi.stubEnv("PI_DEFAULT_MODEL", "deployment-model");
@@ -131,8 +189,11 @@ describe("executor model authority", () => {
   });
   it("preserves a hidden pin and fails before decrypting any credential", async () => {
     const f = fixture();
+    const { modelProvider, modelId } = f.bot;
+    if (modelProvider === null || modelId === null)
+      throw new Error("Expected a pinned fixture model");
     f.prisma.user.findUnique.mockResolvedValueOnce({
-      modelVisibility: { hide: [{ provider: f.bot.modelProvider, model: f.bot.modelId }] },
+      modelVisibility: { hide: [{ provider: modelProvider, model: modelId }] },
     });
     await expect(f.executor.resolveModel(f.scope)).rejects.toThrow("hidden");
     expect(f.prisma.secret.findFirst).not.toHaveBeenCalled();

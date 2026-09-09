@@ -1,263 +1,314 @@
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import type { ModelSelection, ModelSelectionStatus } from "@rakazo/contracts";
+import { captureScreenshot } from "./helpers";
 
-const LOCAL_MODEL_ID = "rakazo-e2e-local";
-const LOCAL_MODEL_REPLY = "OpenAI-compatible endpoint verified end to end.";
+const current: ModelSelection = {
+  provider: "custom-extension",
+  modelId: "actual-running-v2",
+  thinkingLevel: "low",
+};
+const stale: ModelSelection = {
+  provider: "removed-provider",
+  modelId: "retired-model",
+  thinkingLevel: "high",
+};
+const catalog = [
+  {
+    provider: "custom-extension",
+    id: "actual-running-v2",
+    label: "Extension current",
+    billing: "",
+    thinkingLevels: ["off", "low"],
+  },
+  {
+    provider: "private-extension",
+    id: "custom-research-2026",
+    label: "Research",
+    billing: "",
+    thinkingLevels: ["low", "high"],
+  },
+  { provider: "plain-provider", id: "basic", label: "Basic", billing: "" },
+];
+function snapshot(
+  status: ModelSelectionStatus = {
+    requested: stale,
+    effective: current,
+    status: "applied",
+    error: null,
+  },
+) {
+  return {
+    catalog,
+    profileDefault: { ...current, modelId: "profile-startup" },
+    current,
+    selection: status,
+    availability: { status: "available", error: null },
+  };
+}
 
-test("custom connections persist reasoning support and bot thinking", async ({
+test("global inventory searches extension identities and labels only the Pi profile default", async ({
   page,
 }, testInfo) => {
-  const stamp = Date.now();
-  const userName = `Reasoning ${stamp}`;
-  await signup(page, `reasoning-model-${stamp}@rakazo.test`, "password12", userName);
-  await completeOnboarding(page);
-  await page.getByRole("button", { name: new RegExp(userName) }).click();
-  await page.getByRole("button", { name: "Models", exact: true }).click();
-  await page.getByPlaceholder("Search providers").fill("openai-compatible");
-  await page.getByRole("button", { name: /OpenAI-compatible/ }).click();
-  await page.getByLabel("OpenAI-compatible server URL").fill("http://127.0.0.1:8090/v1");
-  await page.getByLabel("Model id").fill("arbitrary-model");
-  await expect(page.getByRole("checkbox", { name: "Supports thinking" })).toBeHidden();
-  await page.getByText("Advanced", { exact: true }).click();
-  await page.getByRole("checkbox", { name: "Supports thinking" }).check();
-  await captureScreenshot(page, testInfo, "openai-compatible-thinking-connection");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
-  const credentials = await rpc<Array<{ modelId?: string; reasoning?: boolean }>>(
-    page,
-    "models/credentials",
-    {},
-  );
-  expect(credentials.find((entry) => entry.modelId === "arbitrary-model")?.reasoning).toBe(true);
-  await page.reload();
-  await page.getByRole("button", { name: new RegExp(userName) }).click();
-  await page.getByRole("button", { name: "Models", exact: true }).click();
-  await page.getByText("Advanced", { exact: true }).click();
-  await expect(page.getByRole("checkbox", { name: "Supports thinking" })).toBeChecked();
-  await page.getByRole("button", { name: "Close model settings" }).click();
-  await page.locator("main").getByRole("button", { name: "Chief", exact: true }).click();
-  const settings = page.getByTestId("bot-settings");
-  await expect(settings).toBeVisible();
-  const advanced = settings.getByTestId("bot-settings-advanced");
-  await advanced.evaluate((element) => {
-    (element as HTMLDetailsElement).open = true;
+  const calls: string[] = [];
+  await page.route("**/rpc/**", async (route) => {
+    calls.push(new URL(route.request().url()).pathname);
+    expect(route.request().postDataJSON().json).toEqual({});
+    await route.fulfill({ json: { json: { ...snapshot(), current: null, selection: null } } });
   });
-  // NativeSelect sits inside a wrapping <label>, so label text includes option
-  // copy and getByLabel(..., { exact: true }) misses the control. Use the
-  // combobox accessible name, matching other model E2E tests.
-  const model = settings.getByRole("combobox", { name: "Model", exact: true });
-  await expect(model).toBeVisible();
-  await expect(model).toContainText("arbitrary-model");
-  // Value key — not a /arbitrary-model/ label match, which also hits "Space default (arbitrary-model)".
-  await model.selectOption("openai-compatible::arbitrary-model");
-  const thinking = settings.getByRole("combobox", { name: "Thinking", exact: true });
-  await expect(thinking).toBeVisible();
-  await thinking.selectOption("low");
-  await thinking.scrollIntoViewIfNeeded();
-  await captureScreenshot(page, testInfo, "openai-compatible-thinking");
-  const saved = page.waitForResponse(
-    (response) => response.url().includes("/rpc/bots/update") && response.ok(),
+  await page.goto("/e2e/fixtures/pi-models.html");
+  await expect(page.getByTestId("pi-profile-default")).toHaveText(
+    "Pi profile default: custom-extension/profile-startup",
   );
-  await settings.getByRole("button", { name: "Save", exact: true }).click();
-  await saved;
-  await page.reload();
-  await page.locator("main").getByRole("button", { name: "Chief", exact: true }).click();
-  await expect(settings).toBeVisible();
-  await advanced.evaluate((element) => {
-    (element as HTMLDetailsElement).open = true;
-  });
-  await expect(thinking).toHaveValue("low");
+  await page.getByRole("combobox", { name: "Search models" }).fill("custom-research-2026");
+  await expect(page.getByRole("option")).toHaveCount(1);
+  await expect(page.getByRole("option")).toContainText("private-extension/custom-research-2026");
+  await page.getByRole("option").click();
+  await expect(page.getByTestId("selected-model")).toHaveCount(0);
+  await page.getByRole("combobox", { name: "Search models" }).press("Enter");
+  await expect(page.getByTestId("selected-model")).toHaveCount(0);
+  await expect(page.getByTestId("pi-profile-default")).toHaveText(
+    "Pi profile default: custom-extension/profile-startup",
+  );
+  await expect(
+    page.getByRole("button", { name: /Use model|Connect|API key|Visibility|Rotation/ }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("combobox", { name: "Thinking", exact: true })).toHaveCount(0);
+  expect(calls).toEqual(["/rpc/models/runtime"]);
+  await captureScreenshot(page, testInfo, "pi-model-inventory-search");
 });
 
-test("connects, lists, and uses an OpenAI-compatible endpoint", async ({ page }, testInfo) => {
-  const server = createServer((request, response) => {
-    if (request.method === "GET" && request.url === "/v1/models") {
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ object: "list", data: [{ id: LOCAL_MODEL_ID }] }));
-      return;
-    }
-    if (request.method === "POST" && request.url === "/v1/chat/completions") {
-      response.writeHead(200, {
-        "cache-control": "no-cache",
-        connection: "keep-alive",
-        "content-type": "text/event-stream",
-      });
-      const created = Math.floor(Date.now() / 1_000);
-      response.write(
-        `data: ${JSON.stringify({
-          id: "chatcmpl-rakazo-e2e",
-          object: "chat.completion.chunk",
-          created,
-          model: LOCAL_MODEL_ID,
-          choices: [
-            {
-              index: 0,
-              delta: { role: "assistant", content: LOCAL_MODEL_REPLY },
-              finish_reason: null,
-            },
-          ],
-        })}\n\n`,
-      );
-      response.write(
-        `data: ${JSON.stringify({
-          id: "chatcmpl-rakazo-e2e",
-          object: "chat.completion.chunk",
-          created,
-          model: LOCAL_MODEL_ID,
-          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-          usage: { prompt_tokens: 4, completion_tokens: 6, total_tokens: 10 },
-        })}\n\n`,
-      );
-      response.end("data: [DONE]\n\n");
-      return;
-    }
-    response.writeHead(404);
-    response.end();
+test("worker preserves unavailable intent, shows actual current, and handles pending and failed switches", async ({
+  page,
+}, testInfo) => {
+  let status: ModelSelectionStatus = {
+    requested: stale,
+    effective: current,
+    status: "applied",
+    error: null,
+  };
+  let failWrite = false;
+  await page.route("**/rpc/models/runtime", async (route) => {
+    expect(route.request().postDataJSON().json).toEqual({
+      botId: "bot-fixture",
+      threadId: "thread-fixture",
+      participantId: "worker-fixture",
+    });
+    await route.fulfill({ json: { json: snapshot(status) } });
   });
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
+  await page.route("**/rpc/models/setWorkerSelection", async (route) => {
+    if (failWrite) return route.fulfill({ status: 503, body: "Unavailable" });
+    status = {
+      requested: route.request().postDataJSON().json.selection,
+      effective: current,
+      status: "pending",
+      error: null,
+    };
+    await route.fulfill({ json: { json: status } });
   });
-
-  try {
-    const address = server.address() as AddressInfo;
-    const baseUrl = `http://127.0.0.1:${address.port}/v1`;
-    const stamp = Date.now();
-    const userName = `Local model ${stamp}`;
-    await signup(page, `local-model-${stamp}@rakazo.test`, "password12", userName);
-    await completeOnboarding(page);
-
-    await page.getByRole("button", { name: new RegExp(userName) }).click();
-    await page.getByRole("button", { name: "Models", exact: true }).click();
-    const providerSearch = page.getByPlaceholder("Search providers");
-    await providerSearch.fill("openai-compatible");
-    await page.getByRole("button", { name: /OpenAI-compatible/ }).click();
-    await expect(
-      page.getByText("Paste the OpenAI-compatible address", { exact: false }),
-    ).toBeHidden();
-    await page.getByText("Setup help", { exact: true }).click();
-    await expect(
-      page.getByText("Paste the OpenAI-compatible address", { exact: false }),
-    ).toBeVisible();
-    await page.getByText("Setup help", { exact: true }).click();
-    await expect(
-      page.getByText("Paste the OpenAI-compatible address", { exact: false }),
-    ).toBeHidden();
-    await page.getByLabel("OpenAI-compatible server URL").fill(baseUrl);
-    await page.getByLabel("Model id").fill("manual-model-not-listed");
-    await page.getByRole("button", { name: "Find models" }).click();
-
-    await expect(page.getByLabel("Model id")).toHaveValue("manual-model-not-listed");
-    await page.getByRole("button", { name: "Use a found model" }).click();
-    const discoveredModels = page.getByRole("combobox", { name: "Models from server" });
-    await expect(discoveredModels).toHaveValue(LOCAL_MODEL_ID);
-    await discoveredModels.selectOption("");
-    await expect(page.getByLabel("Model id")).toBeVisible();
-    await page.getByRole("button", { name: "Find models" }).click();
-    await expect(discoveredModels).toHaveValue(LOCAL_MODEL_ID);
-    await expect(page.getByText("Found 1 model.")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Save" })).toBeEnabled();
-    await captureScreenshot(page, testInfo, "openai-compatible-model-discovery");
-
-    await page.getByRole("button", { name: "Save" }).click();
-    await expect(page.getByText("Saved.")).toBeVisible();
-    await expect(page.getByRole("button", { name: /OpenAI-compatible/ })).toContainText(
-      "Connected",
-    );
-    await captureScreenshot(page, testInfo, "openai-compatible-connected");
-
-    await page.getByLabel("OpenAI-compatible server URL").fill("");
-    await expect(page.getByRole("button", { name: "Find models" })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Save" })).toBeDisabled();
-    await page.getByLabel("OpenAI-compatible server URL").fill(baseUrl);
-    await expect(page.getByRole("button", { name: "Save" })).toBeEnabled();
-
-    if (process.env.AGENT_RUNTIME === "pi") {
-      await page.getByRole("button", { name: "Close model settings" }).click();
-      const composer = page.getByPlaceholder(/Message/);
-      await composer.fill("Reply with the endpoint verification message.");
-      await page.keyboard.press("Enter");
-      await expect(page.getByTestId("transcript").getByText(LOCAL_MODEL_REPLY)).toBeVisible({
-        timeout: 30_000,
-      });
-      await captureScreenshot(page, testInfo, "openai-compatible-response");
-    }
-  } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  }
+  await page.goto("/e2e/fixtures/pi-models.html?worker");
+  await expect(page.getByTestId("selected-model")).toHaveText(
+    "Selected: removed-provider/retired-model · Unavailable",
+  );
+  await expect(page.getByTestId("current-model")).toHaveText(
+    "Current: custom-extension/actual-running-v2 · low",
+  );
+  await expect(page.getByRole("button", { name: "Use model", exact: true })).toBeDisabled();
+  await captureScreenshot(page, testInfo, "pi-model-unavailable-selection");
+  await page.getByRole("combobox", { name: "Search models" }).fill("research");
+  await page.getByRole("option").click();
+  await page.getByRole("combobox", { name: "Thinking", exact: true }).selectOption("high");
+  await page.getByRole("button", { name: "Use model", exact: true }).click();
+  await expect(
+    page.getByText("Pending · private-extension/custom-research-2026", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByTestId("current-model")).toContainText(
+    "custom-extension/actual-running-v2",
+  );
+  await captureScreenshot(page, testInfo, "pi-model-switch-pending");
+  status = { ...status, status: "failed", error: "Model unavailable" };
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Model unavailable");
+  failWrite = true;
+  await page.getByRole("button", { name: "Use model", exact: true }).click();
+  await expect(page.getByText("Could not switch model", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("selected-model")).toContainText(
+    "private-extension/custom-research-2026",
+  );
 });
 
-test("model settings connect, replace, and cancel provider authentication", async ({ page }) => {
-  const stamp = Date.now();
-  const userName = `Models ${stamp}`;
-  await signup(page, `models-${stamp}@rakazo.test`, "password12", userName);
-  await completeOnboarding(page);
+test("failed and delayed refresh preserve draft; reasoning follows Pi capabilities", async ({
+  page,
+}) => {
+  let fail = false;
+  let release: (() => void) | undefined;
+  let delay = false;
+  await page.route("**/rpc/models/runtime", async (route) => {
+    if (delay)
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    if (fail) return route.fulfill({ status: 503, body: "Unavailable" });
+    await route.fulfill({ json: { json: snapshot() } });
+  });
+  await page.goto("/e2e/fixtures/pi-models.html?worker");
+  await expect(page.getByTestId("selected-model")).toContainText("retired-model");
+  delay = true;
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.getByRole("combobox", { name: "Search models" }).fill("basic");
+  await page.getByRole("option").click();
+  await expect(page.getByRole("combobox", { name: "Thinking", exact: true })).toHaveCount(0);
+  await expect.poll(() => Boolean(release)).toBe(true);
+  release!();
+  await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
+  await expect(page.getByTestId("selected-model")).toHaveText("Selected: plain-provider/basic");
+  delay = false;
+  fail = true;
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Could not refresh models");
+  await expect(page.getByTestId("selected-model")).toHaveText("Selected: plain-provider/basic");
+});
 
-  await page.getByRole("button", { name: new RegExp(userName) }).click();
-  await page.getByRole("button", { name: "Models", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Close model settings" })).toBeVisible();
-
-  const providerSearch = page.getByPlaceholder("Search providers");
-  await providerSearch.fill("scripted");
-  await page.getByRole("button", { name: /Scripted/ }).click();
-  await expect(page.getByRole("combobox", { name: "Model" })).toHaveText(/Scripted runtime/);
-  const apiKeyInput = page.getByLabel("API key");
-  await expect(apiKeyInput).toHaveAttribute("autocomplete", "new-password");
-  await apiKeyInput.fill("fake-scripted-key-one");
-  await page.getByRole("button", { name: "Connect API key" }).click();
-  await expect(page.getByText(/Connected and using Scripted runtime/)).toBeVisible();
-
-  await page.getByLabel("Replace API key").fill("fake-scripted-key-two");
-  await page.getByRole("button", { name: "Replace API key" }).click();
-  await expect(page.getByText(/Connected and using Scripted runtime/)).toBeVisible();
-
-  await page.route("**/rpc/models/beginOAuth", async (route) => {
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
+for (const available of [false, true]) {
+  test(`empty catalog is safe (${available ? "connected" : "disconnected"})`, async ({ page }) => {
+    await page.route("**/rpc/models/runtime", (route) =>
+      route.fulfill({
         json: {
-          loginId: "fake-login",
-          provider: "openai-codex",
-          mode: "device-code",
-          verificationUri: "https://example.com/device",
-          userCode: "TEST-CODE",
-          expiresInSeconds: 900,
+          json: {
+            ...snapshot(),
+            catalog: [],
+            current: null,
+            selection: null,
+            availability: { status: available ? "available" : "unavailable", error: null },
+          },
         },
       }),
-    });
+    );
+    await page.goto("/e2e/fixtures/pi-models.html?worker");
+    await expect(
+      page.getByText(available ? "No models available" : "Pi unavailable", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Use model", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
   });
-  await page.route("**/rpc/models/completeOAuth", async (route) => {
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({ json: { status: "pending" } }),
-    });
-  });
-  await page.evaluate(() => {
-    window.open = () => null;
-  });
-  let finishRequests = 0;
-  page.on("request", (request) => {
-    if (request.url().includes("/rpc/models/finishOAuth")) finishRequests += 1;
-  });
+}
 
-  await providerSearch.fill("openai-codex");
-  await page
-    .getByRole("button", { name: /ChatGPT Plus\/Pro/ })
-    .first()
-    .click();
-  await page.getByRole("button", { name: /Sign in with ChatGPT Plus\/Pro/ }).click();
-  await expect(page.getByText("Waiting for sign-in…")).toBeVisible();
-
-  const cancelled = page.waitForRequest((request) =>
-    request.url().includes("/rpc/models/cancelOAuth"),
+test("bot picker uses authorized bot runtime and preserves stale intent on unrelated saves", async ({
+  page,
+}, testInfo) => {
+  const writes: Record<string, unknown>[] = [];
+  let fail = false;
+  await page.route("**/rpc/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/rpc/models/runtime") {
+      expect(route.request().postDataJSON().json).toEqual({ botId: "bot-fixture" });
+      return route.fulfill({ json: { json: snapshot() } });
+    }
+    if (path === "/rpc/bots/update") {
+      writes.push(route.request().postDataJSON().json);
+      if (fail) return route.fulfill({ status: 503, body: "Unavailable" });
+      return route.fulfill({ json: { json: {} } });
+    }
+    return route.fulfill({ status: 503, body: "Offline fixture" });
+  });
+  await page.goto("/e2e/fixtures/pi-models.html?bot");
+  await page.getByText("Advanced", { exact: true }).click();
+  await expect(page.getByTestId("current-model")).toContainText(
+    "custom-extension/actual-running-v2",
   );
-  await providerSearch.fill("scripted");
-  await page.getByRole("button", { name: /Scripted/ }).click();
-  await cancelled;
-  expect(finishRequests).toBe(0);
-  await page.getByLabel("Replace API key").fill("fake-scripted-key-three");
-  await expect(page.getByRole("button", { name: "Replace API key" })).toBeEnabled();
-  await expect(page.getByText("Waiting for sign-in…")).toBeHidden();
+  await expect(page.getByTestId("selected-model")).toContainText(
+    "removed-provider/retired-model · Unavailable",
+  );
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]).not.toHaveProperty("modelId");
+  expect(writes[0]).not.toHaveProperty("thinkingLevel");
+  await page.getByRole("combobox", { name: "Search models" }).fill("custom-research-2026");
+  await page.getByRole("option").click();
+  await page.getByRole("combobox", { name: "Thinking", exact: true }).selectOption("high");
+  fail = true;
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => writes.length).toBe(2);
+  expect(writes[1]).toMatchObject({
+    modelProvider: "private-extension",
+    modelId: "custom-research-2026",
+    thinkingLevel: "high",
+  });
+  await expect(page.getByTestId("selected-model")).toContainText(
+    "private-extension/custom-research-2026",
+  );
+  await captureScreenshot(page, testInfo, "pi-bot-model-picker");
 });
+
+test("unsupported persisted thinking stays visible and switching does not claim success early", async ({
+  page,
+}) => {
+  let release: (() => void) | undefined;
+  const requested = {
+    provider: "plain-provider",
+    modelId: "basic",
+    thinkingLevel: "high" as const,
+  };
+  await page.route("**/rpc/models/runtime", (route) =>
+    route.fulfill({
+      json: { json: snapshot({ requested, effective: current, status: "applied", error: null }) },
+    }),
+  );
+  await page.route("**/rpc/models/setWorkerSelection", async (route) => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await route.fulfill({ status: 503, body: "Unavailable" });
+  });
+  await page.goto("/e2e/fixtures/pi-models.html?worker");
+  await expect(page.getByText("Thinking: high · Unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Use model", exact: true })).toBeDisabled();
+  await page.getByRole("combobox", { name: "Search models" }).fill("research");
+  await page.getByRole("option").click();
+  await page.getByRole("button", { name: "Use model", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Switching…", exact: true })).toBeDisabled();
+  await expect(page.getByTestId("current-model")).toContainText(
+    "custom-extension/actual-running-v2",
+  );
+  await expect.poll(() => Boolean(release)).toBe(true);
+  release!();
+  await expect(page.getByText("Could not switch model", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("selected-model")).toContainText(
+    "private-extension/custom-research-2026",
+  );
+});
+
+for (const participant of [true, false]) {
+  test(`clearing ${participant ? "worker" : "root"} intent labels its inheritance honestly`, async ({
+    page,
+  }) => {
+    let written: unknown;
+    await page.route("**/rpc/models/runtime", (route) =>
+      route.fulfill({ json: { json: snapshot() } }),
+    );
+    await page.route("**/rpc/models/setWorkerSelection", async (route) => {
+      written = route.request().postDataJSON().json;
+      await route.fulfill({
+        json: { json: { requested: null, effective: current, status: "pending", error: null } },
+      });
+    });
+    await page.goto(`/e2e/fixtures/pi-models.html?worker${participant ? "" : "&root"}`);
+    await page
+      .getByRole("button", {
+        name: participant ? "Use bot model" : "Use Pi selection",
+        exact: true,
+      })
+      .click();
+    await expect
+      .poll(() => written)
+      .toEqual({
+        botId: "bot-fixture",
+        threadId: "thread-fixture",
+        ...(participant ? { participantId: "worker-fixture" } : {}),
+        selection: null,
+      });
+    await expect(page.getByTestId("current-model")).toContainText(
+      "custom-extension/actual-running-v2",
+    );
+    await expect(page.getByRole("button", { name: "Use Pi default", exact: true })).toHaveCount(0);
+  });
+}

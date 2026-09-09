@@ -4,7 +4,11 @@ vi.mock("@rakazo/db", () => ({
   appendEventInTransaction: vi.fn(),
 }));
 
-import { botProfileLabelsChanged, commitBotUpdate } from "./bot-update.js";
+import {
+  BotComputerSwitchingError,
+  botProfileLabelsChanged,
+  commitBotUpdate,
+} from "./bot-update.js";
 
 describe("botProfileLabelsChanged", () => {
   it("is true only when name, title, or description is present", () => {
@@ -102,6 +106,32 @@ describe("commitBotUpdate", () => {
     ).rejects.toThrow("event store unavailable");
     expect(notify).not.toHaveBeenCalled();
     expect(prisma.bot.update).not.toHaveBeenCalled();
+  });
+
+  it("locks and rejects model updates while the computer is switching", async () => {
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([{ computerSwitching: true }]),
+      bot: { update: vi.fn() },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (run: (client: typeof tx) => Promise<unknown>) => run(tx)),
+      bot: { update: vi.fn() },
+    };
+
+    await expect(
+      commitBotUpdate({
+        prisma: prisma as never,
+        notify: vi.fn(),
+        spaceId: "space-1",
+        threadId: "thread-1",
+        botId: "bot-1",
+        data: { modelProvider: "offline", modelId: "model" },
+        emitBotUpdated: false,
+        requireStableComputer: true,
+      }),
+    ).rejects.toBeInstanceOf(BotComputerSwitchingError);
+    expect(tx.$queryRaw).toHaveBeenCalledOnce();
+    expect(tx.bot.update).not.toHaveBeenCalled();
   });
 
   it("updates without an event when profile labels are unchanged", async () => {
