@@ -14,7 +14,7 @@
     "@earendil-works/pi-coding-agent": "0.85.1",
     "@earendil-works/pi-ai": "0.85.1",
     "@earendil-works/pi-tui": "0.85.1",
-    "typebox": "1.3.10",
+    "typebox": "1.3.29",
     "pi-fabric": "file:../../vendor/pi-kit/pi-fabric-0.90.1-97fe0e031f5e.tgz",
     "pi-fovea": "file:../../vendor/pi-kit/pi-fovea-0.22.1-b8a01161c936.tgz",
     "pi-queue-steer-factory": "file:../../vendor/pi-kit/pi-queue-steer-factory-0.16.2-7d5a12d3688f.tgz",
@@ -23,8 +23,8 @@
     "pi-hide-providers": "file:../../vendor/pi-kit/pi-hide-providers-0.1.18-d26f6fc7825e.tgz"
   },
   "devDependencies": {
-    "@types/node": "^24.3.0",
-    "typescript": "^5.9.2",
-    "vitest": "^4.1.10"
+    "@types/node": "^26.5.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
   }
 }

@@ -11,9 +11,9 @@ import {
 import { createRepos } from "./repos.js";
 
 const describePostgres =
-  process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe.sequential : describe.skip;
+  process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe : describe.skip;
 
-describePostgres("machine mailbox (PostgreSQL)", () => {
+describePostgres("machine mailbox (PostgreSQL)", { concurrent: false }, () => {
   const id = `machine-test-${randomUUID()}`;
   const actor: Actor = {
     userId: `${id}-user`,

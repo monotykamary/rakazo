@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { globSync, readFileSync, realpathSync } from "node:fs";
+import { globSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -15,10 +16,12 @@ const workspaces = globSync(
   { cwd: root },
 );
 const paths = new Map(workspaces.map((path) => [read(path).name, dirname(path)]));
-const { parseConfigFileTextToJson } = createRequire(import.meta.url)("typescript");
-const parsed = parseConfigFileTextToJson("bun.lock", readFileSync(join(root, "bun.lock"), "utf8"));
-assert(!parsed.error, "Bun lockfile must be valid JSONC.");
-const lock = parsed.config;
+const { parse } = createRequire(import.meta.url)("jsonc-parser");
+const errors = [];
+const lock = parse(readFileSync(join(root, "bun.lock"), "utf8"), errors, {
+  allowTrailingComma: true,
+});
+assert.equal(errors.length, 0, "Bun lockfile must be valid JSONC.");
 assert.equal(lock.configVersion, 1);
 assert.deepEqual(lock.overrides, pkg.overrides);
 assert.deepEqual(lock.patchedDependencies, pkg.patchedDependencies);
@@ -91,7 +94,32 @@ for (const platform of ["ios", "android"]) {
       metro.resolver.resolveRequest(context, name, platform).filePath,
       mobileRequire.resolve(name),
     );
+    assert(
+      [metro.projectRoot, ...(metro.watchFolders || [])].some((folder) => {
+        const location = relative(folder, mobileRequire.resolve(name));
+        return location.split(sep)[0] !== ".." && !isAbsolute(location);
+      }),
+      `Pinned ${name} must be watched by Metro.`,
+    );
   }
+}
+const workletRoot = mkdtempSync(join(tmpdir(), "rakazo-worklet-check-"));
+try {
+  const filename = join(workletRoot, "fixture.js");
+  const source = 'function fixture() { "worklet"; return 42; }';
+  writeFileSync(filename, source);
+  const worklet = mobileRequire("@babel/core").transformSync(source, {
+    filename,
+    configFile: false,
+    babelrc: false,
+    plugins: [mobileRequire.resolve("react-native-worklets/plugin")],
+  });
+  assert(
+    worklet.code.includes("__workletHash"),
+    "The isolated Worklets Babel plugin must compile.",
+  );
+} finally {
+  rmSync(workletRoot, { recursive: true, force: true });
 }
 // Pi's root export is ESM-only; resolve it as a consumer in the declaring workspace.
 execFileSync(

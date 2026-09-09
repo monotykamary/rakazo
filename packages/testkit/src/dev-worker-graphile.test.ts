@@ -1,22 +1,75 @@
 import { EventEmitter } from "node:events";
-import { createRequire } from "node:module";
+import { realpathSync } from "node:fs";
+import { createRequire, registerHooks } from "node:module";
+import { Socket } from "node:net";
 import path from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
-import { GraphileJobWorkerHost } from "../../adapters/src/wakeup";
+import { pathToFileURL } from "node:url";
+import { afterAll, afterEach, expect, it, vi } from "vitest";
 
 // Stub only database/bootstrap and cron boundaries. The host, run(), Runner.stop,
 // pool shutdown, worker.release and graceful-shutdown abort timer are installed code.
 const require = createRequire(path.resolve("packages/adapters/package.json"));
-const dist = path.dirname(require.resolve("graphile-worker"));
-const main = require(path.join(dist, "main.js"));
-const lib = require(path.join(dist, "lib.js"));
-const cron = require(path.join(dist, "cron.js"));
-const getJobs = require(path.join(dist, "sql/getJobs.js"));
-const completeJobs = require(path.join(dist, "sql/completeJobs.js"));
-const failJobs = require(path.join(dist, "sql/failJobs.js"));
+const dist = path.dirname(realpathSync(require.resolve("graphile-worker")));
+const boundaries = {
+  "main.js": { runTaskListInternal: vi.fn() },
+  "lib.js": { getUtilsAndReleasersFromOptions: vi.fn() },
+  "cron.js": { runCron: vi.fn(), getParsedCronItemsFromOptions: vi.fn() },
+  "sql/getJobs.js": { batchGetJobs: vi.fn() },
+  "sql/completeJobs.js": { batchCompleteJobs: vi.fn() },
+  "sql/failJobs.js": { batchFailJobs: vi.fn() },
+};
+const boundaryUrls = new Map(
+  Object.entries(boundaries).map(([file, mocks]) => [
+    pathToFileURL(path.join(dist, file)).href,
+    mocks,
+  ]),
+);
+const boundaryKey = Symbol.for("rakazo.offlineGraphileBoundaries");
+Reflect.set(globalThis, boundaryKey, boundaryUrls);
+
+// Native ESM exports cannot be spied on, and Vitest 5 does not mock imports
+// within node_modules. Native loader wrappers replace only the named boundaries;
+// every other export is re-exported from the unmodified installed module.
+const hooks = registerHooks({
+  resolve(specifier, context, nextResolve) {
+    const resolved = nextResolve(specifier, context);
+    if (boundaryUrls.has(resolved.url)) {
+      return { ...resolved, url: `${resolved.url}?rakazo-offline-boundary` };
+    }
+    return resolved;
+  },
+  load(url, context, nextLoad) {
+    if (!url.endsWith("?rakazo-offline-boundary")) return nextLoad(url, context);
+    const original = url.slice(0, -"?rakazo-offline-boundary".length);
+    const mocks = boundaryUrls.get(original)!;
+    return {
+      format: "module",
+      shortCircuit: true,
+      source: [
+        `export * from ${JSON.stringify(`${original}?rakazo-offline-actual`)};`,
+        `const mocks = globalThis[Symbol.for("rakazo.offlineGraphileBoundaries")].get(${JSON.stringify(original)});`,
+        ...Object.keys(mocks).map((name) => `export const ${name} = mocks.${name};`),
+      ].join("\n"),
+    };
+  },
+});
+const main = await import(path.join(dist, "main.js"));
+const lib = boundaries["lib.js"];
+const cron = boundaries["cron.js"];
+const getJobs = boundaries["sql/getJobs.js"];
+const completeJobs = boundaries["sql/completeJobs.js"];
+const failJobs = boundaries["sql/failJobs.js"];
+const { GraphileJobWorkerHost } = await import("../../adapters/src/wakeup");
 afterEach(() => vi.restoreAllMocks());
+afterAll(() => {
+  hooks.deregister();
+  Reflect.deleteProperty(globalThis, boundaryKey);
+});
 
 it("real Graphile host stop retains the active handler past gracefulShutdownAbortTimeout", async () => {
+  const connect = vi.spyOn(Socket.prototype, "connect").mockImplementation(() => {
+    throw new Error("Offline probe attempted a network connection");
+  });
   const settled = Promise.withResolvers<void>();
   const started = Promise.withResolvers<void>();
   const dispose = vi.fn();
@@ -29,7 +82,7 @@ it("real Graphile host stop retains the active handler past gracefulShutdownAbor
     taskFinished = true;
   });
   let claimed = false;
-  vi.spyOn(getJobs, "batchGetJobs").mockImplementation(async () => {
+  vi.mocked(getJobs.batchGetJobs).mockImplementation(async () => {
     if (claimed) return [];
     claimed = true;
     return [
@@ -42,19 +95,19 @@ it("real Graphile host stop retains the active handler past gracefulShutdownAbor
       },
     ];
   });
-  const complete = vi.spyOn(completeJobs, "batchCompleteJobs").mockResolvedValue([]);
+  const complete = vi.mocked(completeJobs.batchCompleteJobs).mockResolvedValue([]);
   const fail = vi
-    .spyOn(failJobs, "batchFailJobs")
+    .mocked(failJobs.batchFailJobs)
     .mockRejectedValue(new Error("Unexpected failed job"));
   const cronDone = Promise.withResolvers<void>();
-  vi.spyOn(cron, "runCron").mockReturnValue({
+  vi.mocked(cron.runCron).mockReturnValue({
     _active: true,
     promise: cronDone.promise,
     release: async () => {
       cronDone.resolve();
     },
   });
-  vi.spyOn(cron, "getParsedCronItemsFromOptions").mockResolvedValue([]);
+  vi.mocked(cron.getParsedCronItemsFromOptions).mockResolvedValue([]);
   const logger = {
     debug: vi.fn(),
     info: vi.fn(),
@@ -95,11 +148,11 @@ it("real Graphile host stop retains the active handler past gracefulShutdownAbor
     escapedWorkerSchema: '"graphile_worker"',
   };
   let pool: ReturnType<typeof main._runTaskList>;
-  vi.spyOn(main, "runTaskListInternal").mockImplementation((_compiled: unknown, tasks: unknown) => {
+  vi.mocked(main.runTaskListInternal).mockImplementation((_compiled: unknown, tasks: unknown) => {
     pool = main._runTaskList(compiled, tasks, withPgClient, { concurrency: 1, continuous: true });
     return pool;
   });
-  vi.spyOn(lib, "getUtilsAndReleasersFromOptions").mockImplementation(async (options: unknown) => [
+  vi.mocked(lib.getUtilsAndReleasersFromOptions).mockImplementation(async (options: unknown) => [
     { ...compiled, _rawOptions: options },
     async () => {},
   ]);
@@ -132,4 +185,6 @@ it("real Graphile host stop retains the active handler past gracefulShutdownAbor
   expect(taskFinished).toBe(true);
   expect(complete).toHaveBeenCalledOnce();
   expect(dispose).toHaveBeenCalledOnce();
+  expect(fail).not.toHaveBeenCalled();
+  expect(connect).not.toHaveBeenCalled();
 });

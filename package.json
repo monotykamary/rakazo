@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "packageManager": "bun@1.4.2",
   "engines": {
-    "node": "^24.0.0 || >=26.0.0",
+    "node": "^24.11.0 || >=26.0.0",
     "bun": "1.4.2"
   },
   "scripts": {
@@ -18,7 +18,7 @@
     "dev:worker:stop": "node scripts/dev-worker.mjs stop",
     "dev:worker:restart": "node scripts/dev-worker.mjs restart",
     "dev:kit": "node scripts/dev.mjs --setup-kit --install-pi --install-kit",
-    "test:dev": "vitest run packages/testkit/src/dev-bootstrap.test.ts packages/testkit/src/dev-worker.test.ts packages/testkit/src/dev-worker-graphile.test.ts packages/testkit/src/dev-worker-migrations.test.ts",
+    "test:dev": "vitest run packages/testkit/src/dev-bootstrap.test.ts packages/testkit/src/dev-path.test.ts packages/testkit/src/dev-worker.test.ts packages/testkit/src/dev-worker-graphile.test.ts packages/testkit/src/dev-worker-migrations.test.ts",
     "build": "turbo build",
     "check": "turbo check",
     "lint": "biome check .",
@@ -50,13 +50,14 @@
     "capture:ux": "node --import tsx packages/testkit/src/cli/capture-ux-preview.ts"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.8",
-    "@types/node": "^24.3.0",
+    "@biomejs/biome": "^2.5.12",
+    "@types/node": "^26.5.0",
     "cross-env": "^10.1.0",
-    "tsx": "^4.20.5",
-    "turbo": "^2.5.6",
-    "typescript": "^5.9.2",
-    "vitest": "^4.1.10"
+    "jsonc-parser": "^3.3.1",
+    "tsx": "^4.23.13",
+    "turbo": "^2.10.12",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
   },
   "workspaces": [
     "apps/*",
@@ -69,7 +70,8 @@
     "react-dom": "19.2.3"
   },
   "patchedDependencies": {
-    "app-builder-lib@26.15.3": "patches/app-builder-lib@26.15.3.patch"
+    "app-builder-lib@26.15.3": "patches/app-builder-lib@26.15.3.patch",
+    "react-native-worklets@0.10.1": "patches/react-native-worklets@0.10.1.patch"
   },
   "trustedDependencies": [
     "@ast-grep/cli",

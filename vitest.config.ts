@@ -3,6 +3,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
+    // Real Pi probes spawn SDK subprocesses; bound contention without relaxing timeouts.
+    maxWorkers: 2,
     setupFiles: ["./packages/testkit/src/pin-test-env.ts"],
     include: [
       "packages/*/src/**/*.test.{ts,tsx}",

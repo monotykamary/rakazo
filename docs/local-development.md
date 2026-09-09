@@ -83,7 +83,10 @@ conversation continuity before cutover.
 
 ## Your Pi installation
 
-An existing `pi` on PATH is preferred. `RAKAZO_PI_COMMAND` selects another executable;
+An existing `pi` on your shell PATH is preferred. Dev removes Bun’s injected
+workspace-bin prefix before launching Pi or the persistent worker; workspace build
+commands still use their local tools. This also applies to `dev:pi` and worker
+restart. `RAKAZO_PI_COMMAND` selects another executable;
 it is a path/name, not a shell command. `RAKAZO_PI_CWD` selects an absolute project
 directory. Pi retains its normal user configuration and saved project-trust rules;
 Rakazo does not implicitly approve project extensions or change the global model.

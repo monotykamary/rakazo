@@ -15,12 +15,12 @@ process.env.SANDBOX_PROVIDER = "fake";
 process.env.AGENT_RUNTIME = "scripted";
 
 const hasDb = process.env.VERIFY_DATABASE === "1" && Boolean(process.env.DATABASE_URL);
-const describeMessaging = hasDb ? describe.sequential : describe.skip;
+const describeMessaging = hasDb ? describe : describe.skip;
 
 type App = { request: (input: string | Request, init?: RequestInit) => Promise<Response> };
 
 // Offline journeys: injected SendBlueEmulator fetch, no live vendor or paid line.
-describeMessaging("messaging surface journeys", () => {
+describeMessaging("messaging surface journeys", { concurrent: false }, () => {
   let app: App;
   let stop: () => Promise<void>;
   let prisma: any;

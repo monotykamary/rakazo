@@ -4,10 +4,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarkdownMemoryStore } from "./index.js";
 
 const databaseUrl = process.env.DATABASE_URL;
-const describePostgres =
-  process.env.VERIFY_DATABASE && databaseUrl ? describe.sequential : describe.skip;
+const describePostgres = process.env.VERIFY_DATABASE && databaseUrl ? describe : describe.skip;
 
-describePostgres("memory commits (PostgreSQL)", () => {
+describePostgres("memory commits (PostgreSQL)", { concurrent: false }, () => {
   const context: AdapterContext = {
     operationId: "memory-commit-test",
     traceId: "memory-commit-test",

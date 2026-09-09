@@ -12,11 +12,11 @@
   "dependencies": {
     "@rakazo/contracts": "workspace:*",
     "@rakazo/core": "workspace:*",
-    "tsx": "^4.20.5"
+    "tsx": "^4.23.13"
   },
   "devDependencies": {
-    "@types/node": "^24.3.0",
-    "typescript": "^5.9.2",
-    "vitest": "^4.1.10"
+    "@types/node": "^26.5.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
   }
 }

@@ -3,10 +3,9 @@ import { createDb, type PrismaClient } from "./client.js";
 import { provisionMessagingIdentity } from "./messaging.js";
 
 const databaseUrl = process.env.DATABASE_URL;
-const describePostgres =
-  process.env.VERIFY_DATABASE && databaseUrl ? describe.sequential : describe.skip;
+const describePostgres = process.env.VERIFY_DATABASE && databaseUrl ? describe : describe.skip;
 
-describePostgres("provisionMessagingIdentity (PostgreSQL)", () => {
+describePostgres("provisionMessagingIdentity (PostgreSQL)", { concurrent: false }, () => {
   const provider = "sendblue";
   const address = "+15550001111";
   let prisma: PrismaClient;

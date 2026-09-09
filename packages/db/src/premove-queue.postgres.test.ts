@@ -13,8 +13,8 @@ import { setRuntimePlacement } from "./runtime-placement.js";
 import { createRuntimeSession } from "./runtime-sessions.js";
 
 const describePostgres =
-  process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe.sequential : describe.skip;
-describePostgres("durable queue and session (PostgreSQL)", () => {
+  process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe : describe.skip;
+describePostgres("durable queue and session (PostgreSQL)", { concurrent: false }, () => {
   const id = `queue-test-${randomUUID()}`;
   const actor: Actor = {
     userId: `${id}-user`,

@@ -157,10 +157,33 @@ export async function readEnvironment(root) {
   }
 }
 
+// Bun prepends the package bin twice, then every ancestor bin. Remove only that
+// complete prefix, not user-selected PATH entries or explicitly selected Pi binaries.
+export function callerEnvironment(root, inherited) {
+  const env = { ...inherited };
+  if (!env.npm_config_user_agent?.startsWith("bun/") || typeof env.PATH !== "string") return env;
+  const bases = new Set([root]);
+  // Bun can preserve an outer invocation's local_prefix; match the actual prefix.
+  if (path.isAbsolute(env.npm_config_local_prefix || "")) bases.add(env.npm_config_local_prefix);
+  const entries = env.PATH.split(path.delimiter);
+  for (const base of bases) {
+    const prefix = [path.join(base, "node_modules", ".bin")];
+    for (let directory = base; ; directory = path.dirname(directory)) {
+      prefix.push(path.join(directory, "node_modules", ".bin"));
+      if (path.dirname(directory) === directory) break;
+    }
+    if (prefix.every((entry, index) => entries[index] === entry)) {
+      env.PATH = entries.slice(prefix.length).join(path.delimiter);
+      break;
+    }
+  }
+  return env;
+}
+
 export async function loadEnvironment(root, inherited = process.env) {
   const snapshot = await readEnvironment(root);
   const stored = parseEnv(snapshot.text);
-  return { snapshot, stored, values: { ...stored, ...inherited } };
+  return { snapshot, stored, values: { ...stored, ...callerEnvironment(root, inherited) } };
 }
 
 export async function saveEnvironment(root, snapshot, additions) {
@@ -695,7 +718,7 @@ export async function bootstrap({
   root = await realpath(root);
   if (opts.has("--setup-kit") || opts.has("--pi")) {
     const stored = opts.has("--pi") ? parseEnv((await readEnvironment(root)).text) : {};
-    const env = interactivePiEnvironment(inherited, stored);
+    const env = interactivePiEnvironment(callerEnvironment(root, inherited), stored);
     const runner = processes(root, env);
     let piOwnsTTY = false;
     const interrupt = () => {

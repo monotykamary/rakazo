@@ -9,6 +9,8 @@ import {
 import { promisify } from "node:util";
 import koffi from "koffi";
 
+type NativeFunction = ReturnType<ReturnType<typeof koffi.load>["func"]>;
+
 const closeFd = promisify(closeCb);
 const fchmodFd = promisify(fchmodCb);
 const fstatFd = promisify(fstatCb);
@@ -44,12 +46,12 @@ function escapeWorkspace(): never {
 }
 
 type NtFns = {
-  NtCreateFile: koffi.KoffiFunction;
-  RtlInitUnicodeString: koffi.KoffiFunction;
-  getOsFhandle: koffi.KoffiFunction;
-  openOsFhandle: koffi.KoffiFunction;
-  CloseHandle: koffi.KoffiFunction;
-  GetFinalPathNameByHandleW: koffi.KoffiFunction;
+  NtCreateFile: NativeFunction;
+  RtlInitUnicodeString: NativeFunction;
+  getOsFhandle: NativeFunction;
+  openOsFhandle: NativeFunction;
+  CloseHandle: NativeFunction;
+  GetFinalPathNameByHandleW: NativeFunction;
   objectAttributesSize: number;
 };
 

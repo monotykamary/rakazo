@@ -5,8 +5,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getModelRouting, setModelRouting } from "./model-routing.js";
 
 const describeDatabase =
-  process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe.sequential : describe.skip;
-describeDatabase("routing settings (PostgreSQL)", () => {
+  process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe : describe.skip;
+describeDatabase("routing settings (PostgreSQL)", { concurrent: false }, () => {
   const id = `routing-${randomUUID()}`;
   const actor: Actor = {
     userId: `${id}-user`,

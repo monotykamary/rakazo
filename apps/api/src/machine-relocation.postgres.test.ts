@@ -17,7 +17,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { assignBotMachine } from "./machines.js";
 
 const enabled = process.env.VERIFY_DATABASE === "1" && Boolean(process.env.DATABASE_URL);
-const describeDatabase = enabled ? describe.sequential : describe.skip;
+const describeDatabase = enabled ? describe : describe.skip;
 
 const context: AdapterContext = {
   operationId: "relocation-test",
@@ -42,7 +42,7 @@ const SEED_FILES = [
   file("notes.txt", "portable"),
 ];
 
-describeDatabase("verified workspace relocation (PostgreSQL)", () => {
+describeDatabase("verified workspace relocation (PostgreSQL)", { concurrent: false }, () => {
   let db: ReturnType<typeof createDb>;
   let prisma: PrismaClient;
   let home: LocalAgentHomeStore;

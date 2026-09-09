@@ -1,9 +1,12 @@
 import { readlink } from "node:fs/promises";
 import koffi from "koffi";
+
+type NativeFunction = ReturnType<ReturnType<typeof koffi.load>["func"]>;
+
 import { pathFromWindowsHandle } from "./desktop-sandbox-win32-path.js";
 
-let getPath: koffi.KoffiFunction | undefined;
-let getNodeHandle: koffi.KoffiFunction | undefined;
+let getPath: NativeFunction | undefined;
+let getNodeHandle: NativeFunction | undefined;
 
 /** Resolve the opened object, never the pathname that was used to open it. */
 export async function fileHandlePath(fd: number): Promise<string> {

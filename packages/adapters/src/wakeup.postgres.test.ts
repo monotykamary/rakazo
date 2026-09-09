@@ -3,8 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { GraphileJobPublisher, GraphileJobWorkerHost } from "./wakeup.js";
 
 const databaseUrl = process.env.DATABASE_URL;
-const describePostgres =
-  process.env.VERIFY_DATABASE && databaseUrl ? describe.sequential : describe.skip;
+const describePostgres = process.env.VERIFY_DATABASE && databaseUrl ? describe : describe.skip;
 
 function handlers(overrides: Partial<BackgroundJobHandlers> = {}): BackgroundJobHandlers {
   return {
@@ -33,7 +32,7 @@ async function waitFor(assertion: () => void, timeoutMs = 10_000): Promise<void>
   await vi.waitFor(assertion, { timeout: timeoutMs, interval: 25 });
 }
 
-describePostgres("Graphile background jobs (PostgreSQL contract)", () => {
+describePostgres("Graphile background jobs (PostgreSQL contract)", { concurrent: false }, () => {
   it("waits for an active handler during graceful shutdown", async () => {
     const publisher = new GraphileJobPublisher(databaseUrl!);
     const host = new GraphileJobWorkerHost(databaseUrl!, { concurrency: 1, pollInterval: 25 });

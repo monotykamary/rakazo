@@ -41,7 +41,7 @@ function fixture() {
 describe("Bun workspace contract", () => {
   it("pins the package manager without replacing Vitest or Node", () => {
     expect(pkg.packageManager).toBe("bun@1.4.2");
-    expect(pkg.engines).toEqual({ node: "^24.0.0 || >=26.0.0", bun: "1.4.2" });
+    expect(pkg.engines).toEqual({ node: "^24.11.0 || >=26.0.0", bun: "1.4.2" });
     expect(pkg.scripts.test).toBe("vitest run");
     expect(pkg.scripts.preinstall).toBe("node scripts/check-package-manager.mjs");
     expect(pkg.pnpm).toBeUndefined();
@@ -77,6 +77,24 @@ describe("Bun workspace contract", () => {
     expect(rejected.status).not.toBe(0);
   });
 
+  it.each([
+    ["24.10.0", false],
+    ["24.11.0", true],
+    ["25.9.0", false],
+    ["26.0.0", true],
+  ])("checks the upgraded toolchain's Node floor for %s", (version, accepted) => {
+    const command = new URL("../../../scripts/check-package-manager.mjs", import.meta.url).href;
+    const probe = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `Object.defineProperty(process.versions, "node", { value: ${JSON.stringify(version)} }); await import(${JSON.stringify(command)});`,
+      ],
+      { env: { ...env, npm_config_user_agent: "bun/1.4.2 npm/?" } },
+    );
+    expect(probe.status === 0, probe.stderr?.toString()).toBe(accepted);
+  });
   it("runs only the filtered script with Node and forwards its arguments", () => {
     const { directory } = fixture();
     const output = execFileSync("bun", ["run", "--filter", "@fixture/two", "test", "sentinel"], {

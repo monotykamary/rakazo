@@ -2,10 +2,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import { createDb, type PrismaClient } from "./client.js";
 
 const databaseUrl = process.env.DATABASE_URL;
-const describePostgres =
-  process.env.VERIFY_DATABASE && databaseUrl ? describe.sequential : describe.skip;
+const describePostgres = process.env.VERIFY_DATABASE && databaseUrl ? describe : describe.skip;
 
-describePostgres("default Space membership trigger (PostgreSQL)", () => {
+describePostgres("default Space membership trigger (PostgreSQL)", { concurrent: false }, () => {
   const suffix = `${process.pid}-${Date.now()}`;
   const userId = `trigger-user-${suffix}`;
   const organizationId = `trigger-organization-${suffix}`;

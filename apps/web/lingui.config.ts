@@ -1,4 +1,5 @@
 import { defineConfig } from "@lingui/conf";
+import { formatter } from "@lingui/format-po";
 
 export default defineConfig({
   sourceLocale: "en",
@@ -10,6 +11,6 @@ export default defineConfig({
       exclude: ["**/locales/**", "**/*.test.*"],
     },
   ],
-  format: "po",
+  format: formatter(),
   compileNamespace: "es",
 });

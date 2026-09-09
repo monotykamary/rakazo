@@ -1,0 +1,36 @@
+diff --git a/node_modules/react-native-worklets/.bun-tag-366fcca21fadc4d0 b/.bun-tag-366fcca21fadc4d0
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/plugin/index.js b/plugin/index.js
+index 7080b1ba47ba02e7d934c2cd5f7af0b67071d283..256631a29ea188352b538c81a8d346c630559102 100644
+--- a/plugin/index.js
++++ b/plugin/index.js
+@@ -866,7 +866,7 @@ var require_workletStringCode = __commonJS({
+     Object.defineProperty(exports2, "__esModule", { value: true });
+     exports2.buildWorkletString = buildWorkletString;
+     var core_1 = require("@babel/core");
+-    var generator_1 = __importDefault(require("@babel/generator"));
++    var generator_1 = __importDefault(require(require.resolve("@babel/generator", { paths: [require.resolve("@babel/core")] })));
+     var types_12 = require("@babel/types");
+     var assert_1 = require("assert");
+     var convertSourceMap = __importStar(require("convert-source-map"));
+@@ -1003,7 +1003,7 @@ var require_workletFactory = __commonJS({
+     };
+     Object.defineProperty(exports2, "__esModule", { value: true });
+     exports2.makeWorkletFactory = makeWorkletFactory;
+-    var generator_1 = __importDefault(require("@babel/generator"));
++    var generator_1 = __importDefault(require(require.resolve("@babel/generator", { paths: [require.resolve("@babel/core")] })));
+     var types_12 = require("@babel/types");
+     var assert_1 = require("assert");
+     var path_1 = require("path");
+@@ -1496,8 +1496,8 @@ var require_class = __commonJS({
+     };
+     Object.defineProperty(exports2, "__esModule", { value: true });
+     exports2.processIfWorkletClass = processIfWorkletClass;
+-    var generator_1 = __importDefault(require("@babel/generator"));
+-    var traverse_1 = __importDefault(require("@babel/traverse"));
++    var generator_1 = __importDefault(require(require.resolve("@babel/generator", { paths: [require.resolve("@babel/core")] })));
++    var traverse_1 = __importDefault(require(require.resolve("@babel/traverse", { paths: [require.resolve("@babel/core")] })));
+     var types_12 = require("@babel/types");
+     var assert_1 = require("assert");
+     var transform_1 = require_transform();
