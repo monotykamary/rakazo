@@ -76,6 +76,76 @@ describePostgres("durable queue and session (PostgreSQL)", { concurrent: false }
       },
     });
   });
+  it("atomically drains one paused FIFO prefix under concurrent dispatch and durably replays its receipt", async () => {
+    const threadId = `${id}-drain-thread`;
+    const botId = `${id}-drain-bot`;
+    await prisma.bot.create({
+      data: {
+        id: botId,
+        spaceId: actor.spaceId,
+        userId: actor.userId,
+        name: "Drain Test",
+        color: "test",
+      },
+    });
+    const target = { ...scope, threadId, botId };
+    await prisma.thread.create({
+      data: { spaceId: target.spaceId, botId: target.botId, id: threadId, userId: actor.userId },
+    });
+    const task = await prisma.task.create({
+      data: { ...target, userId: actor.userId, prompt: "", status: "running" },
+    });
+    const run = await prisma.run.create({
+      data: {
+        ...target,
+        taskId: task.id,
+        userId: actor.userId,
+        status: "running",
+        trigger: "follow_up",
+        leaseOwner: "drain-worker",
+        leaseFence: 1,
+        leaseExpiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    const runtime = { ...target, runId: run.id, leaseOwner: "drain-worker", leaseFence: 1 };
+    let snapshot = await listPremoveQueue(prisma, actor, target);
+    for (const [index, text] of ["first", "second", "/compact"].entries()) {
+      const reply = await mutatePremoveQueue(prisma, actor, {
+        ...target,
+        requestId: `enqueue-${index}`,
+        expectedRevision: snapshot.revision,
+        operation: { type: "enqueue", lane: index === 1 ? "followUp" : "steer", text },
+      });
+      expect(reply.ok).toBe(true);
+      snapshot = reply.snapshot;
+    }
+    const request = {
+      ...target,
+      requestId: "drain",
+      expectedRevision: snapshot.revision,
+      operation: { type: "drain" as const },
+    };
+    expect((await mutatePremoveQueue(prisma, actor, request)).ok).toBe(true);
+    const send = vi.fn();
+    const sendBatch = vi.fn(async (rows) => {
+      const durable = await listPremoveQueue(prisma, actor, target);
+      expect(durable.inFlight?.rowIds).toEqual(rows.map((row: { id: string }) => row.id));
+      expect(rows.map((row: { text: string }) => row.text)).toEqual(["first", "second"]);
+      return { outcome: "accepted" as const };
+    });
+    await Promise.all([
+      dispatchPremoveQueue(prisma, runtime, "turn-end", { send, sendBatch }),
+      dispatchPremoveQueue(prisma, runtime, "turn-end", { send, sendBatch }),
+    ]);
+    expect(sendBatch).toHaveBeenCalledOnce();
+    expect(send).not.toHaveBeenCalled();
+    expect((await mutatePremoveQueue(prisma, actor, request)).ok).toBe(true);
+    const after = await listPremoveQueue(prisma, actor, target);
+    expect(after.rows.map((row) => row.text)).toEqual(["/compact"]);
+    expect(after.paused).toBe(true);
+    expect(after.inFlight).toBeUndefined();
+  });
+
   afterAll(async () => {
     if (prisma) {
       await prisma.organization.deleteMany({ where: { id } });

@@ -19,6 +19,25 @@ import { JsonPeer } from "./pi-rpc-transport.js";
 const PROBE_TIMEOUT_MS = 15_000;
 const MAX_PUBLIC_LABEL = 500;
 
+export type PiModelRuntimeErrorCode =
+  | "PI_NOT_CONFIGURED"
+  | "PI_WORKSPACE_UNAVAILABLE"
+  | "PI_START_FAILED"
+  | "PI_DISCOVERY_TIMEOUT"
+  | "PI_DISCONNECTED"
+  | "PI_PROTOCOL_FAILED"
+  | "PI_DISCOVERY_FAILED";
+
+export class PiModelRuntimeError extends Error {
+  constructor(
+    readonly code: PiModelRuntimeErrorCode,
+    options?: ErrorOptions,
+  ) {
+    super(code, options);
+    this.name = "PiModelRuntimeError";
+  }
+}
+
 export type PiModelProfile = {
   catalog: ModelCatalogEntry[];
   profileDefault: ModelSelection | null;
@@ -79,13 +98,14 @@ function catalogEntry(value: unknown, levels: ThinkingLevel[]): ModelCatalogEntr
 }
 
 export function unavailablePiModelRuntime(reason: string): PiModelRuntimeService {
-  const message = reason.trim() || "Pi model runtime is unavailable";
+  // Configuration details may contain private paths; never expose the supplied reason.
+  void reason;
   return {
     read: async () => {
-      throw new Error(message);
+      throw new PiModelRuntimeError("PI_NOT_CONFIGURED");
     },
     validate: async () => {
-      throw new Error(message);
+      throw new PiModelRuntimeError("PI_NOT_CONFIGURED");
     },
   };
 }
@@ -128,7 +148,8 @@ export class LocalPiModelRuntimeService implements PiModelRuntimeService {
             }
           : null;
         const availableModels = record(availableValue).models;
-        const values: unknown[] = Array.isArray(availableModels) ? availableModels : [];
+        if (!Array.isArray(availableModels)) throw new PiModelRuntimeError("PI_PROTOCOL_FAILED");
+        const values: unknown[] = availableModels;
         const catalog: ModelCatalogEntry[] = [];
         const seen = new Set<string>();
         for (const value of values) {
@@ -219,7 +240,9 @@ export class LocalPiModelRuntimeService implements PiModelRuntimeService {
       ? AbortSignal.any([signal, AbortSignal.timeout(PROBE_TIMEOUT_MS)])
       : AbortSignal.timeout(PROBE_TIMEOUT_MS);
     probeSignal.throwIfAborted();
-    const probeCwd = await this.probeCwd(cwd);
+    const probeCwd = await this.probeCwd(cwd).catch((cause: unknown) => {
+      throw new PiModelRuntimeError("PI_WORKSPACE_UNAVAILABLE", { cause });
+    });
     probeSignal.throwIfAborted();
     const child = spawn(this.command, localPiRpcArguments(), {
       cwd: probeCwd,
@@ -238,9 +261,9 @@ export class LocalPiModelRuntimeService implements PiModelRuntimeService {
       try {
         await exited;
       } catch (error) {
-        throw new Error("Pi model probe could not start", { cause: error });
+        throw new PiModelRuntimeError("PI_START_FAILED", { cause: error });
       }
-      throw new Error("Pi model probe did not expose an owned process id");
+      throw new PiModelRuntimeError("PI_START_FAILED");
     }
     child.stderr.resume();
     let peer: JsonPeer | undefined;
@@ -270,6 +293,23 @@ export class LocalPiModelRuntimeService implements PiModelRuntimeService {
       );
       void peer.finished.catch(() => undefined);
       return await operation(peer, probeSignal);
+    } catch (cause) {
+      if (signal?.aborted) throw signal.reason;
+      if (probeSignal.aborted) {
+        throw new PiModelRuntimeError("PI_DISCOVERY_TIMEOUT", { cause });
+      }
+      if (cause instanceof PiModelRuntimeError) throw cause;
+      if (cause instanceof Error && cause.message === "Managed RPC disconnected") {
+        throw new PiModelRuntimeError("PI_DISCONNECTED", { cause });
+      }
+      if (
+        cause instanceof SyntaxError ||
+        (cause instanceof Error &&
+          (cause.message.startsWith("Managed RPC") || cause.message === "Pi command rejected"))
+      ) {
+        throw new PiModelRuntimeError("PI_PROTOCOL_FAILED", { cause });
+      }
+      throw cause;
     } finally {
       await peer?.close().catch(() => undefined);
       await stopProbe(child, exited);

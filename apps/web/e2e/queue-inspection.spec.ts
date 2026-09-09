@@ -15,6 +15,9 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
         lane: "followUp",
         text: "Review the patch",
         images: [],
+        attachments: [
+          { artifactId: "artifact-fixture", name: "notes.txt", mimeType: "text/plain", size: 12 },
+        ],
         placement: {
           version: 1,
           kind: "unbound",
@@ -232,45 +235,41 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
       },
     }),
   );
-  await page.route("**/rpc/models/credentials", (route) =>
-    route.fulfill({
-      json: {
-        json: [{ id: "local", provider: "local", label: "Local", hasKey: false, isDefault: true }],
-      },
-    }),
-  );
-  await page.route("**/rpc/models/list", (route) =>
-    route.fulfill({
-      json: {
-        json: [
-          {
-            provider: "local",
-            id: "small",
-            label: "Small",
-            billing: "local",
-            thinkingLevels: ["low", "high"],
-          },
-          {
-            provider: "local",
-            id: "large",
-            label: "Large",
-            billing: "local",
-            thinkingLevels: ["low", "high"],
-          },
-        ],
-      },
-    }),
-  );
-  await page.route("**/rpc/models/getVisibility", (route) =>
-    route.fulfill({ json: { json: { hide: [] } } }),
-  );
   const effective = { provider: "local", modelId: "small", thinkingLevel: null };
-  await page.route("**/rpc/models/getSelection", (route) =>
+  let requestedModel: unknown;
+  await page.route("**/rpc/models/runtime", (route) =>
     route.fulfill({
-      json: { json: { requested: effective, effective, status: "applied", error: null } },
+      json: {
+        json: {
+          catalog: [
+            {
+              provider: "local",
+              id: "small",
+              label: "Small",
+              billing: "local",
+              thinkingLevels: ["low", "high"],
+            },
+            {
+              provider: "local",
+              id: "large",
+              label: "Large",
+              billing: "local",
+              thinkingLevels: ["low", "high"],
+            },
+          ],
+          current: effective,
+          profileDefault: effective,
+          selection: {
+            requested: requestedModel ?? effective,
+            effective,
+            status: requestedModel === undefined ? "applied" : "pending",
+            error: null,
+          },
+          availability: { status: "available", error: null },
+        },
+      },
     }),
   );
-  let requestedModel: unknown;
   await page.route("**/rpc/models/setWorkerSelection", (route) => {
     const input = route.request().postDataJSON().json;
     expect(input).toMatchObject({ botId: "bot", threadId: "thread", participantId: "worker" });
@@ -287,14 +286,20 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
     });
   });
   await page.goto("/e2e/fixtures/queue-inspection.html");
-  await expect(page.getByRole("button", { name: "Queue · 2", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Queue", exact: true })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Queued message", exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Queue · 2", exact: true }).click();
+  await page.getByRole("button", { name: "Add queued message", exact: true }).click();
+  await expect(
+    page
+      .getByRole("region", { name: "Queue", exact: true })
+      .getByRole("button", { name: "Execution" }),
+  ).toHaveCount(0);
+  await expect(page.locator('[data-row-id="second"]')).toHaveClass(/ms-5/);
   await expect(page.getByRole("button", { name: "Use current project" })).toBeEnabled();
   const first = page.locator('[data-row-id="first"]');
   await first.getByRole("button", { name: "Edit", exact: true }).click();
   await page.getByRole("textbox", { name: "Edit queued message" }).fill("Review the actual patch");
-  await first.getByLabel("Add attachments").setInputFiles({
+  await first.getByLabel("Attachment files").setInputFiles({
     name: "pixel.png",
     mimeType: "image/png",
     buffer: Buffer.from(
@@ -308,23 +313,38 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
   await expect(first.getByAltText("Attachment 1")).toBeVisible();
   await expect(first.getByRole("textbox", { name: "Edit queued message" })).toHaveCount(0);
   expect(snapshot.rows[0]?.images[0]?.mimeType).toBe("image/png");
-  await first.getByRole("button", { name: "Steer", exact: true }).click();
-  await expect(first.getByRole("button", { name: "Follow-up", exact: true })).toBeVisible();
-  await first.getByRole("button", { name: "Hold", exact: true }).click();
+  await expect(first).toContainText("notes.txt");
+  expect(snapshot.rows[0]?.attachments?.[0]?.artifactId).toBe("artifact-fixture");
+  await first.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(first.getByAltText("Attachment 1")).toBeVisible();
+  await first.getByRole("textbox").fill("Keep existing attachments");
+  await first.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(first).toContainText("Keep existing attachments");
+  expect(snapshot.rows[0]?.images).toHaveLength(1);
+  expect(snapshot.rows[0]?.attachments?.[0]?.artifactId).toBe("artifact-fixture");
+  await first.getByLabel("Message options", { exact: true }).click();
+  await page.getByRole("menuitem", { name: "Steer", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Follow-up", exact: true })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Hold", exact: true }).click();
   await expect(first).toContainText("Held");
-  await first.getByRole("button", { name: "Move down", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Move down", exact: true }).click();
   await expect(page.locator("[data-row-id]").first()).toHaveAttribute("data-row-id", "second");
+  await page.getByRole("menu").press("Escape");
   await page.getByRole("button", { name: "Resume", exact: true }).click();
   await page.getByRole("button", { name: "Pause", exact: true }).click();
-  await page.getByRole("button", { name: "Pause after tools", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Pause pending" })).toBeDisabled();
+  await page.getByLabel("Queue options", { exact: true }).click();
+  await page.getByRole("menuitem", { name: "Pause after tools", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Pause pending" })).toBeDisabled();
+  await page.getByRole("menu").press("Escape");
   await page.getByRole("textbox", { name: "Queued message", exact: true }).fill("Next run");
   await page.getByRole("button", { name: "Queue message", exact: true }).click();
   await expect(page.locator('[data-row-id="third"]')).toContainText("Next run");
+  await expect(page.getByRole("textbox", { name: "Queued message", exact: true })).toHaveCount(0);
   await page
     .locator('[data-row-id="third"]')
-    .getByRole("button", { name: "Remove", exact: true })
+    .getByLabel("Message options", { exact: true })
     .click();
+  await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
   await expect(page.locator('[data-row-id="third"]')).toHaveCount(0);
   await captureScreenshot(page, testInfo, "queue-controls");
   await page.getByRole("button", { name: "Execution", exact: true }).click();
@@ -334,20 +354,22 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
   await expectAlignedControls(runSelect, flowButton);
   await expect(execution.getByRole("button", { name: "Model", exact: true })).toHaveCount(1);
   await execution.getByRole("button", { name: "Model", exact: true }).click();
-  await execution
-    .getByRole("combobox", { name: "Model", exact: true })
-    .selectOption("local::large");
+  await execution.getByRole("option", { name: "Large local/large", exact: true }).click();
   await execution.getByRole("combobox", { name: "Thinking", exact: true }).selectOption("high");
-  await execution.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(execution.getByText("Pending · Effective: small")).toBeVisible();
+  await execution.getByRole("button", { name: "Use model", exact: true }).click();
+  await expect(execution.getByTestId("current-model")).toHaveText("Current: local/small");
+  await expect(
+    execution.getByText(`Pending · local/${requestedModel ? "large" : "small"}`, { exact: true }),
+  ).toBeVisible();
   expect(requestedModel).toEqual({ provider: "local", modelId: "large", thinkingLevel: "high" });
   await captureScreenshot(page, testInfo, "execution-worker-model");
   await execution.getByRole("button", { name: "Use bot model", exact: true }).click();
   await expect.poll(() => requestedModel).toBeNull();
-  await expect(execution.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(
-    "local::small",
-  );
-  await expect(execution.getByText("Pending · Effective: small")).toBeVisible();
+  await expect(execution.getByTestId("selected-model")).toHaveText("Selected: local/small");
+  await expect(execution.getByTestId("current-model")).toHaveText("Current: local/small");
+  await expect(
+    execution.getByText(`Pending · local/${requestedModel ? "large" : "small"}`, { exact: true }),
+  ).toBeVisible();
   await execution.getByRole("button", { name: "Model", exact: true }).click();
   await page.getByText("agent.tool.called", { exact: false }).click();
   await expect(page.getByText("npm test", { exact: false })).toBeVisible();
@@ -433,6 +455,9 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
   );
   await expect(outline.getByText("return 2;", { exact: true })).toBeVisible();
   expect(operations.map((operation) => operation.type)).toEqual([
+    "edit-begin",
+    "edit-patch",
+    "edit-save",
     "edit-begin",
     "edit-patch",
     "edit-save",

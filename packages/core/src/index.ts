@@ -34,6 +34,7 @@ export * from "./model-options.js";
 export * from "./model-probe.js";
 export * from "./model-providers.js";
 export * from "./peer-messages.js";
+export * from "./premove-drain.js";
 export * from "./premove-queue.js";
 export * from "./queue-client.js";
 export * from "./queue-control.js";

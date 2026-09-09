@@ -2,6 +2,21 @@ import { expect, it } from "vitest";
 import { QueueMutationSchema } from "./queue.js";
 import { appContract } from "./rpc.js";
 
+it("accepts drain only as a server-selected revisioned operation", () => {
+  const input = {
+    threadId: "thread",
+    botId: "bot",
+    requestId: "drain",
+    expectedRevision: 1,
+    operation: { type: "drain" },
+  };
+  expect(QueueMutationSchema.safeParse(input).success).toBe(true);
+  expect(
+    QueueMutationSchema.safeParse({ ...input, operation: { type: "drain", rowIds: ["skip"] } })
+      .success,
+  ).toBe(false);
+});
+
 it("registers public queue and execution endpoints", () => {
   expect(appContract.queue.list).toBeDefined();
   expect(appContract.queue.mutate).toBeDefined();

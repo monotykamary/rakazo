@@ -90,6 +90,7 @@ import {
   ArrowUp,
   Bell,
   Box,
+  Brain,
   ChevronDown,
   Clock,
   Copy,
@@ -144,6 +145,7 @@ import {
 import { MessageActivityLinks } from "../components/MessageActivityLinks";
 import { MessageHoverMetadata } from "../components/MessageHoverMetadata";
 import { ThreadInspector, type ThreadInspectorTarget } from "../components/ThreadInspector";
+import { ThreadQueue } from "../components/ThreadQueue";
 import { SkillDraftCard } from "../components/teach/SkillDraftCard";
 import { TeachCaptureOverlay } from "../components/teach/TeachCaptureOverlay";
 import { TeachComputerOverlayControl } from "../components/teach/TeachComputerOverlay";
@@ -364,6 +366,7 @@ export function ShellPage() {
   const [panel, setPanel] = useState<Panel>(null);
   const officePromptPending = useRef(false);
   const [threadInspector, setThreadInspector] = useState<ThreadInspectorTarget | null>(null);
+  const [queueOpen, setQueueOpen] = useState<boolean | undefined>();
   const [peerConversation, setPeerConversation] = useState<{
     botId?: string;
     peerBotId: string;
@@ -474,6 +477,29 @@ export function ShellPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const desktopSidebar = useMotionMedia("(min-width: 768px)");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  useEffect(() => {
+    if (desktopSidebar) {
+      setMobileSidebarOpen(false);
+      return;
+    }
+    if (!mobileSidebarOpen) return;
+    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = requestAnimationFrame(() => {
+      document.querySelector<HTMLButtonElement>("#bots-sidebar button:not([disabled])")?.focus();
+    });
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) {
+        event.preventDefault();
+        setMobileSidebarOpen(false);
+      }
+    };
+    window.addEventListener("keydown", dismiss);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("keydown", dismiss);
+      trigger?.focus();
+    };
+  }, [desktopSidebar, mobileSidebarOpen]);
   const [draggedBotId, setDraggedBotId] = useState<string | null>(null);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [botsSidebarCollapsed, setBotsSidebarCollapsed] = useState(false);
@@ -1645,6 +1671,7 @@ export function ShellPage() {
   );
   useEffect(() => {
     setThreadInspector(null);
+    setQueueOpen(undefined);
     setPeerConversation(null);
   }, [activeSnapshot?.threadId]);
   const transcriptMembers = activeSnapshot?.members ?? activeGroup?.members;
@@ -2171,6 +2198,7 @@ export function ShellPage() {
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setPanel(null);
       setThreadInspector(null);
+      setQueueOpen(undefined);
       setPeerConversation(peer);
     },
     [],
@@ -2478,14 +2506,16 @@ export function ShellPage() {
       {bootstrapMe !== undefined ? (
         <HostComputerPrompt initialMe={bootstrapMe ?? undefined} />
       ) : null}
-      {mobileSidebarOpen ? (
-        <button
-          type="button"
-          aria-label={t`Close navigation`}
-          onClick={() => setMobileSidebarOpen(false)}
-          className="absolute inset-y-0 end-0 start-[min(calc(100%-48px),316px)] z-30 bg-overlay md:hidden"
-        />
-      ) : null}
+      <SpringButton
+        type="button"
+        animate={{ opacity: mobileSidebarOpen && !desktopSidebar ? 1 : 0 }}
+        data-testid="navigation-backdrop"
+        aria-label={t`Close navigation`}
+        aria-hidden={!mobileSidebarOpen || desktopSidebar || undefined}
+        tabIndex={mobileSidebarOpen && !desktopSidebar ? 0 : -1}
+        onClick={() => setMobileSidebarOpen(false)}
+        className={`absolute inset-0 z-30 bg-overlay backdrop-blur-sm md:hidden ${mobileSidebarOpen ? "" : "pointer-events-none"}`}
+      />
       <SpringAside
         animate={
           desktopSidebar
@@ -2499,6 +2529,7 @@ export function ShellPage() {
                     : "-100%",
               }
         }
+        id="bots-sidebar"
         data-testid="bots-sidebar"
         data-collapsed={botsSidebarCollapsed ? "true" : "false"}
         inert={desktopSidebar ? botsSidebarCollapsed : !mobileSidebarOpen}
@@ -2974,7 +3005,8 @@ export function ShellPage() {
               <PopoverContent
                 side="top"
                 align="start"
-                className="w-[calc(316px-1.5rem)] max-w-[calc(100vw-3rem)] gap-0 p-1 data-closed:animate-none"
+                data-testid="account-menu"
+                className="w-[calc(316px-1.5rem)] max-w-[calc(100vw-3rem)] gap-0 p-1 data-closed:animate-none [&>button]:grid [&>button]:grid-cols-[1rem_1fr] [&>button]:gap-2 [&>button]:text-start [&>button>svg]:size-4 [&>button>svg]:shrink-0"
               >
                 <Button
                   variant="ghost"
@@ -2986,7 +3018,12 @@ export function ShellPage() {
                     setAccountSettingsOpen(true);
                   }}
                 >
-                  <span className="text-muted-foreground">⚙</span>
+                  <Settings
+                    size={16}
+                    strokeWidth={1.7}
+                    aria-hidden="true"
+                    className="text-muted-foreground"
+                  />
                   <Trans>Settings</Trans>
                 </Button>
                 <Button
@@ -2997,7 +3034,12 @@ export function ShellPage() {
                     setModelsOpen(true);
                   }}
                 >
-                  <Cpu size={16} strokeWidth={1.7} className="text-muted-foreground" />
+                  <Cpu
+                    size={16}
+                    strokeWidth={1.7}
+                    aria-hidden="true"
+                    className="text-muted-foreground"
+                  />
                   <Trans>Models</Trans>
                 </Button>
                 <Button
@@ -3008,9 +3050,12 @@ export function ShellPage() {
                     setMemorySettingsOpen(true);
                   }}
                 >
-                  <span aria-hidden="true" className="text-muted-foreground">
-                    ◇
-                  </span>
+                  <Brain
+                    size={16}
+                    strokeWidth={1.7}
+                    aria-hidden="true"
+                    className="text-muted-foreground"
+                  />
                   <Trans>Memory</Trans>
                 </Button>
                 <Button
@@ -3021,7 +3066,12 @@ export function ShellPage() {
                     setVoiceOpen(true);
                   }}
                 >
-                  <Volume2 size={16} strokeWidth={1.7} className="text-muted-foreground" />
+                  <Volume2
+                    size={16}
+                    strokeWidth={1.7}
+                    aria-hidden="true"
+                    className="text-muted-foreground"
+                  />
                   <Trans>Voice</Trans>
                 </Button>
                 <Button
@@ -3031,7 +3081,12 @@ export function ShellPage() {
                     setUsage(await rpc.usage.summary());
                   }}
                 >
-                  <Gauge size={16} strokeWidth={1.7} className="text-muted-foreground" />
+                  <Gauge
+                    size={16}
+                    strokeWidth={1.7}
+                    aria-hidden="true"
+                    className="text-muted-foreground"
+                  />
                   <Trans>Usage</Trans>
                 </Button>
                 {usage ? (
@@ -3051,7 +3106,12 @@ export function ShellPage() {
                     })
                   }
                 >
-                  <LogOut size={16} strokeWidth={1.7} className="text-muted-foreground" />
+                  <LogOut
+                    size={16}
+                    strokeWidth={1.7}
+                    aria-hidden="true"
+                    className="text-muted-foreground"
+                  />
                   <Trans>Log out</Trans>
                 </Button>
               </PopoverContent>
@@ -3064,9 +3124,15 @@ export function ShellPage() {
         type="button"
         data-testid="bots-sidebar-edge"
         aria-label={botsSidebarCollapsed ? t`Show bots` : t`Hide bots`}
-        aria-pressed={!botsSidebarCollapsed}
+        aria-expanded={!botsSidebarCollapsed}
+        aria-controls="bots-sidebar"
+        title={botsSidebarCollapsed ? t`Show bots` : t`Hide bots`}
         animate={{ insetInlineStart: botsSidebarCollapsed ? 0 : 308 }}
-        className="absolute inset-y-0 z-50 hidden w-2 cursor-ew-resize touch-none border-0 bg-transparent p-0 md:block"
+        className={`app-no-drag z-50 hidden touch-none p-0 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring md:block ${
+          botsSidebarCollapsed
+            ? "w-10 shrink-0 self-stretch border-e border-sidebar-border bg-sidebar pt-5 flex-col justify-start md:flex"
+            : "absolute inset-y-0 w-2 cursor-ew-resize border-0 bg-transparent"
+        }`}
         onClick={(event) => {
           if (event.detail === 0) setBotsSidebarCollapsedPref(!botsSidebarCollapsed);
         }}
@@ -3103,12 +3169,21 @@ export function ShellPage() {
         onPointerCancel={() => {
           botsSidebarEdgeDragRef.current = null;
         }}
-      />
+      >
+        {botsSidebarCollapsed ? (
+          <PanelLeftClose
+            size={18}
+            strokeWidth={1.8}
+            aria-hidden="true"
+            className="mx-auto rotate-180"
+          />
+        ) : null}
+      </SpringButton>
 
       <main
         aria-hidden={mobileSidebarOpen || undefined}
         inert={mobileSidebarOpen}
-        className="relative flex min-w-0 flex-1 flex-col bg-background"
+        className="relative z-0 flex min-w-0 flex-1 flex-col bg-background"
       >
         <div
           className={peerConversation ? "invisible contents" : "contents"}
@@ -3157,34 +3232,6 @@ export function ShellPage() {
               </button>
             </div>
             <div className="flex items-center gap-1">
-              {activeSnapshot?.threadId && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="app-no-drag"
-                        aria-label={t`Advanced`}
-                      />
-                    }
-                  >
-                    <MoreHorizontal size={18} />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      onClick={() => setThreadInspector({ view: "queue" })}
-                    >{t`Queue`}</DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={
-                        !activeSnapshot.messages.some((message) => message.runId) &&
-                        !currentRuns.length
-                      }
-                      onClick={() => setThreadInspector({ view: "execution" })}
-                    >{t`Execution`}</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
               {!inGroup && active ? (
                 <button
                   type="button"
@@ -3296,6 +3343,21 @@ export function ShellPage() {
               ]}
             />
           )}
+          {activeSnapshot?.threadId && (active || activeGroup) && !recordingSkill && (
+            <ThreadQueue
+              key={activeSnapshot.threadId}
+              threadId={activeSnapshot.threadId}
+              members={
+                inGroup
+                  ? (transcriptMembers ?? [])
+                  : active
+                    ? [{ botId: active.id, name: active.name }]
+                    : []
+              }
+              open={queueOpen}
+              onOpenChange={setQueueOpen}
+            />
+          )}
           {active || activeGroup ? (
             <Composer
               key={inGroup ? `group:${groupId}` : `bot:${active?.id}`}
@@ -3308,6 +3370,9 @@ export function ShellPage() {
               runError={displayedRunError}
               runErrorId={displayedRunErrorId}
               onRunErrorPresented={handleRunErrorPresented}
+              onInspectRun={(runId) =>
+                setThreadInspector({ view: "execution", runId, botId: active?.id })
+              }
               onDismissError={dismissComposerError}
               sending={sending}
               fileInputRef={fileInputRef}
@@ -3972,9 +4037,7 @@ export function ShellPage() {
           open={commandPaletteOpen}
           onOpenChange={setCommandPaletteOpen}
           bots={bots}
-          onOpenQueue={
-            activeSnapshot?.threadId ? () => setThreadInspector({ view: "queue" }) : undefined
-          }
+          onOpenQueue={activeSnapshot?.threadId ? () => setQueueOpen(true) : undefined}
           onSelectBot={(id) => {
             setMobileSidebarOpen(false);
             navigate(`/app/${id}`);
@@ -4614,6 +4677,7 @@ const Composer = memo(function Composer({
   runError,
   runErrorId,
   onRunErrorPresented,
+  onInspectRun,
   onDismissError,
   sending,
   fileInputRef,
@@ -4640,6 +4704,7 @@ const Composer = memo(function Composer({
   runError: string | null;
   runErrorId: string | null;
   onRunErrorPresented: (runId: string) => void;
+  onInspectRun?: (runId: string) => void;
   onDismissError: () => void;
   sending: boolean;
   fileInputRef: RefObject<HTMLInputElement | null>;
@@ -4931,6 +4996,17 @@ const Composer = memo(function Composer({
           className="mb-3 flex items-center gap-2 rounded-[14px] border border-destructive/40 bg-destructive/10 px-4 py-2 text-[13px] text-destructive"
         >
           <span className="min-w-0 flex-1">{sendError ?? runError}</span>
+          {!sendError && runErrorId && onInspectRun && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label={t`Inspect failed run`}
+              onClick={() => onInspectRun(runErrorId)}
+            >
+              <Trans>Details</Trans>
+            </Button>
+          )}
           <button
             type="button"
             aria-label={t`Dismiss error`}

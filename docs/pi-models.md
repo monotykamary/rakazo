@@ -8,7 +8,7 @@ The Models screen is a searchable inventory. Its **Pi profile default** is the s
 
 A requested selection is pending until the execution process acknowledges it through Pi RPC. An unavailable model is not silently replaced. Clearing a bot's override returns selection authority to its Pi session; clearing a worker override inherits the bot's selection. Neither operation writes Pi's global defaults.
 
-Catalog and reasoning discovery use the same Pi executable, profile and trusted resource policy as execution. An unavailable runtime is an error, not a reason to show a static provider list. Configure models and credentials through Pi's own setup on that office. Refresh the inventory after changing Pi configuration.
+Catalog and reasoning discovery use the same Pi executable, profile and trusted resource policy as execution. An unavailable runtime is an error, not a reason to show a static provider list. Configure models and credentials through Pi's own setup on that office. Refresh the inventory after changing Pi configuration. Source development preserves the caller’s executable search path for Pi subprocesses, so package-runner binaries cannot shadow a configured forwarding launcher. Restart the dev launcher after updating this behavior; an existing worker must drain before adopting the new launch configuration.
 
 ## Deployment support
 

@@ -187,6 +187,8 @@ function deliveryMarker(id: string): string {
 
 export function sanitizedLocalPiEnvironment(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env = { ...process.env };
+  if (env.RAKAZO_DEV_PI_PATH !== undefined) env.PATH = env.RAKAZO_DEV_PI_PATH;
+  delete env.RAKAZO_DEV_PI_PATH;
   for (const name of INHERITED_SESSION_ENV) delete env[name];
   delete env[BRIDGE_ENV];
   return { ...env, ...extra };

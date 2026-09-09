@@ -11,6 +11,7 @@ import {
   consent,
   databasePlan,
   defaults,
+  devStartupMessage,
   ensureDatabase,
   environmentAdditions,
   executable,
@@ -31,6 +32,20 @@ import {
   waitFor,
 } from "../../../scripts/dev.mjs";
 
+import { WorkerConfigurationError } from "../../../scripts/dev-worker.mjs";
+
+it("reports authenticated worker configuration drift without exposing arbitrary exceptions", () => {
+  expect(devStartupMessage(new WorkerConfigurationError())).toContain(
+    "different launch configuration",
+  );
+  expect(devStartupMessage(new WorkerConfigurationError())).toContain(
+    "scripts/dev-worker.mjs stop",
+  );
+  expect(
+    devStartupMessage(new Error("postgresql://fake:private@example.invalid/db")),
+  ).not.toContain("private");
+});
+
 const temporary: string[] = [];
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "rakazo-dev-test-"));
@@ -43,6 +58,16 @@ afterEach(async () => {
 
 // These tests read only synthetic .env files under fresh temporary directories.
 describe("source dev consent and environment", () => {
+  it("preserves Pi caller PATH without changing the service PATH", () => {
+    const values = { PATH: "/caller/bin:/system/bin" };
+    const env = runtimeEnvironment("/checkout", values, "/caller/bin/pi");
+    expect(env.PATH).toBe(values.PATH);
+    expect(env.RAKAZO_DEV_PI_PATH).toBe(values.PATH);
+    expect(
+      runtimeEnvironment("/checkout", { ...env, PATH: "/package/bin" }, "pi").RAKAZO_DEV_PI_PATH,
+    ).toBe(values.PATH);
+    expect(values).not.toHaveProperty("RAKAZO_DEV_PI_PATH");
+  });
   it("respects absolute Pi cwd overrides and refuses relative ones", () => {
     expect(
       runtimeEnvironment("/checkout", { RAKAZO_PI_CWD: "/other/source" }, "pi").RAKAZO_PI_CWD,

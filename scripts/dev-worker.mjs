@@ -15,6 +15,15 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+export class WorkerConfigurationError extends Error {
+  constructor() {
+    super(
+      "The running worker uses a different launch configuration. Run node scripts/dev-worker.mjs stop, wait until node scripts/dev-worker.mjs status reports stopped, then run bun run dev from the same terminal. Active tasks are drained, not killed.",
+    );
+    this.name = "WorkerConfigurationError";
+  }
+}
+
 const here = fileURLToPath(import.meta.url);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const fail = () =>
@@ -146,7 +155,15 @@ export async function workerRequest(location, action, expectedConfig) {
       ...(expectedConfig ? { "x-worker-config": expectedConfig } : {}),
     },
   });
-  if (!response.ok) throw fail();
+  if (!response.ok) {
+    await response.body?.cancel();
+    if (response.status === 403 && expectedConfig && action === "status") {
+      // Verify ownership independently before diagnosing drift, including older managers.
+      await workerRequest(location, "status");
+      throw new WorkerConfigurationError();
+    }
+    throw fail();
+  }
   const result = await response.json();
   const proof = createHmac("sha256", token)
     .update(JSON.stringify([challenge, record.instance, result.state, result.workerPid]))

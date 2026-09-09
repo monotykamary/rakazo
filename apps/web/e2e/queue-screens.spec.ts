@@ -11,20 +11,27 @@ test("thread queue, retained Flow, and Pi inventory screens", async ({ page }, t
   await expect(page.getByRole("button", { name: /^Queue ·/ })).toHaveCount(0);
   await expect(page.getByText("Paused", { exact: true })).toHaveCount(0);
   await captureScreenshot(page, testInfo, "app-calm-empty-thread");
-  await page.getByRole("button", { name: "Advanced", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Queue", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "Queue", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Advanced", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Queue", exact: true }).click();
+  await expect(page.getByTestId("thread-queue")).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Queue", exact: true })).toHaveCount(0);
   await captureScreenshot(page, testInfo, "app-empty-queue-discovered");
   const pause = page.getByRole("button", { name: "Pause", exact: true });
   if (await pause.isVisible()) await pause.click();
   await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Add queued message", exact: true }).click();
   await page
     .getByRole("textbox", { name: "Queued message", exact: true })
     .fill("Review the retained work");
   await page.getByRole("button", { name: "Queue message", exact: true }).click();
   await expect(page.locator("[data-row-id]")).toContainText("Review the retained work");
+  // Before the first run there is no authorized project placement to drain into.
+  await expect(page.getByRole("button", { name: "Drain all", exact: true })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Use current project", exact: true }),
+  ).toBeVisible();
   await captureScreenshot(page, testInfo, "app-thread-queue");
-  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Queue", exact: true }).click();
 
   // Two real runs exercise the selector without depending on queued-work placement.
   const botId = activeBotId(page);
@@ -53,8 +60,7 @@ test("thread queue, retained Flow, and Pi inventory screens", async ({ page }, t
   await page.getByPlaceholder(/^Message /).fill("fail this run");
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page.getByTestId("composer-error")).toBeVisible({ timeout: 30_000 });
-  await page.getByRole("button", { name: "Advanced", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Execution", exact: true }).click();
+  await page.getByRole("button", { name: "Inspect failed run", exact: true }).click();
   await expect(page.getByRole("dialog").getByText("run.failed", { exact: false })).toBeVisible();
   const inspector = page.getByRole("dialog", { name: "Execution", exact: true });
   const runSelect = inspector.getByRole("combobox", { name: "Run", exact: true });

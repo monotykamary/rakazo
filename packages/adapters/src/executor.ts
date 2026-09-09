@@ -273,6 +273,7 @@ import {
   renderPlotSpecToSvg,
   searchChartCatalog,
 } from "./plot-tool.js";
+import { deliverPremoveDrain } from "./premove-drain.js";
 import { managePremoveTool } from "./premove-tools.js";
 import {
   buildProjectDiscoveryCommand,
@@ -3985,6 +3986,58 @@ export function createRunExecutor(deps: ExecutorDeps) {
                       );
                       placementSeeded = true;
                     }
+                    const prepareQueueMessage = async (
+                      row: Parameters<import("@rakazo/db").PremoveDispatchPorts["send"]>[0],
+                    ): Promise<import("@rakazo/adapter-kit").AgentSteeringMessage> => {
+                      const blocks = row.blocks ?? [];
+                      const { images, files, unavailableInstruction } =
+                        await settleSteeringAttachmentLoads(
+                          loadCurrentTurnImages(deps, blocks, context),
+                          deps.artifacts
+                            ? materializeCurrentTurnFiles(
+                                {
+                                  prisma: deps.prisma,
+                                  artifacts: deps.artifacts,
+                                  sandbox: deps.sandbox,
+                                },
+                                blocks,
+                                {
+                                  context,
+                                  computer,
+                                  computerMode,
+                                  markWorkspaceDirty: workspaceCheckpoint.markDirty,
+                                },
+                              )
+                            : Promise.resolve([]),
+                          blocks,
+                          context.signal,
+                        );
+                      workspaceCheckpoint.markFiles(files);
+                      return {
+                        id: row.id,
+                        participantId: row.target?.participantId,
+                        messageId: `queue:${row.id}`,
+                        text: [row.text, currentTurnFilesInstruction(files), unavailableInstruction]
+                          .filter(Boolean)
+                          .join("\n\n"),
+                        images: [
+                          ...(images ?? []),
+                          ...(row.images ?? []).map((image) => ({
+                            name: "queued-image",
+                            mimeType: image.mimeType as "image/png",
+                            data: Buffer.from(image.data, "base64"),
+                          })),
+                        ],
+                        ...(!row.target && row.placement.kind === "project"
+                          ? {
+                              placement: {
+                                cwd: row.placement.worktreePath ?? row.placement.projectPath!,
+                                worktreeId: row.placement.worktreePath ?? undefined,
+                              },
+                            }
+                          : {}),
+                      };
+                    };
                     await dispatchPremoveQueue(
                       deps.prisma,
                       scope,
@@ -4008,59 +4061,14 @@ export function createRunExecutor(deps: ExecutorDeps) {
                           });
                         },
                         send: async (row) => {
-                          const blocks = row.blocks ?? [];
-                          const { images, files, unavailableInstruction } =
-                            await settleSteeringAttachmentLoads(
-                              loadCurrentTurnImages(deps, blocks, context),
-                              deps.artifacts
-                                ? materializeCurrentTurnFiles(
-                                    {
-                                      prisma: deps.prisma,
-                                      artifacts: deps.artifacts,
-                                      sandbox: deps.sandbox,
-                                    },
-                                    blocks,
-                                    {
-                                      context,
-                                      computer,
-                                      computerMode,
-                                      markWorkspaceDirty: workspaceCheckpoint.markDirty,
-                                    },
-                                  )
-                                : Promise.resolve([]),
-                              blocks,
-                              context.signal,
-                            );
-                          workspaceCheckpoint.markFiles(files);
-                          await control.deliver({
-                            id: row.id,
-                            participantId: row.target?.participantId,
-                            messageId: `queue:${row.id}`,
-                            text: [
-                              row.text,
-                              currentTurnFilesInstruction(files),
-                              unavailableInstruction,
-                            ]
-                              .filter(Boolean)
-                              .join("\n\n"),
-                            images: [
-                              ...(images ?? []),
-                              ...(row.images ?? []).map((image) => ({
-                                name: "queued-image",
-                                mimeType: image.mimeType as "image/png",
-                                data: Buffer.from(image.data, "base64"),
-                              })),
-                            ],
-                            ...(!row.target && row.placement.kind === "project"
-                              ? {
-                                  placement: {
-                                    cwd: row.placement.worktreePath ?? row.placement.projectPath!,
-                                    worktreeId: row.placement.worktreePath ?? undefined,
-                                  },
-                                }
-                              : {}),
-                          });
+                          await control.deliver(await prepareQueueMessage(row));
                           return { outcome: "accepted" };
+                        },
+                        sendBatch: async (rows, dispatchContext) => {
+                          const messages = [];
+                          for (const row of rows) messages.push(await prepareQueueMessage(row));
+                          context.signal.throwIfAborted();
+                          return deliverPremoveDrain(messages, dispatchContext.attemptId, control);
                         },
                       },
                     );

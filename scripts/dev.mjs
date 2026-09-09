@@ -9,7 +9,7 @@ import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseEnv } from "node:util";
-import { ensureWorker, workerControl } from "./dev-worker.mjs";
+import { ensureWorker, WorkerConfigurationError, workerControl } from "./dev-worker.mjs";
 
 class DevError extends Error {}
 
@@ -215,6 +215,8 @@ export function runtimeEnvironment(root, values, command) {
     AGENT_RUNTIME: "pi-local",
     RAKAZO_TRUST_LOCAL_PI: "1",
     RAKAZO_PI_COMMAND: command,
+    // Package runners prepend their bins later; Pi wrappers must retain caller resolution.
+    RAKAZO_DEV_PI_PATH: values.RAKAZO_DEV_PI_PATH ?? values.PATH,
     RAKAZO_PI_CWD: values.RAKAZO_PI_CWD || root,
     SANDBOX_PROVIDER: "desktop",
     DATA_DIR: path.resolve(root, values.DATA_DIR || "data"),
@@ -912,14 +914,16 @@ export async function bootstrap({
   }
 }
 
+export function devStartupMessage(error) {
+  return error instanceof DevError || error instanceof WorkerConfigurationError
+    ? error.message
+    : "Dev startup failed. Check prerequisites and configuration; run node scripts/dev.mjs --help for options.";
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   bootstrap().catch((error) => {
     // Avoid accidentally logging a parsed URL, command output or credentials in exception messages.
-    console.error(
-      error instanceof DevError
-        ? error.message
-        : "Dev startup failed. Check prerequisites and configuration; run node scripts/dev.mjs --help for options.",
-    );
+    console.error(devStartupMessage(error));
     process.exitCode ||= 1;
   });
 }

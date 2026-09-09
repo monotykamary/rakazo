@@ -77,6 +77,74 @@ test("global inventory searches extension identities and labels only the Pi prof
   await captureScreenshot(page, testInfo, "pi-model-inventory-search");
 });
 
+test("global inventory hides stale availability through loading, failure and recovery", async ({
+  page,
+}, testInfo) => {
+  let release: (() => void) | undefined;
+  let fail = false;
+  let delayed = true;
+  await page.route("**/rpc/models/runtime", async (route) => {
+    if (delayed)
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    if (fail) return route.fulfill({ status: 503, body: "Unavailable" });
+    await route.fulfill({ json: { json: snapshot() } });
+  });
+  await page.goto("/e2e/fixtures/pi-models.html");
+  await expect(page.getByRole("button", { name: "Refreshing…" })).toBeDisabled();
+  await expect(page.getByText("No matching models", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("pi-profile-default")).toHaveCount(0);
+  await expect.poll(() => Boolean(release)).toBe(true);
+  release!();
+  await expect(page.getByRole("option")).toHaveCount(catalog.length);
+  release = undefined;
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(page.getByRole("option")).toHaveCount(0);
+  await expect(page.getByTestId("pi-profile-default")).toHaveCount(0);
+  fail = true;
+  await expect.poll(() => Boolean(release)).toBe(true);
+  release!();
+  await expect(page.getByRole("alert")).toHaveText("Could not refresh models");
+  await expect(page.getByText("No matching models", { exact: true })).toHaveCount(0);
+  await captureScreenshot(page, testInfo, "pi-model-inventory-refresh-failed");
+  delayed = false;
+  fail = false;
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(page.getByRole("option")).toHaveCount(catalog.length);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+for (const [code, message] of [
+  ["PI_NOT_CONFIGURED", "Configure the API's Pi runtime"],
+  ["PI_START_FAILED", "Check the API's Pi command and PATH"],
+  ["PI_DISCONNECTED", "Check the API's Pi command and PATH"],
+  ["PI_WORKSPACE_UNAVAILABLE", "Check the API's Pi workspace"],
+  ["PI_DISCOVERY_TIMEOUT", "Pi discovery timed out. Retry"],
+  ["PI_PROTOCOL_FAILED", "Check Pi RPC compatibility and extension output"],
+]) {
+  test(`global inventory explains ${code} without an empty search`, async ({ page }, testInfo) => {
+    await page.route("**/rpc/models/runtime", (route) =>
+      route.fulfill({
+        json: {
+          json: {
+            ...snapshot(),
+            catalog: [],
+            profileDefault: null,
+            availability: { status: "unavailable", error: code },
+          },
+        },
+      }),
+    );
+    await page.goto("/e2e/fixtures/pi-models.html");
+    await expect(page.getByRole("alert")).toHaveText(message!);
+    await expect(page.getByTestId("pi-profile-default")).toHaveCount(0);
+    await expect(page.getByRole("combobox", { name: "Search models" })).toHaveCount(0);
+    await expect(page.getByText("No matching models", { exact: true })).toHaveCount(0);
+    await captureScreenshot(page, testInfo, `pi-model-inventory-${code}`);
+  });
+}
+
 test("worker preserves unavailable intent, shows actual current, and handles pending and failed switches", async ({
   page,
 }, testInfo) => {

@@ -46,6 +46,32 @@ it("returns a held snapshot and actionable rejection when a paused context chang
   expect(jobs.enqueue).not.toHaveBeenCalled();
 });
 
+it("wakes an explicit drain even while its public snapshot stays paused", async () => {
+  const { emptyPremoveQueue } = await import("@rakazo/core");
+  const { mutateQueue } = await import("./queue.js");
+  queueMocks.mutate.mockResolvedValue({
+    version: 1,
+    ok: true,
+    requestId: "drain",
+    snapshot: emptyPremoveQueue("queue").view,
+  });
+  queueMocks.wake.mockResolvedValue("drain-run");
+  const jobs = { enqueue: vi.fn().mockResolvedValue(undefined) };
+  await mutateQueue(
+    {} as PrismaClient,
+    { userId: "user", spaceId: "space" },
+    {
+      threadId: "thread",
+      botId: "bot",
+      requestId: "drain",
+      expectedRevision: 0,
+      operation: { type: "drain" },
+    },
+    jobs,
+  );
+  expect(jobs.enqueue).toHaveBeenCalledOnce();
+});
+
 it("queue and execution routes require authentication before database access", async () => {
   const prisma = {
     thread: { findFirst: vi.fn() },

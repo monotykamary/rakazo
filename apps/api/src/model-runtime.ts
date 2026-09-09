@@ -1,5 +1,9 @@
 import { ORPCError } from "@orpc/server";
-import type { PiModelRuntimeService } from "@rakazo/adapters";
+import {
+  PiModelRuntimeError,
+  type PiModelRuntimeErrorCode,
+  type PiModelRuntimeService,
+} from "@rakazo/adapters";
 import type {
   Actor,
   ModelRuntimeScope,
@@ -40,13 +44,14 @@ async function resolveScope(
 function unavailable(
   current: ModelSelectionStatus["effective"],
   selection: ModelSelectionStatus | null,
+  error: PiModelRuntimeErrorCode | "PI_SCOPE_UNSUPPORTED",
 ): ModelRuntimeSnapshot {
   return {
     catalog: [],
     profileDefault: null,
     current,
     selection,
-    availability: { status: "unavailable", error: "Pi model runtime is unavailable" },
+    availability: { status: "unavailable", error },
   };
 }
 
@@ -61,9 +66,9 @@ export async function readPiModelRuntime(input: {
   const checkpoint = scope ? await getAuthorizedModelState(input.prisma, input.actor, scope) : null;
   const selection = scope ? await getPiModelSelection(input.prisma, input.actor, scope) : null;
   const current = selection?.effective ?? null;
-  if (!input.models) return unavailable(current, selection);
+  if (!input.models) return unavailable(current, selection, "PI_NOT_CONFIGURED");
   if (scope && input.models.supportsCheckpoint?.(checkpoint) !== true) {
-    return unavailable(current, selection);
+    return unavailable(current, selection, "PI_SCOPE_UNSUPPORTED");
   }
   try {
     const profile = await input.models.read(input.signal);
@@ -73,7 +78,12 @@ export async function readPiModelRuntime(input: {
       selection,
       availability: { status: "available", error: null },
     };
-  } catch {
-    return unavailable(current, selection);
+  } catch (error) {
+    if (input.signal?.aborted) throw input.signal.reason;
+    return unavailable(
+      current,
+      selection,
+      error instanceof PiModelRuntimeError ? error.code : "PI_DISCOVERY_FAILED",
+    );
   }
 }

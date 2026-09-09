@@ -119,12 +119,16 @@ export function QueueStrip({
   botId,
   runIds = [],
   initialView,
+  open: controlledOpen,
+  onOpenChange,
   onClose,
 }: {
   threadId: string;
   botId: string;
   runIds?: string[];
   initialView?: "queue" | "execution";
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   onClose?: () => void;
 }) {
   const { t } = useI18n();
@@ -133,10 +137,20 @@ export function QueueStrip({
   const { snapshot, error, busy: queueBusy, mutate } = queue;
   const [attaching, setAttaching] = useState(false);
   const busy = queueBusy || attaching;
-  const [open, setOpen] = useState(initialView === "queue");
+  const [localOpen, setLocalOpen] = useState(initialView === "queue");
+  const open = controlledOpen ?? localOpen;
+  function setOpen(value: boolean) {
+    setLocalOpen(value);
+    onOpenChange?.(value);
+  }
   const [inspect, setInspect] = useState(initialView === "execution");
-  const closeQueue = () => (onClose ? onClose() : setOpen(false));
+  const closeQueue = () => {
+    setOpen(false);
+    onClose?.();
+  };
   const closeInspect = () => (onClose ? onClose() : setInspect(false));
+  const [addOpen, setAddOpen] = useState(false);
+  const [optionsId, setOptionsId] = useState<string>();
   const [text, setText] = useState("");
   const [images, setImages] = useState<Images>([]);
   const [lane, setLane] = useState<"steer" | "followUp">("followUp");
@@ -144,6 +158,9 @@ export function QueueStrip({
   const [draftImages, setDraftImages] = useState<Images>([]);
   const selected = snapshot?.editing?.selectedId;
   const disabled = busy || !snapshot;
+  const rows = snapshot ? queueRows(snapshot) : [];
+  const locked = Boolean(snapshot?.inFlight || snapshot?.drain);
+  const resuming = !snapshot?.drain && Boolean(snapshot?.paused || snapshot?.errorHold);
   const draftId = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (draftId.current === selected) return;
@@ -161,6 +178,7 @@ export function QueueStrip({
         accessibilityRole="button"
         accessibilityLabel={label}
         disabled={blocked}
+        accessibilityState={{ disabled: blocked }}
         onPress={action}
         style={[styles.button, { opacity: blocked ? 0.4 : 1 }]}
       >
@@ -211,7 +229,7 @@ export function QueueStrip({
     );
   }
   function resume() {
-    if (snapshot?.uncertainRowIds.length)
+    if (resuming && snapshot?.uncertainRowIds.length)
       Alert.alert(
         t("Resume uncertain deliveries?"),
         t("A delivery may already have reached the bot. Resuming can send it again."),
@@ -220,7 +238,7 @@ export function QueueStrip({
           { text: t("Resume"), onPress: () => void mutate({ type: "resume" }) },
         ],
       );
-    else void mutate({ type: snapshot?.paused || snapshot?.errorHold ? "resume" : "pause" });
+    else void mutate({ type: resuming ? "resume" : "pause" });
   }
   return (
     <View>
@@ -256,11 +274,36 @@ export function QueueStrip({
             </Text>
           )}
           <View style={styles.controls}>
-            {button(snapshot?.paused || snapshot?.errorHold ? t("Resume") : t("Pause"), resume)}
+            {button(
+              resuming ? t("Resume") : t("Pause"),
+              resume,
+              disabled ||
+                Boolean(selected) ||
+                (resuming &&
+                  (locked || Boolean(snapshot?.compaction || snapshot?.gracefulPausePending))),
+            )}
+            {button(
+              t("Drain all"),
+              () => void mutate({ type: "drain" }),
+              disabled ||
+                Boolean(selected) ||
+                locked ||
+                !rows.length ||
+                Boolean(
+                  snapshot?.errorHold || snapshot?.compaction || snapshot?.gracefulPausePending,
+                ) ||
+                Boolean(rows[0]?.paused) ||
+                !rows[0]?.placement ||
+                rows[0]?.placement?.kind === "unbound" ||
+                Boolean(snapshot?.uncertainRowIds.length),
+            )}
             {button(
               snapshot?.gracefulPausePending ? t("Pause pending") : t("Pause after tools"),
               () => void mutate({ type: "graceful-pause" }),
-              disabled || snapshot?.gracefulPausePending,
+              disabled ||
+                Boolean(selected) ||
+                Boolean(snapshot?.compaction) ||
+                snapshot?.gracefulPausePending,
             )}
           </View>
           {snapshot?.errorHold && <Text style={labelStyle}>{t("Recovery hold")}</Text>}
@@ -269,16 +312,12 @@ export function QueueStrip({
               {t("Compaction")} · {snapshot.compaction}
             </Text>
           )}
-          {snapshot?.inFlight && (
-            <Text style={labelStyle}>
-              {t("Delivery pending")} · {snapshot.inFlight.rowIds.join(", ")}
-            </Text>
-          )}
+          {snapshot?.inFlight && <Text style={labelStyle}>{t("Delivery pending")}</Text>}
           <FlatList
-            data={snapshot ? queueRows(snapshot) : []}
+            data={rows}
             keyExtractor={(row) => row.id}
             keyboardShouldPersistTaps="handled"
-            renderItem={({ item: row }) => (
+            renderItem={({ item: row, index }) => (
               <View
                 style={[
                   styles.row,
@@ -288,20 +327,26 @@ export function QueueStrip({
                 <Text style={{ color: tokens.mutedForeground }}>
                   {row.lane === "steer" ? t("Steer") : t("Follow-up")}
                   {row.paused ? ` · ${t("Held")}` : ""}
+                  {"removed" in row && row.removed ? ` · ${t("Removed on save")}` : ""}
                 </Text>
                 {snapshot?.uncertainRowIds.includes(row.id) && (
                   <Text style={{ color: tokens.destructive }}>{t("Delivery uncertain")}</Text>
                 )}
-                {row.target && (
-                  <Text style={labelStyle}>
-                    {t("Participant")} · {row.target.participantId}
+                {row.attachments?.map((attachment) => (
+                  <Text
+                    key={attachment.artifactId}
+                    numberOfLines={1}
+                    style={{ color: tokens.mutedForeground }}
+                  >
+                    {attachment.name}
                   </Text>
-                )}
+                ))}
+                {row.target && <Text style={labelStyle}>{t("Participant targeted")}</Text>}
                 {row.placement?.kind === "unbound" &&
                   button(
                     t("Use current project"),
                     () => void mutate({ type: "bind-placement", id: row.id }),
-                    disabled || Boolean(snapshot?.editing) || Boolean(snapshot?.inFlight),
+                    disabled || Boolean(snapshot?.editing) || locked,
                   )}
                 {selected === row.id ? (
                   <>
@@ -345,72 +390,118 @@ export function QueueStrip({
                             setDraftImages(row.images);
                           }
                         })(),
-                      disabled || Boolean(selected),
+                      disabled || locked || Boolean(selected),
                     )}
                   </>
                 )}
-                <View style={styles.controls}>
-                  {button(
-                    t("Move up"),
-                    () => void mutate({ type: "reorder", id: row.id, direction: -1 }),
-                    disabled || Boolean(selected),
-                  )}
-                  {button(
-                    t("Move down"),
-                    () => void mutate({ type: "reorder", id: row.id, direction: 1 }),
-                    disabled || Boolean(selected),
-                  )}
-                  {button(
-                    row.lane === "steer" ? t("Follow-up") : t("Steer"),
-                    () =>
-                      void mutate({
-                        type: "lane",
-                        id: row.id,
-                        lane: row.lane === "steer" ? "followUp" : "steer",
-                      }),
-                    disabled || Boolean(selected),
-                  )}
-                  {button(
-                    row.paused ? t("Release hold") : t("Hold"),
-                    () => void mutate({ type: "hold", id: row.id, paused: !row.paused }),
-                    disabled || Boolean(selected),
-                  )}
-                  {button(
-                    t("Remove"),
-                    () => void mutate({ type: "remove", id: row.id }),
-                    disabled || Boolean(selected),
-                  )}
-                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t("Message options")}
+                  accessibilityState={{ expanded: optionsId === row.id }}
+                  style={styles.button}
+                  onPress={() => setOptionsId(optionsId === row.id ? undefined : row.id)}
+                >
+                  <Text style={labelStyle}>{t("More")}</Text>
+                </Pressable>
+                {optionsId === row.id && (
+                  <View style={styles.controls}>
+                    {button(
+                      t("Move up"),
+                      () => void mutate({ type: "reorder", id: row.id, direction: -1 }),
+                      disabled ||
+                        locked ||
+                        Boolean(selected) ||
+                        !rows.slice(0, index).some((item) => item.lane === row.lane),
+                    )}
+                    {button(
+                      t("Move down"),
+                      () => void mutate({ type: "reorder", id: row.id, direction: 1 }),
+                      disabled ||
+                        locked ||
+                        Boolean(selected) ||
+                        !rows.slice(index + 1).some((item) => item.lane === row.lane),
+                    )}
+                    {button(
+                      row.lane === "steer" ? t("Follow-up") : t("Steer"),
+                      () => {
+                        const lane = row.lane === "steer" ? "followUp" : "steer";
+                        void mutate(
+                          selected === row.id
+                            ? { type: "edit-patch", patch: { lane } }
+                            : { type: "lane", id: row.id, lane },
+                        );
+                      },
+                      disabled || locked || Boolean(selected && selected !== row.id),
+                    )}
+                    {button(
+                      row.paused ? t("Release hold") : t("Hold"),
+                      () =>
+                        void mutate(
+                          selected === row.id
+                            ? { type: "edit-patch", patch: { paused: !row.paused } }
+                            : { type: "hold", id: row.id, paused: !row.paused },
+                        ),
+                      disabled || locked || Boolean(selected && selected !== row.id),
+                    )}
+                    {button(
+                      "removed" in row && row.removed ? t("Restore") : t("Remove"),
+                      () =>
+                        void mutate(
+                          selected === row.id
+                            ? {
+                                type: "edit-patch",
+                                patch: { removed: !("removed" in row && row.removed) },
+                              }
+                            : { type: "remove", id: row.id },
+                        ),
+                      disabled || locked || Boolean(selected && selected !== row.id),
+                    )}
+                  </View>
+                )}
               </View>
             )}
             ListFooterComponent={
               <View>
-                <TextInput
-                  editable={!busy}
-                  accessibilityLabel={t("Queued message")}
-                  multiline
-                  value={text}
-                  onChangeText={setText}
-                  style={[styles.input, labelStyle, { borderColor: tokens.border }]}
-                />
-                {previews(images, setImages)}
-                <View style={styles.controls}>
-                  {button(lane === "steer" ? t("Steer") : t("Follow-up"), () =>
-                    setLane(lane === "steer" ? "followUp" : "steer"),
-                  )}
-                  {button(t("Attach"), () => void attach(false))}
-                  {button(
-                    t("Queue message"),
-                    () =>
-                      void (async () => {
-                        if (await mutate({ type: "enqueue", text, images, lane })) {
-                          setText("");
-                          setImages([]);
-                        }
-                      })(),
-                    disabled || (!text.trim() && !images.length),
-                  )}
-                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t("Add queued message")}
+                  accessibilityState={{ expanded: addOpen }}
+                  style={styles.button}
+                  onPress={() => setAddOpen(!addOpen)}
+                >
+                  <Text style={labelStyle}>{t("Add queued message")}</Text>
+                </Pressable>
+                {addOpen && (
+                  <>
+                    <TextInput
+                      editable={!busy}
+                      accessibilityLabel={t("Queued message")}
+                      multiline
+                      value={text}
+                      onChangeText={setText}
+                      style={[styles.input, labelStyle, { borderColor: tokens.border }]}
+                    />
+                    {previews(images, setImages)}
+                    <View style={styles.controls}>
+                      {button(lane === "steer" ? t("Steer") : t("Follow-up"), () =>
+                        setLane(lane === "steer" ? "followUp" : "steer"),
+                      )}
+                      {button(t("Attach"), () => void attach(false))}
+                      {button(
+                        t("Queue message"),
+                        () =>
+                          void (async () => {
+                            if (await mutate({ type: "enqueue", text, images, lane })) {
+                              setText("");
+                              setImages([]);
+                              setAddOpen(false);
+                            }
+                          })(),
+                        disabled || (!text.trim() && !images.length),
+                      )}
+                    </View>
+                  </>
+                )}
               </View>
             }
           />

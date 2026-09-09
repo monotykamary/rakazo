@@ -15,12 +15,13 @@ import { rpc } from "../lib/rpc";
 export function ModelSettingsOverlay({ onClose }: { onClose: () => void }) {
   const { t } = useLingui();
   const [runtime, setRuntime] = useState<Awaited<ReturnType<typeof rpc.models.runtime>>>();
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const revision = useRef(0);
   const refresh = useCallback(async () => {
     const request = ++revision.current;
     setLoading(true);
+    setRuntime(undefined);
     setError(false);
     try {
       const next = await rpc.models.runtime({});
@@ -56,19 +57,32 @@ export function ModelSettingsOverlay({ onClose }: { onClose: () => void }) {
             <X />
           </DialogClose>
         </DialogHeader>
-        <p className="break-all text-sm text-muted-foreground" data-testid="pi-profile-default">
-          <Trans>Pi profile default</Trans>:{" "}
-          {runtime?.profileDefault
-            ? `${runtime.profileDefault.provider}/${runtime.profileDefault.modelId}`
-            : t`Unavailable`}
-        </p>
+        {!loading && !error && runtime?.availability.status === "available" && (
+          <p className="break-all text-sm text-muted-foreground" data-testid="pi-profile-default">
+            <Trans>Pi profile default</Trans>:{" "}
+            {runtime?.profileDefault
+              ? `${runtime.profileDefault.provider}/${runtime.profileDefault.modelId}`
+              : t`Unavailable`}
+          </p>
+        )}
         {error ? (
           <p role="alert" className="text-sm text-destructive">
             <Trans>Could not refresh models</Trans>
           </p>
         ) : runtime?.availability.status === "unavailable" ? (
           <p role="alert" className="text-sm text-destructive">
-            <Trans>Pi unavailable</Trans>
+            {runtime.availability.error === "PI_NOT_CONFIGURED"
+              ? t`Configure the API's Pi runtime`
+              : runtime.availability.error === "PI_START_FAILED" ||
+                  runtime.availability.error === "PI_DISCONNECTED"
+                ? t`Check the API's Pi command and PATH`
+                : runtime.availability.error === "PI_WORKSPACE_UNAVAILABLE"
+                  ? t`Check the API's Pi workspace`
+                  : runtime.availability.error === "PI_DISCOVERY_TIMEOUT"
+                    ? t`Pi discovery timed out. Retry`
+                    : runtime.availability.error === "PI_PROTOCOL_FAILED"
+                      ? t`Check Pi RPC compatibility and extension output`
+                      : t`Could not refresh models`}
           </p>
         ) : null}
         {runtime?.availability.status === "available" && !runtime.catalog.length && (
@@ -76,11 +90,12 @@ export function ModelSettingsOverlay({ onClose }: { onClose: () => void }) {
             <Trans>No models available</Trans>
           </p>
         )}
-        <PiModelPicker
-          catalog={runtime?.catalog ?? []}
-          selection={runtime?.profileDefault ?? null}
-          readOnly
-        />
+        {!loading &&
+          !error &&
+          runtime?.availability.status === "available" &&
+          runtime.catalog.length > 0 && (
+            <PiModelPicker catalog={runtime.catalog} selection={runtime.profileDefault} readOnly />
+          )}
         <Button
           variant="ghost"
           size="sm"

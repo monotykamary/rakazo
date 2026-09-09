@@ -22,7 +22,12 @@ export function useShellMotion() {
   return { reduced, transition: reduced ? { duration: 0 } : shellSpring };
 }
 
-type ShellTarget = { width?: number | string; x?: number | string; insetInlineStart?: number };
+type ShellTarget = {
+  width?: number | string;
+  x?: number | string;
+  insetInlineStart?: number;
+  opacity?: number;
+};
 type SpringProps<Tag extends "aside" | "button"> = Omit<
   ComponentPropsWithoutRef<Tag>,
   "onDrag" | "onDragStart" | "onDragEnd" | "onAnimationStart"

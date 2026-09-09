@@ -118,6 +118,198 @@ function fixture() {
 }
 
 describe("durable premove database service", () => {
+  it.each(["idle", "settled", "turn-end"] as const)(
+    "drains a paused cross-lane prefix once at %s with write-ahead reservation and concurrent enqueue",
+    async (boundary) => {
+      const f = fixture();
+      await f.mutate({
+        type: "enqueue",
+        lane: "steer",
+        text: "first",
+        images: [{ type: "image", mimeType: "image/png", data: "ZmFrZQ==" }],
+      });
+      await f.mutate({ type: "enqueue", lane: "followUp", text: "second" });
+      await f.mutate({ type: "enqueue", lane: "steer", text: "/compact" });
+      const revision = f.state()!.view.revision;
+      const request = {
+        ...scope,
+        requestId: "drain-once",
+        expectedRevision: revision,
+        operation: { type: "drain" as const },
+      };
+      expect((await mutatePremoveQueue(f.prisma, actor, request)).ok).toBe(true);
+      expect(await wakePremoveQueue(f.prisma, actor, scope)).toBe("new-run");
+      const send = vi.fn();
+      const sendBatch = vi.fn(async (rows) => {
+        expect(rows.map((row: { text: string }) => row.text)).toEqual(["first", "second"]);
+        expect(rows[0].images).toHaveLength(1);
+        expect(f.state()!.checkpoint.uncertainRowIds).toEqual(
+          rows.map((row: { id: string }) => row.id),
+        );
+        expect(f.state()!.view.inFlight?.rowIds).toHaveLength(2);
+        await f.mutate({ type: "enqueue", lane: "steer", text: "later" });
+        return { outcome: "accepted" as const };
+      });
+      expect(await dispatchPremoveQueue(f.prisma, lease, "agent-end", { send, sendBatch })).toBe(
+        false,
+      );
+      await Promise.all([
+        dispatchPremoveQueue(f.prisma, lease, boundary, { send, sendBatch }),
+        dispatchPremoveQueue(f.prisma, lease, boundary, { send, sendBatch }),
+      ]);
+      expect(sendBatch).toHaveBeenCalledOnce();
+      expect(send).not.toHaveBeenCalled();
+      expect(f.state()!.view.rows.map((row) => row.text)).toEqual(["/compact", "later"]);
+      expect(f.state()!.view.paused).toBe(true);
+      expect(f.state()!.view.uncertainRowIds).toEqual([]);
+      expect(
+        f.tx.event.create.mock.calls.filter(([arg]) => arg.data.type === "queue.dispatch"),
+      ).toHaveLength(2);
+      expect((await mutatePremoveQueue(f.prisma, actor, request)).ok).toBe(true);
+      expect(f.state()!.drainIntent).toBeUndefined();
+      expect(
+        (await mutatePremoveQueue(f.prisma, actor, { ...request, expectedRevision: revision + 1 }))
+          .ok,
+      ).toBe(false);
+    },
+  );
+
+  it("does not skip held/control heads or accept a drain during editing", async () => {
+    for (const head of [
+      { text: "held", paused: true },
+      { text: "/compact" },
+      { text: "editing" },
+    ]) {
+      const f = fixture();
+      const snapshot = await f.mutate({ type: "enqueue", lane: "steer", ...head });
+      await f.mutate({ type: "enqueue", lane: "followUp", text: "tail" });
+      if (head.text === "editing") await f.mutate({ type: "edit-begin", id: snapshot.rows[0]!.id });
+      const reply = await mutatePremoveQueue(f.prisma, actor, {
+        ...scope,
+        requestId: "blocked",
+        expectedRevision: f.state()!.view.revision,
+        operation: { type: "drain" },
+      });
+      expect(reply.ok).toBe(false);
+      expect(f.state()!.view.rows).toHaveLength(2);
+    }
+  });
+
+  it("locks captured rows, permits canceling pending drain, and never sends without a batch port", async () => {
+    const f = fixture();
+    const snapshot = await f.mutate({ type: "enqueue", lane: "steer", text: "first" });
+    await f.mutate({ type: "drain" });
+    const blocked = await mutatePremoveQueue(f.prisma, actor, {
+      ...scope,
+      requestId: "edit",
+      expectedRevision: f.state()!.view.revision,
+      operation: { type: "remove", id: snapshot.rows[0]!.id },
+    });
+    expect(blocked.ok).toBe(false);
+    const send = vi.fn();
+    expect(await dispatchPremoveQueue(f.prisma, lease, "idle", { send })).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+    await f.mutate({ type: "pause" });
+    expect(f.state()!.drainIntent).toBeUndefined();
+    expect(f.state()!.view.rows).toHaveLength(1);
+  });
+
+  it.each(["rejected", "uncertain", "throw", "missing", "invalid"])(
+    "preserves every row on %s batch outcome",
+    async (outcome) => {
+      const f = fixture();
+      await f.mutate({ type: "enqueue", lane: "steer", text: "first" });
+      await f.mutate({ type: "enqueue", lane: "followUp", text: "second" });
+      await f.mutate({ type: "drain" });
+      const sendBatch = vi.fn(async () => {
+        if (outcome === "throw") throw new Error("disconnected");
+        if (outcome === "missing") return undefined as never;
+        return { outcome: outcome as "rejected" | "uncertain" };
+      });
+      await dispatchPremoveQueue(f.prisma, lease, "idle", { send: vi.fn(), sendBatch });
+      expect(f.state()!.view.rows.map((row) => row.text)).toEqual(["first", "second"]);
+      expect(f.state()!.view.uncertainRowIds).toHaveLength(outcome === "rejected" ? 0 : 2);
+      expect(f.state()!.view.errorHold).toBe(true);
+      expect(f.state()!.drainIntent).toBeUndefined();
+      await dispatchPremoveQueue(f.prisma, lease, "idle", { send: vi.fn(), sendBatch });
+      expect(sendBatch).toHaveBeenCalledOnce();
+      expect(
+        (
+          await mutatePremoveQueue(f.prisma, actor, {
+            ...scope,
+            requestId: "retry",
+            expectedRevision: f.state()!.view.revision,
+            operation: { type: "drain" },
+          })
+        ).ok,
+      ).toBe(false);
+    },
+  );
+
+  it("does not reserve a drain if ownership changes after the preliminary read", async () => {
+    const f = fixture();
+    await f.mutate({ type: "enqueue", lane: "steer", text: "first" });
+    await f.mutate({ type: "drain" });
+    const state = f.state()!;
+    f.tx.premoveQueue.findUnique
+      .mockResolvedValueOnce({ state, revision: state.view.revision })
+      .mockResolvedValueOnce({
+        state: { ...state, owner: { runId: "other", leaseOwner: "other-worker", leaseFence: 2 } },
+        revision: state.view.revision,
+      });
+    const sendBatch = vi.fn();
+    expect(await dispatchPremoveQueue(f.prisma, lease, "idle", { send: vi.fn(), sendBatch })).toBe(
+      false,
+    );
+    expect(sendBatch).not.toHaveBeenCalled();
+    expect(f.state()!.checkpoint.uncertainRowIds).toEqual([]);
+    expect(f.state()!.view.rows).toHaveLength(1);
+  });
+
+  it("staging a message cannot clear a failed drain's safety hold", async () => {
+    const f = fixture();
+    await f.mutate({ type: "enqueue", lane: "steer", text: "first" });
+    await f.mutate({ type: "drain" });
+    await dispatchPremoveQueue(f.prisma, lease, "idle", {
+      send: vi.fn(),
+      sendBatch: async () => ({ outcome: "uncertain" }),
+    });
+    const before = f.state()!;
+    await f.prisma.$transaction((tx) =>
+      stagePremoveSteeringInTransaction(tx, {
+        ...scope,
+        messageId: "later",
+        blocks: [{ kind: "text", text: "later" }],
+      }),
+    );
+    expect(f.state()!.view.errorHold).toBe(true);
+    expect(f.state()!.checkpoint.uncertainRowIds).toEqual(before.checkpoint.uncertainRowIds);
+    expect(f.state()!.view.rows.map((row) => row.text)).toEqual(["first", "later"]);
+    expect(await wakePremoveQueue(f.prisma, actor, scope)).toBeNull();
+  });
+
+  it("never sends before reservation persistence and preserves rows on acknowledgment rollback", async () => {
+    const f = fixture();
+    await f.mutate({ type: "enqueue", lane: "steer", text: "first" });
+    await f.mutate({ type: "drain" });
+    const sendBatch = vi.fn(async () => ({ outcome: "accepted" as const }));
+    f.tx.premoveQueue.upsert.mockRejectedValueOnce(new Error("write failed"));
+    await expect(
+      dispatchPremoveQueue(f.prisma, lease, "idle", { send: vi.fn(), sendBatch }),
+    ).rejects.toThrow("write failed");
+    expect(sendBatch).not.toHaveBeenCalled();
+    f.tx.event.create.mockRejectedValueOnce(new Error("ack failed"));
+    await expect(
+      dispatchPremoveQueue(f.prisma, lease, "idle", { send: vi.fn(), sendBatch }),
+    ).rejects.toThrow("ack failed");
+    expect(sendBatch).toHaveBeenCalledOnce();
+    expect(f.state()!.view.rows).toHaveLength(1);
+    expect(f.state()!.checkpoint.uncertainRowIds).toHaveLength(1);
+    expect(await dispatchPremoveQueue(f.prisma, lease, "idle", { send: vi.fn(), sendBatch })).toBe(
+      false,
+    );
+  });
+
   it("captures the child project rather than root and rejects later child drift", async () => {
     const f = fixture();
     const bot = { id: "bot", computer: { id: "computer", homeKey: "home" } };

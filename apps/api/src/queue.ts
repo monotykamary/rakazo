@@ -34,7 +34,7 @@ export async function mutateQueue(
 ) {
   try {
     const result = await mutatePremoveQueue(prisma, actor, input);
-    if (result.ok && !result.snapshot.paused && jobs) {
+    if (result.ok && (!result.snapshot.paused || input.operation.type === "drain") && jobs) {
       const runId = await wakePremoveQueue(prisma, actor, { ...input, spaceId: actor.spaceId });
       if (runId)
         await jobs

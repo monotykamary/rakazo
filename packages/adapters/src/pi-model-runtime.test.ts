@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   readLocalPiEmulatorLog,
   writeLocalPiEmulator,
@@ -28,10 +28,44 @@ async function fixture(scenario: Record<string, unknown> = {}) {
 }
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe("LocalPiModelRuntimeService", () => {
+  it("keeps forwarding Pi wrappers on the caller PATH when package runners shadow Pi", async () => {
+    const { root, command } = await fixture({
+      availableModels: [{ provider: "offline", id: "actual" }],
+    });
+    const shim = join(root, "shim");
+    const caller = join(root, "caller");
+    const packageBin = join(root, "package-bin");
+    await Promise.all([shim, caller, packageBin].map((dir) => mkdir(dir)));
+    await writeFile(join(caller, "pi"), await readFile(command), { mode: 0o700 });
+    await writeFile(join(packageBin, "pi"), "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+    await writeFile(join(shim, "pi"), `#!/bin/sh\nPATH=\${PATH#*:}\nexport PATH\nexec pi "$@"\n`, {
+      mode: 0o700,
+    });
+    const service = new LocalPiModelRuntimeService({
+      command: join(shim, "pi"),
+      cwd: root,
+      sessionDir: join(root, "sessions"),
+    });
+    const suffix = process.env.PATH ?? "/usr/bin:/bin";
+    const packagePath = `${shim}:${packageBin}:${caller}:${suffix}`;
+    vi.stubEnv("PATH", packagePath);
+    vi.stubEnv("RAKAZO_DEV_PI_PATH", undefined);
+    await expect(service.read()).rejects.toThrow();
+    vi.stubEnv("RAKAZO_DEV_PI_PATH", `${shim}:${caller}:${suffix}`);
+    await expect(service.read()).resolves.toMatchObject({
+      catalog: [{ provider: "offline", id: "actual" }],
+    });
+    expect(process.env.PATH).toBe(packagePath);
+    expect((await readLocalPiEmulatorLog(root)).some((message) => message.type === "prompt")).toBe(
+      false,
+    );
+  });
+
   it("reads Pi's runtime catalog and current profile model", async () => {
     const { service } = await fixture({
       provider: "profile-provider",
@@ -115,10 +149,30 @@ describe("LocalPiModelRuntimeService", () => {
         [fault]: "get_available_thinking_levels",
         faultModel: "second",
       });
-      await expect(service.read()).rejects.toThrow();
+      await expect(service.read()).rejects.toMatchObject({
+        code: fault === "hangOnCommand" ? "PI_DISCOVERY_TIMEOUT" : "PI_DISCONNECTED",
+      });
     },
     20_000,
   );
+
+  it("does not call malformed catalog metadata an available empty inventory", async () => {
+    const { service } = await fixture({ availableModels: { unexpected: true } });
+    await expect(service.read()).rejects.toMatchObject({ code: "PI_PROTOCOL_FAILED" });
+  });
+
+  it("classifies extension stdout logging without exposing its contents", async () => {
+    const { command, service } = await fixture();
+    await writeFile(
+      command,
+      `#!${process.execPath}\nprocess.stdout.write("fake-private-log\\n");\nprocess.stdin.resume();\n`,
+    );
+    await expect(service.read()).rejects.toMatchObject({
+      name: "PiModelRuntimeError",
+      code: "PI_PROTOCOL_FAILED",
+      message: "PI_PROTOCOL_FAILED",
+    });
+  });
 
   it("rejects a successful set_model response whose state did not acknowledge selection", async () => {
     const { service } = await fixture({ ignoreModelSelection: true });
@@ -161,9 +215,7 @@ describe("LocalPiModelRuntimeService", () => {
     expect(profile.catalog.map((entry) => `${entry.provider}/${entry.id}`)).toEqual([
       "project-provider/project-model",
     ]);
-    await expect(service.read(undefined, tmpdir())).rejects.toThrow(
-      "escapes the trusted workspace",
-    );
+    await expect(service.read(undefined, tmpdir())).rejects.toThrow("PI_WORKSPACE_UNAVAILABLE");
   });
 
   it("rejects a missing Pi executable without an uncaught child error", async () => {
@@ -174,7 +226,7 @@ describe("LocalPiModelRuntimeService", () => {
       sessionDir: join(root, "sessions"),
     });
 
-    await expect(service.read()).rejects.toThrow("Pi model probe could not start");
+    await expect(service.read()).rejects.toThrow("PI_START_FAILED");
   });
 
   it("terminates an in-flight probe when aborted", async () => {

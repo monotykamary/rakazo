@@ -45,6 +45,9 @@ describe("shell motion", () => {
     renderToStaticMarkup(<SpringAside animate={{ width: 0, x: 0 }} />);
     expect(state.props.animate).toBeUndefined();
     expect(state.props.style).toEqual({ width: 0, x: 0 });
+    renderToStaticMarkup(<SpringButton animate={{ opacity: 0 }} />);
+    expect(state.props.animate).toBeUndefined();
+    expect(state.props.style).toEqual({ opacity: 0 });
     renderToStaticMarkup(
       <SpringDisclosure open={false}>
         <button type="button">Hidden</button>

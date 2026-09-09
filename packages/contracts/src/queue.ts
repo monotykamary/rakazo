@@ -87,6 +87,8 @@ export const QueueOperationSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("hold"), id: Id, paused: z.boolean() }),
   z.object({ type: z.literal("pause") }),
   z.object({ type: z.literal("resume") }),
+  /** One combined prompt from the eligible FIFO prefix; never skips a barrier. */
+  z.object({ type: z.literal("drain") }).strict(),
   z.object({ type: z.literal("graceful-pause") }),
 ]);
 export const QueueScopeSchema = z.object({ threadId: Id, botId: Id });
@@ -112,6 +114,7 @@ export const QueueSnapshotSchema = z.object({
   inFlight: z.object({ attemptId: Id, rowIds: z.array(Id) }).optional(),
   compaction: z.enum(["manual", "threshold", "overflow"]).optional(),
   gracefulPausePending: z.boolean(),
+  drain: z.object({ requestId: z.string(), rowIds: z.array(Id) }).optional(),
 });
 export const QueueMutationSchema = QueueScopeSchema.extend({
   requestId: z.string().min(1).max(200),

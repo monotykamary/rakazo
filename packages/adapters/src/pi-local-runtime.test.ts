@@ -9,6 +9,7 @@ import {
   writeLocalPiEmulator,
   writeLocalPiScenario,
 } from "./pi-local-runtime-test-helper.js";
+import { deliverPremoveDrain } from "./premove-drain.js";
 
 async function collect(
   runtime: LocalPiRuntime,
@@ -523,6 +524,62 @@ describe("LocalPiRuntime", () => {
     await expect(readFile(lock, "utf8")).resolves.toContain("replacement-owner");
     expect(saved).toBeDefined();
   });
+
+  it.each(["idle", "before_model"] as const)(
+    "sends a drain at %s as one standard RPC prompt with all images",
+    async (boundary) => {
+      let delivered = false;
+      const checkpoints: unknown[] = [];
+      const runtime = new LocalPiRuntime({ command, cwd, sessionDir });
+      await collect(
+        runtime,
+        request({
+          queueOnly: boundary === "idle",
+          session: {
+            save: async (value) => {
+              checkpoints.push(structuredClone(value));
+            },
+          },
+          runtimeBoundary: async (name, control) => {
+            if (name !== boundary || delivered) return;
+            delivered = true;
+            await deliverPremoveDrain(
+              [1, 2, 3].map((value) => ({
+                id: `row-${value}`,
+                messageId: `row-${value}`,
+                text: `text-${value}`,
+                images: [
+                  {
+                    name: `image-${value}`,
+                    mimeType: "image/png" as const,
+                    data: new Uint8Array([value]),
+                  },
+                ],
+              })),
+              "rpc",
+              control,
+            );
+          },
+        }),
+      );
+      expect(delivered).toBe(true);
+      const log = await readLocalPiEmulatorLog(cwd);
+      const prompts = commands(log, "prompt");
+      const drains = prompts.filter((prompt) => String(prompt.message).includes("text-1"));
+      expect(drains).toHaveLength(1);
+      expect(drains[0]?.message).toContain("text-1\n\ntext-2\n\ntext-3");
+      expect(drains[0]?.images).toEqual(
+        ["AQ==", "Ag==", "Aw=="].map((data) => ({ type: "image", mimeType: "image/png", data })),
+      );
+      expect(drains[0]).not.toHaveProperty("content");
+      expect(drains[0]?.streamingBehavior).toBe(boundary === "before_model" ? "steer" : undefined);
+      expect(prompts).toHaveLength(boundary === "idle" ? 1 : 2);
+      expect(commands(log, "abort")).toHaveLength(0);
+      expect(
+        checkpoints.some((checkpoint) => JSON.stringify(checkpoint).includes("queue-drain:rpc")),
+      ).toBe(true);
+    },
+  );
 
   it("rejects queue delivery without a durable session before accepting intent", async () => {
     const runtime = new LocalPiRuntime({ command, cwd, sessionDir });

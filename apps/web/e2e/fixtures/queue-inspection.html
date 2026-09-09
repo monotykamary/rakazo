@@ -5,14 +5,33 @@
     <div id="root"></div>
     <script type="module">
       import { i18n } from "@lingui/core";
-      import { createElement as h } from "react";
+      import { Button, Dialog, DialogContent, DialogHeader, DialogTitle } from "@rakazo/ui-web";
+      import { createElement as h, useState } from "react";
       import { createRoot } from "react-dom/client";
+      import { ExecutionInspector } from "../../src/components/ExecutionInspector.tsx";
       import { QueueStrip } from "../../src/components/QueueStrip.tsx";
+      import { rpc } from "../../src/lib/rpc.ts";
+      import { useQueue } from "../../src/lib/use-queue.ts";
       import "../../src/styles.css";
+
+      const queueClient = rpc.queue;
+      function InspectionFixture() {
+        const [open, setOpen] = useState(false);
+        const [queueOpen, setQueueOpen] = useState(false);
+        const controlled = new URLSearchParams(location.search).has("controlled");
+        const queue = useQueue(queueClient, "thread", "bot");
+        return h("div", null,
+          h(QueueStrip, { threadId: "thread", botId: "bot", ...(controlled ? { open: queueOpen, onOpenChange: setQueueOpen } : {}) }),
+          h("textarea", { "aria-label": "Composer", placeholder: "Message" }),
+          h(Button, { onClick: () => setOpen(true) }, "Execution"),
+          h(Dialog, { open, onOpenChange: setOpen }, h(DialogContent, { className: "max-h-[85vh] overflow-auto sm:max-w-3xl" },
+            h(DialogHeader, null, h(DialogTitle, null, "Execution")),
+            open && h(ExecutionInspector, { threadId: "thread", botId: "bot", runIds: ["run", "related-run"], queue }))));
+      }
 
       i18n.load("en", {});
       i18n.activate("en");
-      createRoot(document.getElementById("root")).render(h("main", { className: "mx-auto max-w-3xl bg-background py-8 text-foreground" }, h(QueueStrip, { threadId: "thread", botId: "bot", runIds: ["run", "related-run"] })));
+      createRoot(document.getElementById("root")).render(h("main", { className: "mx-auto max-w-3xl bg-background py-8 text-foreground" }, h(InspectionFixture)));
     </script>
   </body>
 </html>

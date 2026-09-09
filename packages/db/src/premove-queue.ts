@@ -11,6 +11,7 @@ import {
   type DurableQueueState,
   emptyPremoveQueue,
   hydratePremoveQueue,
+  premoveDrainRows,
   type QueueController,
   type QueuePorts,
   recoverPremoveQueue,
@@ -97,6 +98,7 @@ function publicQueueSnapshot(state: DurableQueueState): QueueReply["snapshot"] {
   }));
   return {
     ...state.view,
+    drain: state.drainIntent,
     rows,
     ...(state.view.editing
       ? {
@@ -243,6 +245,10 @@ export async function mutatePremoveQueue(
       !["enqueue", "pause", "graceful-pause"].includes(input.operation.type)
     )
       return reply(false, "Dispatch in flight; mutation is locked");
+    if (state.drainIntent && !["enqueue", "pause", "graceful-pause"].includes(input.operation.type))
+      return reply(false, "Drain pending; mutation is locked");
+    if (input.operation.type === "drain" && !premoveDrainRows(state).length)
+      return reply(false, "No safe eligible queue prefix to drain");
     if (state.view.rows.length >= 200 && input.operation.type === "enqueue")
       return reply(false, "Queue is full");
     if (
@@ -293,7 +299,7 @@ export async function mutatePremoveQueue(
       : await adoptLegacySteering(tx, scope, state);
     state = adopted.state;
     const operation =
-      input.operation.type === "graceful-pause"
+      input.operation.type === "graceful-pause" || input.operation.type === "drain"
         ? { type: "pause" as const }
         : input.operation.type === "bind-placement"
           ? { type: "hold" as const, id: input.operation.id, paused: bindingPaused }
@@ -316,8 +322,25 @@ export async function mutatePremoveQueue(
       checkpoint: controller.checkpoint(),
       view: controller.snapshot(),
       editOperations: updateQueueEditLog(state, input.operation, controller.snapshot()),
-      receipts: [...state.receipts.slice(-199), { requestId: input.requestId, fingerprint }],
+      receipts: [
+        ...state.receipts.filter(
+          (receipt, index) => receipt.drain || index >= state.receipts.length - 199,
+        ),
+        {
+          requestId: input.requestId,
+          fingerprint,
+          ...(input.operation.type === "drain" ? { drain: true } : {}),
+        },
+      ],
     };
+    if (input.operation.type !== "resume") {
+      next.view.errorHold = state.view.errorHold;
+      next.view.compaction = state.view.compaction;
+    }
+    if (input.operation.type === "drain")
+      next.drainIntent = { requestId: input.requestId, rowIds: premoveDrainRows(state) };
+    else if (input.operation.type === "pause" || input.operation.type === "graceful-pause")
+      next.drainIntent = undefined;
     if (input.operation.type === "bind-placement" && binding)
       next.placements = { ...state.placements, [input.operation.id]: binding };
     if (input.operation.type === "enqueue") {
@@ -450,7 +473,7 @@ export async function wakePremoveQueue(
     const intent = state.resumeIntent;
     const continuation = Boolean(intent && state.pausedTurn && !state.view.rows.length);
     if (
-      state.view.paused ||
+      (state.view.paused && !state.drainIntent) ||
       state.view.errorHold ||
       state.view.inFlight ||
       state.view.uncertainRowIds.length ||
@@ -554,6 +577,10 @@ export async function wakePremoveQueue(
 }
 
 export type PremoveDispatchPorts = Omit<QueuePorts, "persist" | "send" | "command"> & {
+  sendBatch?(
+    rows: Parameters<PremoveDispatchPorts["send"]>[0][],
+    context: Parameters<QueuePorts["send"]>[1],
+  ): ReturnType<QueuePorts["send"]>;
   command?(
     row: Parameters<QueuePorts["send"]>[0] & {
       placement: QueuePlacement;
@@ -610,7 +637,13 @@ export async function stagePremoveSteeringInTransaction(
       [row.id]: { messageId: input.messageId, blocks: input.blocks },
     },
   };
-  if (state.view.inFlight) next.view.inFlight = state.view.inFlight;
+  if (state.view.inFlight) {
+    next.view.inFlight = state.view.inFlight;
+    next.view.uncertainRowIds = state.view.uncertainRowIds;
+    next.checkpoint.uncertainRowIds = state.checkpoint.uncertainRowIds;
+  }
+  next.view.errorHold = state.view.errorHold;
+  next.view.compaction = state.view.compaction;
   next.view.gracefulPausePending = state.view.gracefulPausePending;
   await store(tx, input, next);
   return true;
@@ -740,6 +773,8 @@ export async function dispatchPremoveQueue(
     });
     return false;
   }
+  if (state.drainIntent && boundary !== "paused")
+    return dispatchPremoveDrain(prisma, scope, boundary, ports);
   if (boundary === "paused" || state.view.paused || state.view.errorHold || state.view.compaction)
     return false;
   const owner = { runId: scope.runId, leaseOwner: scope.leaseOwner, leaseFence: scope.leaseFence };
@@ -894,4 +929,129 @@ export async function dispatchPremoveQueue(
       .catch(() => undefined);
     throw error;
   }
+}
+
+async function dispatchPremoveDrain(
+  prisma: PrismaClient,
+  scope: RuntimeSessionScope,
+  boundary: "idle" | "turn-end" | "agent-end" | "settled",
+  ports: PremoveDispatchPorts,
+): Promise<boolean> {
+  // Native turn boundaries accept steering without interrupting in-flight tools.
+  if (boundary !== "idle" && boundary !== "settled" && boundary !== "turn-end") return false;
+  if (!ports.sendBatch) return false;
+  const attemptId = randomUUID();
+  const reserved = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM threads WHERE id = ${scope.threadId} FOR UPDATE`;
+    await assertLease(tx, scope);
+    const state = await load(tx, scope);
+    const intent = state.drainIntent;
+    if (!intent || state.view.inFlight) return null;
+    // The owner may have changed since dispatchPremoveQueue's preliminary read.
+    if (
+      state.owner &&
+      (state.owner.runId !== scope.runId ||
+        state.owner.leaseOwner !== scope.leaseOwner ||
+        state.owner.leaseFence !== scope.leaseFence)
+    )
+      return null;
+    const eligible = premoveDrainRows(state);
+    if (!intent.rowIds.length || !intent.rowIds.every((id, index) => eligible[index] === id))
+      return null;
+    const rowIds = intent.rowIds;
+    state.owner = {
+      runId: scope.runId,
+      leaseOwner: scope.leaseOwner,
+      leaseFence: scope.leaseFence,
+    };
+    state.dispatchToken = attemptId;
+    state.view.inFlight = { attemptId, rowIds };
+    state.checkpoint.uncertainRowIds = [...rowIds];
+    state.view.uncertainRowIds = [...rowIds];
+    state.checkpoint.revision++;
+    state.view.revision = state.checkpoint.revision;
+    await store(tx, scope, state);
+    return state;
+  });
+  if (!reserved) return false;
+  const rowIds = reserved.view.inFlight!.rowIds;
+  let result: Awaited<ReturnType<QueuePorts["send"]>>;
+  try {
+    const rows: Parameters<PremoveDispatchPorts["send"]>[0][] = [];
+    for (const id of rowIds) {
+      const row = reserved.view.rows.find((row) => row.id === id)!;
+      const placement = reserved.placements![id]!;
+      const target = reserved.targets?.[id];
+      await assertQueuePlacementComputer(prisma, scope, placement);
+      if (target)
+        await authorizeQueueTarget(prisma, key(scope), target, target.generation, target.placement);
+      if (placement.kind === "project") {
+        if (!ports.validatePlacement) throw new Error("Runtime cannot validate project placement");
+        await ports.validatePlacement(placement);
+      }
+      rows.push({
+        ...row,
+        placement,
+        target,
+        blocks: reserved.stagedMessages?.[id]?.blocks.filter((block) => block.kind !== "text"),
+      });
+    }
+    // Recheck the lease after asynchronous attachment/placement authorization and before effects.
+    await prisma.$transaction((tx) => assertLease(tx, scope));
+    try {
+      const acknowledgment = await ports.sendBatch(rows, {
+        attemptId,
+        boundary,
+        signal: new AbortController().signal,
+      });
+      result =
+        acknowledgment?.outcome === "accepted" || acknowledgment?.outcome === "rejected"
+          ? acknowledgment
+          : { outcome: "uncertain", error: "Combined prompt acceptance is uncertain" };
+    } catch {
+      result = { outcome: "uncertain", error: "Combined prompt acceptance is uncertain" };
+    }
+  } catch {
+    result = { outcome: "rejected", error: "Queued placement or participant is unavailable" };
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM threads WHERE id = ${scope.threadId} FOR UPDATE`;
+    await assertLease(tx, scope);
+    const state = await load(tx, scope);
+    if (state.dispatchToken !== attemptId || state.view.inFlight?.attemptId !== attemptId)
+      throw new Error("Drain ownership changed; reserved rows require reconciliation");
+    const accepted = result.outcome === "accepted";
+    const uncertain = !accepted && result.outcome !== "rejected";
+    if (accepted) {
+      state.checkpoint.rows = state.checkpoint.rows.filter((row) => !rowIds.includes(row.id));
+      state.view.rows = state.view.rows.filter((row) => !rowIds.includes(row.id));
+      for (const id of rowIds) {
+        delete state.placements?.[id];
+        delete state.targets?.[id];
+        delete state.stagedMessages?.[id];
+      }
+    }
+    state.drainIntent = undefined;
+    state.view.inFlight = undefined;
+    state.view.paused = true;
+    state.view.errorHold = !accepted;
+    state.checkpoint.uncertainRowIds = uncertain ? rowIds : [];
+    state.view.uncertainRowIds = state.checkpoint.uncertainRowIds;
+    state.checkpoint.revision++;
+    state.view.revision = state.checkpoint.revision;
+    await store(tx, scope, state);
+    for (const rowId of rowIds)
+      await appendEventInTransaction(tx, {
+        ...scope,
+        runId: scope.runId,
+        type: "queue.dispatch",
+        payload: {
+          attemptId,
+          rowId,
+          outcome: accepted ? "accepted" : uncertain ? "uncertain" : "rejected",
+          revision: state.view.revision,
+        },
+      });
+  });
+  return true;
 }

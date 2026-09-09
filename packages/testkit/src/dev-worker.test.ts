@@ -18,6 +18,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   ensureWorker,
   restartWorker,
+  WorkerConfigurationError,
   workerCli,
   workerControl,
   workerLocation,
@@ -153,7 +154,7 @@ it("changed auth/config fails closed without disturbing the task", async () => {
       ...options,
       env: { ...options.env, BETTER_AUTH_SECRET: "different-fake-root" },
     }),
-  ).rejects.toThrow();
+  ).rejects.toThrow(WorkerConfigurationError);
   expect((await bridge(options.root)).active).toBe(true);
 });
 it("rejects unauthenticated requests, foreign checkout and reused PID/instance descriptors", async () => {

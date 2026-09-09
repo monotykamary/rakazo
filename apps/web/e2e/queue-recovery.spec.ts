@@ -94,7 +94,10 @@ test("unbound placement recovers through the server without changing established
     });
   });
   await page.goto("/e2e/fixtures/queue-inspection.html");
-  await page.getByRole("button", { name: "Queue · 4", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Queue", exact: true })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
   const recover = page.getByRole("button", { name: "Use current project", exact: true });
   await expect(recover).toHaveCount(1);
   await expect(recover).toBeEnabled();
@@ -149,7 +152,10 @@ for (const blocked of ["editing", "inFlight"] as const) {
     };
     await page.route("**/rpc/queue/list", (route) => route.fulfill({ json: { json: snapshot } }));
     await page.goto("/e2e/fixtures/queue-inspection.html");
-    await page.getByRole("button", { name: "Queue · 1", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Queue", exact: true })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
     await expect(page.getByRole("button", { name: "Use current project" })).toBeDisabled();
   });
 }
@@ -195,8 +201,11 @@ test("uncertain delivery requires consent and revision conflicts stay recoverabl
     });
   });
   await page.goto("/e2e/fixtures/queue-inspection.html");
-  await page.getByRole("button", { name: "Queue · 1", exact: true }).click();
-  await expect(page.getByText("Recovery hold", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Queue", exact: true })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  await expect(page.getByText("Waiting for recovery", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Resume", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("Resuming can send it again");
@@ -210,4 +219,220 @@ test("uncertain delivery requires consent and revision conflicts stay recoverabl
   expect(requests).toHaveLength(2);
   expect(requests[1]?.expectedRevision).toBe(3);
   await expect(page.getByText("Delivery uncertain", { exact: true })).toHaveCount(0);
+});
+
+test("inline timeline keeps drafts and sends one server-owned drain", async ({
+  page,
+}, testInfo) => {
+  let snapshot: QueueSnapshot = {
+    version: 1,
+    sessionId: "session",
+    revision: 0,
+    rows: [
+      {
+        id: "root",
+        sequence: 1,
+        lane: "followUp",
+        text: "Start review",
+        images: [],
+        placement: {
+          version: 1,
+          kind: "none",
+          computerId: null,
+          homeKey: null,
+          projectPath: null,
+          worktreePath: null,
+          revision: 0,
+        },
+      },
+      {
+        id: "child",
+        sequence: 2,
+        lane: "steer",
+        text: "Check tests",
+        images: [],
+        target: { participantId: "private-target-id" },
+      },
+    ],
+    identity: { nextIdNumber: 3, nextSequence: 3 },
+    uncertainRowIds: [],
+    paused: true,
+    errorHold: false,
+    gracefulPausePending: false,
+    modes: { steer: "one-at-a-time", followUp: "one-at-a-time" },
+  };
+  const operations: QueueMutation["operation"][] = [];
+  await page.route("**/rpc/queue/list", (route) => route.fulfill({ json: { json: snapshot } }));
+  await page.route("**/rpc/queue/mutate", async (route) => {
+    const input = route.request().postDataJSON().json as QueueMutation;
+    expect(input.expectedRevision).toBe(snapshot.revision);
+    operations.push(input.operation);
+    snapshot = structuredClone(snapshot);
+    snapshot.revision++;
+    const operation = input.operation;
+    if (operation.type === "edit-begin")
+      snapshot.editing = {
+        selectedId: operation.id,
+        rows: snapshot.rows.map((row) => ({ ...row, removed: false })),
+      };
+    if (operation.type === "edit-patch") Object.assign(snapshot.editing!.rows[0]!, operation.patch);
+    if (operation.type === "edit-cancel") delete snapshot.editing;
+    const ok =
+      operation.type !== "drain" || operations.filter((item) => item.type === "drain").length > 1;
+    if (operation.type === "drain" && ok)
+      snapshot.drain = { requestId: input.requestId, rowIds: ["root"] };
+    await route.fulfill({
+      json: {
+        json: {
+          version: 1,
+          requestId: input.requestId,
+          ok,
+          snapshot,
+          ...(ok ? {} : { error: "Dispatch unavailable" }),
+        },
+      },
+    });
+  });
+  await page.goto("/e2e/fixtures/queue-inspection.html");
+  const queue = page.getByRole("region", { name: "Queue", exact: true });
+  await expect(queue.getByRole("list", { name: "Execution order" })).toBeVisible();
+  await expect(queue).not.toContainText("private-target-id");
+  await expect(queue).toContainText("Participant targeted");
+  await expect(queue.getByRole("button", { name: "Execution" })).toHaveCount(0);
+  const root = queue.locator('[data-row-id="root"]');
+  await expect(page.getByRole("menuitem", { name: "Hold", exact: true })).toBeHidden();
+  await root.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(queue.getByRole("button", { name: "Drain all" })).toBeDisabled();
+  await root.getByRole("textbox").fill("Unsaved draft");
+  await root.getByLabel("Message options", { exact: true }).click();
+  await page.getByRole("menuitem", { name: "Steer", exact: true }).click();
+  await page.getByRole("menu").press("Escape");
+  await expect(root).toHaveClass(/ms-5/);
+  await expect(root.getByRole("textbox")).toHaveValue("Unsaved draft");
+  await root.getByRole("textbox").press("Escape");
+  await expect(root).not.toHaveClass(/ms-5/);
+  await expect(root).toContainText("Start review");
+  await queue.getByRole("button", { name: "Drain all" }).click();
+  await expect(queue.getByRole("alert")).toHaveText("Dispatch unavailable");
+  expect(operations.filter((operation) => operation.type === "drain")).toEqual([{ type: "drain" }]);
+  await expect(queue.locator("[data-row-id]")).toHaveCount(2);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect
+    .poll(() => queue.evaluate((element) => element.scrollWidth <= element.clientWidth))
+    .toBe(true);
+  await captureScreenshot(page, testInfo, "queue-inline-timeline");
+  await queue.getByRole("button", { name: "Drain all" }).click();
+  await expect(queue.getByRole("button", { name: "Drain all" })).toBeDisabled();
+  await expect(queue.getByRole("button", { name: "Pause", exact: true })).toBeEnabled();
+  await expect(queue.locator("[data-row-id]")).toHaveCount(2);
+  await expect(queue.getByRole("alert")).toHaveCount(0);
+});
+
+for (const state of [
+  "inFlight",
+  "drain",
+  "compaction",
+  "gracefulPausePending",
+  "errorHold",
+  "uncertain",
+  "held",
+  "unbound",
+  "legacy",
+] as const) {
+  test(`drain eligibility respects ${state}`, async ({ page }) => {
+    const snapshot: QueueSnapshot = {
+      version: 1,
+      sessionId: "session",
+      revision: 0,
+      rows: [
+        {
+          id: "first",
+          sequence: 1,
+          lane: "followUp",
+          text: "Review",
+          images: [],
+          paused: state === "held",
+          ...(state === "legacy"
+            ? {}
+            : {
+                placement: {
+                  version: 1,
+                  kind: state === "unbound" ? "unbound" : "none",
+                  computerId: null,
+                  homeKey: null,
+                  projectPath: null,
+                  worktreePath: null,
+                  revision: 0,
+                },
+              }),
+        },
+      ],
+      identity: { nextIdNumber: 2, nextSequence: 2 },
+      uncertainRowIds: state === "uncertain" ? ["first"] : [],
+      paused: true,
+      errorHold: state === "errorHold",
+      gracefulPausePending: state === "gracefulPausePending",
+      modes: { steer: "one-at-a-time", followUp: "one-at-a-time" },
+      ...(state === "inFlight" ? { inFlight: { attemptId: "attempt", rowIds: ["first"] } } : {}),
+      ...(state === "drain" ? { drain: { requestId: "request", rowIds: ["first"] } } : {}),
+      ...(state === "compaction" ? { compaction: "manual" as const } : {}),
+    };
+    const operations: QueueMutation["operation"][] = [];
+    await page.route("**/rpc/queue/list", (route) => route.fulfill({ json: { json: snapshot } }));
+    await page.route("**/rpc/queue/mutate", (route) => {
+      const input = route.request().postDataJSON().json as QueueMutation;
+      operations.push(input.operation);
+      return route.fulfill({
+        json: { json: { version: 1, requestId: input.requestId, ok: true, snapshot } },
+      });
+    });
+    await page.goto("/e2e/fixtures/queue-inspection.html?controlled");
+    const queue = page.getByRole("region", { name: "Queue", exact: true });
+    const toggle = queue.getByRole("button", { name: "Queue", exact: true });
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(queue.getByRole("button", { name: "Drain all" })).toBeDisabled();
+    await queue.getByLabel("Message options", { exact: true }).click();
+    await expect(page.getByRole("menuitem", { name: "Move up" })).toBeDisabled();
+    await expect(page.getByRole("menuitem", { name: "Move down" })).toBeDisabled();
+    if (state === "inFlight" || state === "drain") {
+      for (const name of ["Hold", "Steer", "Remove"])
+        await expect(page.getByRole("menuitem", { name, exact: true })).toBeDisabled();
+    }
+    await page.getByRole("menu").press("Escape");
+    if (state === "inFlight" || state === "drain")
+      await expect(queue.getByRole("button", { name: "Edit", exact: true })).toBeDisabled();
+    if (["inFlight", "compaction", "gracefulPausePending"].includes(state))
+      await expect(queue.getByRole("button", { name: "Resume", exact: true })).toBeDisabled();
+    if (state === "drain") {
+      await queue.getByRole("button", { name: "Pause", exact: true }).click();
+      await expect.poll(() => operations).toEqual([{ type: "pause" }]);
+    }
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  });
+}
+
+test("empty queue is a compact disclosure", async ({ page }) => {
+  const snapshot: QueueSnapshot = {
+    version: 1,
+    sessionId: "session",
+    revision: 0,
+    rows: [],
+    identity: { nextIdNumber: 1, nextSequence: 1 },
+    uncertainRowIds: [],
+    paused: true,
+    errorHold: false,
+    gracefulPausePending: false,
+    modes: { steer: "one-at-a-time", followUp: "one-at-a-time" },
+  };
+  await page.route("**/rpc/queue/list", (route) => route.fulfill({ json: { json: snapshot } }));
+  await page.goto("/e2e/fixtures/queue-inspection.html");
+  const queue = page.getByRole("region", { name: "Queue", exact: true });
+  await expect(queue.getByRole("button")).toHaveCount(1);
+  await queue.getByRole("button", { name: "Queue", exact: true }).click();
+  await expect(queue.getByRole("button", { name: "Drain all" })).toBeDisabled();
+  await expect(queue.getByRole("textbox")).toHaveCount(0);
 });

@@ -10,8 +10,8 @@ import {
 export interface DurableQueueState {
   checkpoint: QueueCheckpoint;
   view: QueueView;
-  editOperations: Exclude<QueueOperation, { type: "bind-placement" }>[];
-  receipts: Array<{ requestId: string; fingerprint: string }>;
+  editOperations: Exclude<QueueOperation, { type: "bind-placement" | "drain" }>[];
+  receipts: Array<{ requestId: string; fingerprint: string; drain?: boolean }>;
   placements?: Record<string, QueuePlacement>;
   targets?: Record<
     string,
@@ -20,6 +20,7 @@ export interface DurableQueueState {
   stagedMessages?: Record<string, { messageId: string; blocks: MessageBlock[] }>;
   owner?: { runId: string; leaseOwner: string; leaseFence: number };
   dispatchToken?: string;
+  drainIntent?: { requestId: string; rowIds: string[] };
   /** Runtime turn parked under a live lease at a pause boundary; kept until a newer park overwrites it. */
   pausedTurn?: {
     runId: string;
@@ -103,7 +104,13 @@ export function recoverPremoveQueue(state: DurableQueueState): DurableQueueState
     checkpoint: state.checkpoint,
     ports: { send: async () => ({ outcome: "rejected" }) },
   });
-  return { ...state, view: controller.snapshot(), editOperations: [], owner: undefined };
+  return {
+    ...state,
+    view: controller.snapshot(),
+    editOperations: [],
+    owner: undefined,
+    drainIntent: state.checkpoint.uncertainRowIds.length ? undefined : state.drainIntent,
+  };
 }
 
 export type { QueueCheckpoint, QueuePorts, QueueView };

@@ -1,3 +1,4 @@
+import { PiModelRuntimeError } from "@rakazo/adapters";
 import type { Actor } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
@@ -36,6 +37,63 @@ function prisma(state: unknown) {
 }
 
 describe("readPiModelRuntime", () => {
+  it.each([
+    "PI_START_FAILED",
+    "PI_DISCONNECTED",
+    "PI_WORKSPACE_UNAVAILABLE",
+    "PI_PROTOCOL_FAILED",
+    "PI_DISCOVERY_TIMEOUT",
+  ] as const)("returns safe actionable %s without private causes", async (code) => {
+    const result = await readPiModelRuntime({
+      prisma: prisma({}),
+      actor,
+      scope: {},
+      models: {
+        validate: vi.fn(),
+        read: vi
+          .fn()
+          .mockRejectedValue(
+            new PiModelRuntimeError(code, { cause: new Error("fake-private-detail") }),
+          ),
+      },
+    });
+    expect(result.availability).toEqual({ status: "unavailable", error: code });
+    expect(result.catalog).toEqual([]);
+    expect(result.profileDefault).toBeNull();
+    expect(JSON.stringify(result)).not.toContain("fake-private-detail");
+  });
+
+  it("does not expose untyped errors or accept spoofed codes", async () => {
+    const result = await readPiModelRuntime({
+      prisma: prisma({}),
+      actor,
+      scope: {},
+      models: {
+        validate: vi.fn(),
+        read: vi
+          .fn()
+          .mockRejectedValue(
+            Object.assign(new Error("fake-private-detail"), { code: "fake-private-detail" }),
+          ),
+      },
+    });
+    expect(result.availability).toEqual({ status: "unavailable", error: "PI_DISCOVERY_FAILED" });
+  });
+
+  it("propagates caller cancellation instead of claiming Pi unavailable", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancelled");
+    controller.abort(reason);
+    await expect(
+      readPiModelRuntime({
+        prisma: prisma({}),
+        actor,
+        scope: {},
+        signal: controller.signal,
+        models: { validate: vi.fn(), read: vi.fn().mockRejectedValue(reason) },
+      }),
+    ).rejects.toBe(reason);
+  });
   it.each(["thread", "bot", "participant"])(
     "authorizes %s before a profile probe",
     async (foreign) => {
@@ -67,7 +125,7 @@ describe("readPiModelRuntime", () => {
       catalog: [],
       profileDefault: null,
       current: null,
-      availability: { status: "unavailable" },
+      availability: { status: "unavailable", error: "PI_NOT_CONFIGURED" },
     });
   });
   it("reads the global catalog directly from Pi", async () => {
@@ -97,7 +155,7 @@ describe("readPiModelRuntime", () => {
       }),
     ).resolves.toMatchObject({
       catalog: [],
-      availability: { status: "unavailable", error: "Pi model runtime is unavailable" },
+      availability: { status: "unavailable", error: "PI_SCOPE_UNSUPPORTED" },
     });
     expect(read).not.toHaveBeenCalled();
   });
