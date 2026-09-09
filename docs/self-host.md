@@ -4,7 +4,7 @@ The signed-in product is a long-running API, a Graphile Worker, Postgres, and a 
 
 ## Local (source checkout)
 
-Same as the README quick start: `.env` from `.env.example`, Postgres via Compose, `bun run sandbox:build`, `bun run dev`, then [http://127.0.0.1:5173](http://127.0.0.1:5173) (or `http://localhost:5173`; auth trusts both hosts with the same scheme and port). Electron: `bun run --filter @rakazo/desktop dev` while that stack is up, choosing **Another server** with that address. The desktop app's **This computer** option instead installs and runs the published images itself with Docker Compose (see [Published images](#published-images-no-checkout)), using port 45173 by default so it can run alongside `bun run dev`. If that port is occupied, the app selects and remembers another loopback port. The managed API gets a Docker-assigned loopback port; all desktop traffic uses the web origin.
+Same as the README quick start: `.env` from `.env.example`, Postgres via Compose, `bun run sandbox:build`, `bun run dev`, then open [https://rakazo.localhost](https://rakazo.localhost) (or the exact named URL printed for a worktree or custom TLD). Electron: `bun run --filter @rakazo/desktop dev` while that stack is up, choosing **Another server** with that address. The desktop app's **This computer** option instead installs and runs the published images itself with Docker Compose (see [Published images](#published-images-no-checkout)), using port 45173 by default so it can run alongside `bun run dev`. If that port is occupied, the app selects and remembers another loopback port. The managed API gets a Docker-assigned loopback port; all desktop traffic uses the web origin.
 
 ## Published images (no checkout)
 

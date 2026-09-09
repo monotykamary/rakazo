@@ -9,6 +9,14 @@ import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseEnv } from "node:util";
+import {
+  PortlessConfigurationError,
+  portlessLaunchPlan,
+  portlessPublicOrigin,
+  portlessServiceEnvironment,
+  portlessWorkerEnvironment,
+  shouldBootstrapPortless,
+} from "./dev-portless.mjs";
 import { ensureWorker, WorkerConfigurationError, workerControl } from "./dev-worker.mjs";
 
 class DevError extends Error {}
@@ -161,6 +169,12 @@ export async function readEnvironment(root) {
 // complete prefix, not user-selected PATH entries or explicitly selected Pi binaries.
 export function callerEnvironment(root, inherited) {
   const env = { ...inherited };
+  // Portless adds a different bin prefix from Bun; restore the captured caller
+  // before resolving Pi or running its version preflight, not just RPC children.
+  if (env.RAKAZO_DEV_PORTLESS_CHILD === "1" && typeof env.RAKAZO_DEV_PI_PATH === "string") {
+    env.PATH = env.RAKAZO_DEV_PI_PATH;
+    return env;
+  }
   if (!env.npm_config_user_agent?.startsWith("bun/") || typeof env.PATH !== "string") return env;
   const bases = new Set([root]);
   // Bun can preserve an outer invocation's local_prefix; match the actual prefix.
@@ -221,6 +235,14 @@ export function runtimeEnvironment(root, values, command) {
     SANDBOX_PROVIDER: "desktop",
     DATA_DIR: path.resolve(root, values.DATA_DIR || "data"),
   };
+}
+
+export function resolvedWorkerEnvironment(root, values, resolved) {
+  return runtimeEnvironment(
+    root,
+    { ...values, PI_CODING_AGENT_DIR: resolved.PI_CODING_AGENT_DIR },
+    resolved.RAKAZO_PI_COMMAND,
+  );
 }
 
 export function databasePlan(root, env) {
@@ -412,7 +434,41 @@ export async function preflightServices(env) {
 export function serviceUrls(env) {
   const api = new URL("/health", env.API_URL || "http://127.0.0.1:3100");
   if (env.API_PORT) api.port = env.API_PORT;
-  return [api, new URL("/", env.WEB_ORIGIN || "http://127.0.0.1:5173")];
+  const configuredWeb = new URL(env.WEB_ORIGIN || "http://127.0.0.1:5173");
+  const web = new URL("http://127.0.0.1");
+  web.port = String(Number(env.WEB_PORT ?? (configuredWeb.port || 5173)));
+  return [api, web];
+}
+
+export async function runPortless(plan, launch = spawn) {
+  const child = launch(plan.command, plan.args, {
+    cwd: plan.root,
+    env: plan.environment,
+    // Keep the controlling terminal available for Portless’s first-run sudo prompt.
+    stdio: "inherit",
+  });
+  const forward = (signal) => {
+    if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+  };
+  const interrupt = () => forward("SIGINT");
+  const terminate = () => forward("SIGTERM");
+  process.on("SIGINT", interrupt);
+  process.on("SIGTERM", terminate);
+  try {
+    return await new Promise((resolve, reject) => {
+      child.once("error", () =>
+        reject(
+          new PortlessConfigurationError(
+            "Portless could not start; run bun install --frozen-lockfile",
+          ),
+        ),
+      );
+      child.once("close", (code) => resolve(code ?? 1));
+    });
+  } finally {
+    process.removeListener("SIGINT", interrupt);
+    process.removeListener("SIGTERM", terminate);
+  }
 }
 
 export async function executable(command, env, root) {
@@ -776,10 +832,12 @@ export async function bootstrap({
   }
   const additions = await environmentAdditions(root, values, snapshot.fresh);
   Object.assign(values, additions);
-  validateSecrets(values);
+  const workerValues = portlessWorkerEnvironment(values);
+  const serviceValues = portlessServiceEnvironment(values);
+  validateSecrets(serviceValues);
   if (!values.DATABASE_URL)
     throw new DevError("Set DATABASE_URL before starting this existing checkout");
-  const env = runtimeEnvironment(root, values, values.RAKAZO_PI_COMMAND || "pi");
+  const env = runtimeEnvironment(root, serviceValues, serviceValues.RAKAZO_PI_COMMAND || "pi");
   if (inherited.DATABASE_URL && inherited.DATABASE_URL !== stored.DATABASE_URL)
     env.RAKAZO_DEV_DATABASE = "0";
   const runner = processes(root, env);
@@ -796,6 +854,9 @@ export async function bootstrap({
     if (`bun@${bun.output.trim()}` !== pkg.packageManager)
       throw new DevError(`Use the repository-pinned ${pkg.packageManager}`);
     env.RAKAZO_PI_COMMAND = await resolvePi(root, env, opts, runner);
+    const workerEnv = resolvedWorkerEnvironment(root, workerValues, env);
+    if (inherited.DATABASE_URL && inherited.DATABASE_URL !== stored.DATABASE_URL)
+      workerEnv.RAKAZO_DEV_DATABASE = "0";
     const piVersion = await runner.run(env.RAKAZO_PI_COMMAND, ["--version"], {
       capture: true,
       timeout: 15000,
@@ -859,7 +920,7 @@ export async function bootstrap({
     );
     await prepareWorkerDatabase({ root, env, runner });
     await preflightServices(env);
-    await ensureWorker({ root, env });
+    await ensureWorker({ root, env: workerEnv });
     const service = runner.launch("bun", [
       "x",
       "turbo",
@@ -902,7 +963,9 @@ export async function bootstrap({
     } finally {
       readiness.abort();
     }
-    console.log("App ready. Run bun run dev:pi for Pi /login and /model if needed.");
+    console.log(
+      `App ready at ${portlessPublicOrigin(env) ?? env.WEB_ORIGIN}. Run bun run dev:pi for Pi /login and /model if needed.`,
+    );
     const result = await service.done;
     if (result.code !== 0 || !abort.signal.aborted)
       throw new DevError(`Dev service exited (${result.code})`);
@@ -914,14 +977,37 @@ export async function bootstrap({
   }
 }
 
+export async function devMain({
+  root = checkout,
+  inherited = process.env,
+  args = process.argv.slice(2),
+} = {}) {
+  options(args);
+  root = await realpath(root);
+  if (!shouldBootstrapPortless(args, inherited)) return bootstrap({ root, inherited, args });
+  // Refuse managed configurations before Portless can request system setup.
+  const { values } = await loadEnvironment(root, inherited);
+  if (!shouldBootstrapPortless(args, values)) return bootstrap({ root, inherited, args });
+  const caller = callerEnvironment(root, inherited);
+  const plan = { ...portlessLaunchPlan(root, args, caller), root };
+  const code = await runPortless(plan);
+  if (code === 130 || code === 143) {
+    process.exitCode = code;
+    return;
+  }
+  if (code !== 0) throw new PortlessConfigurationError(`Portless dev exited (${code})`);
+}
+
 export function devStartupMessage(error) {
-  return error instanceof DevError || error instanceof WorkerConfigurationError
+  return error instanceof DevError ||
+    error instanceof PortlessConfigurationError ||
+    error instanceof WorkerConfigurationError
     ? error.message
     : "Dev startup failed. Check prerequisites and configuration; run node scripts/dev.mjs --help for options.";
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  bootstrap().catch((error) => {
+  devMain().catch((error) => {
     // Avoid accidentally logging a parsed URL, command output or credentials in exception messages.
     console.error(devStartupMessage(error));
     process.exitCode ||= 1;

@@ -39,6 +39,16 @@ describe("dev caller PATH", () => {
     expect(original.PATH).not.toBe(caller);
     expect(callerEnvironment(root, callerEnvironment(root, original)).PATH).toBe(caller);
   });
+  it("restores the pre-Portless path before executable resolution and version checks", () => {
+    const original = {
+      ...bunEnvironment(root, "/caller/bin"),
+      RAKAZO_DEV_PORTLESS_CHILD: "1",
+      RAKAZO_DEV_PI_PATH: "/caller/bin",
+      PATH: "/portless/package/bin:/portless/node/bin:/caller/bin",
+    };
+    expect(callerEnvironment(root, original).PATH).toBe("/caller/bin");
+    expect(original.PATH).toBe("/portless/package/bin:/portless/node/bin:/caller/bin");
+  });
   it("does not alter direct Node or other package-manager environments", () => {
     for (const agent of [undefined, "npm/11", "pnpm/10"])
       expect(
@@ -81,9 +91,9 @@ describe("dev caller PATH", () => {
       PI_CODING_AGENT_DIR: "./profile",
     });
   });
-  it.skipIf(process.platform === "win32")(
-    "real bun run dev bypasses stale ancestor shims while workspace commands retain local tools",
-    async () => {
+  it.skipIf(process.platform === "win32").each([false, true])(
+    "real bun startup bypasses stale ancestor shims while workspace tools remain available (Portless=%s)",
+    async (portless) => {
       const base = await realpath(await mkdtemp(path.join(os.tmpdir(), "rakazo-path-probe-")));
       temporary.push(base);
       const root = path.join(base, "checkout with spaces");
@@ -133,6 +143,13 @@ describe("dev caller PATH", () => {
         PATH: [system, process.env.PATH].join(path.delimiter),
       };
       delete env.RAKAZO_PI_COMMAND;
+      delete env.RAKAZO_DEV_PORTLESS_CHILD;
+      delete env.RAKAZO_DEV_PI_PATH;
+      if (portless) {
+        env.RAKAZO_DEV_PORTLESS_CHILD = "1";
+        env.RAKAZO_DEV_PI_PATH = env.PATH;
+        env.PATH = [local, ancestor, env.PATH].join(path.delimiter);
+      }
       const result = execFileSync(bun!, ["run", "--silent", "dev"], {
         cwd: root,
         env,

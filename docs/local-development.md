@@ -24,7 +24,29 @@ remote placements do not inherit that authority.
 The bootstrap generates missing private configuration, provisions persistent
 PostgreSQL with Mocker/Apple containers when it owns the dev database, applies
 migrations, starts a stable execution worker, and watches the API and web. Open
-<http://127.0.0.1:5173>. Electron is never launched automatically.
+<https://rakazo.localhost>. Electron is never launched automatically. Portless assigns
+the internal Vite port and sends browser API and RPC requests through that same origin;
+the generated public URL is used for authentication only at runtime and is not written
+to `.env`. Linked worktrees receive their own prefixed hostname. Sign in again at the
+named URL; browser cookies from the old address do not transfer between origins.
+
+Portless uses HTTPS by default. On first use it may ask permission to bind the privileged
+HTTPS port, create and trust a local CA, and synchronize host entries. Review the prompt
+before approving it; Rakazo does not run those setup commands separately. To avoid
+Portless in CI or another noninteractive flow, set `PORTLESS=0`; managed startup remains
+unchanged.
+
+To intentionally use the `.test` TLD, start the proxy first, then run dev:
+
+```sh
+bun x portless proxy start --tld test
+bun run dev
+```
+
+The named URL is then `https://rakazo.test` (with a worktree prefix when applicable).
+The proxy command can require elevated CA/port permissions and can update `/etc/hosts`;
+do not run it unless those changes are intended. Portless reuses that explicit proxy
+configuration on later starts.
 
 Existing configuration and database URLs are preserved. An existing database URL is
 an external dependency, not permission to replace its container or erase its data.
@@ -38,7 +60,9 @@ owned storage are rejected rather than adopted or silently replaced.
 
 When upgrading from the old watched worker, let its active jobs finish before
 stopping the old dev command. Trusted-local `bun run dev` then keeps the entire
-execution worker outside the API/web watcher process group. Restarting dev retains active Pi RPC processes, Fabric work,
+execution worker outside the API/web watcher process group and Portless’s descendant
+process tree. The worker must be adopted by the system init process before it starts
+jobs; environments with a different subreaper fail closed. Restarting dev retains active Pi RPC processes, Fabric work,
 tool callbacks and job leases. It does not merely detach a Pi child whose bridge dies.
 
 ```sh
@@ -142,7 +166,8 @@ With the source stack running:
 bun run --filter @rakazo/desktop dev
 ```
 
-Choose **Another server** and enter `http://127.0.0.1:5173`. The packaged desktop
+Choose **Another server** and enter `https://rakazo.localhost` (or the exact URL printed
+by dev for a worktree or custom TLD). The packaged desktop
 **This computer** installer is a different deployment path, not this source watcher.
 
 Managed deployments retain their existing configuration and prerequisites. Use

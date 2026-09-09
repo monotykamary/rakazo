@@ -196,16 +196,20 @@ export async function ensureWorker({ root, env, command }) {
     const token = randomBytes(32).toString("hex");
     await writePrivate(path.join(location.directory, "credential"), token);
     const config = await fingerprint(env, token, command);
-    const child = spawn(process.execPath, [here, "--manager"], {
+    const child = spawn(process.execPath, [here, "--launch-manager"], {
       cwd: location.root,
       env,
       detached: true,
       stdio: ["ignore", "ignore", "ignore", "ipc"],
     });
-    child.on("error", () => {});
-    child.send({ location, command, config, token }, () => {});
-    child.disconnect();
-    child.unref();
+    await new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code) => (code === 0 ? resolve() : reject(fail())));
+      child.send({ location, command, config, token }, (error) => {
+        if (error) reject(fail());
+        if (child.connected) child.disconnect();
+      });
+    });
   }
   for (let i = 0; i < 150; i++) {
     try {
@@ -225,7 +229,30 @@ export async function ensureWorker({ root, env, command }) {
   }
   throw new Error("Worker startup timed out; use worker status/stop. No process was killed.");
 }
-async function manager({ location, command, config, token }) {
+function launchManager(boot) {
+  const child = spawn(process.execPath, [here, "--manager"], {
+    cwd: boot.location.root,
+    env: process.env,
+    detached: true,
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+  });
+  child.once("error", () => process.exit(1));
+  child.send({ ...boot, launcherPid: process.pid }, (error) => {
+    // Exit only after the private boot payload has been handed to the manager.
+    process.exit(error ? 1 : 0);
+  });
+}
+async function manager({ location, command, config, token, launcherPid }) {
+  // Detached sessions alone do not escape recursive descendant shutdown. Do not
+  // publish even to concurrent ensureWorker callers until the launcher is gone.
+  if (!Number.isInteger(launcherPid) || launcherPid < 1) throw fail();
+  for (let i = 0; process.ppid === launcherPid; i++) {
+    if (i === 150) throw fail();
+    await sleep(100);
+  }
+  // A subreaper inside the wrapper tree would defeat the double fork. Refuse
+  // non-init adoption rather than start jobs under an unverified ancestor.
+  if (process.ppid !== 1) throw fail();
   let state = "starting";
   let worker;
   const instance = randomBytes(32).toString("hex");
@@ -395,7 +422,8 @@ export async function workerCli(
   console.log(JSON.stringify(await restartWorker({ root, env: runtime })));
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  if (process.argv[2] === "--manager")
+  if (process.argv[2] === "--launch-manager") process.once("message", launchManager);
+  else if (process.argv[2] === "--manager")
     process.once("message", (message) => void manager(message).catch(() => process.exit(1)));
   else
     workerCli(process.argv[2]).catch(() => {

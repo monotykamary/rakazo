@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   chmod,
   lstat,
@@ -226,6 +226,70 @@ it("launcher process-group termination leaves the whole worker host alive", asyn
   expect((await launch(options)).workerPid).toBe(first.workerPid);
   expect((await bridge(options.root)).callback).toBe("works");
 });
+it("ready manager and active Pi task escape wrapper descendant shutdown", async () => {
+  const options = await fixture();
+  const bootstrap = `import {ensureWorker} from ${JSON.stringify(moduleUrl)}; process.send(await ensureWorker(${JSON.stringify(options)})); setInterval(()=>{},1000);`;
+  const wrapper = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    import {spawn} from 'node:child_process';
+    const child = spawn(process.execPath, ['--input-type=module', '-e', ${JSON.stringify(bootstrap)}], {stdio:['ignore','ignore','ignore','ipc']});
+    child.on('message', result => process.send({...result, bootstrapPid:child.pid}));
+    process.on('message', () => { child.kill('SIGTERM'); process.exit(0); });
+  `,
+    ],
+    { stdio: ["ignore", "ignore", "ignore", "ipc"] },
+  );
+  try {
+    const ready = await new Promise<{ workerPid: number; bootstrapPid: number }>((resolve) => {
+      wrapper.once("message", resolve);
+    });
+    const task = await bridge(options.root);
+    // Enumerate PPIDs, not process groups: detached descendants must also be found.
+    const rows = execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" })
+      .trim()
+      .split("\n")
+      .map((row) => row.trim().split(/\s+/).map(Number));
+    const parents = new Map(rows.map(([pid, ppid]) => [pid, ppid]));
+    const descendants = new Set<number>();
+    const walk = (pid: number) => {
+      for (const [candidate, parent] of rows) {
+        if (parent === pid && !descendants.has(candidate)) {
+          descendants.add(candidate);
+          walk(candidate);
+        }
+      }
+    };
+    walk(wrapper.pid!);
+    expect(descendants.has(ready.bootstrapPid)).toBe(true);
+    const managerPid = parents.get(ready.workerPid)!;
+    expect(managerPid).toBeGreaterThan(1);
+    expect(parents.get(managerPid)).toBe(1);
+    expect(parents.get(task.taskPid)).toBe(ready.workerPid);
+    for (const pid of [managerPid, ready.workerPid, task.taskPid]) {
+      expect(parents.has(pid)).toBe(true);
+      expect(descendants.has(pid)).toBe(false);
+    }
+    // Signal every enumerated descendant, including separate sessions, then wrapper.
+    const exited = new Promise((resolve) => wrapper.once("exit", resolve));
+    for (const pid of [...descendants].reverse()) process.kill(pid, "SIGTERM");
+    wrapper.kill("SIGTERM");
+    await exited;
+    await sleep(250);
+    expect(await workerControl(options)).toEqual({ state: "ready", workerPid: ready.workerPid });
+    expect(await bridge(options.root)).toMatchObject({ active: true, taskPid: task.taskPid });
+    expect((await bridge(options.root)).callbacks).toBeGreaterThan(task.callbacks);
+    expect((await workerControl(options, "stop")).state).toBe("draining");
+    await bridge(options.root, "/settle");
+    await gone(options);
+    expect((await workerControl(options)).state).toBe("stopped");
+  } finally {
+    if (wrapper.connected) wrapper.send("cleanup");
+  }
+}, 15000);
 it("explicit restart waits for work to settle before loading changed code", async () => {
   const options = await fixture();
   const first = await ensureWorker(options);

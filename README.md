@@ -97,9 +97,11 @@ web, API and worker watchers. It uses your existing Pi configuration and credent
 not a Docker-isolated replacement. If Pi is missing, it offers a pinned local install.
 This mode grants host access and is restricted to the deployment owner.
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Existing Pi installations and
-databases are preserved; Ctrl+C does not delete database storage. No hosted vendor
-is required to boot. A fresh Pi installation still needs `/login` and `/model` setup.
+Open [https://rakazo.localhost](https://rakazo.localhost). Portless may request permission
+on first use to bind HTTPS, create and trust its local CA, and synchronize host entries;
+review that prompt before approving it. Existing Pi installations and databases are
+preserved; Ctrl+C does not delete database storage. No hosted vendor is required to
+boot. A fresh Pi installation still needs `/login` and `/model` setup.
 
 See [local development](docs/local-development.md) for trust, configuration, native
 computer limitations and managed-mode startup; [workspace installation](docs/workspace-install.md)
@@ -121,7 +123,7 @@ server. **This computer** installs and starts the published images with Docker C
 files as `infra/compose/install-images.sh`) under the app's data directory, so Docker Desktop,
 OrbStack, or Docker Engine must be installed; the app links to them when it is not. Installed
 builds pin the image tag to their own version; unpackaged builds pull `edge`. Developers running
-`bun run dev` should pick **Another server** with `http://127.0.0.1:5173` instead. Public servers
+`bun run dev` should pick **Another server** with `https://rakazo.localhost` instead. Public servers
 must use HTTPS; HTTP is accepted only for loopback and private LAN addresses (not link-local). The
 app verifies Rakazo's health endpoint before saving, and later launches go straight to that
 instance. The stack keeps running after the app quits; **Stop Local Stack** in the application

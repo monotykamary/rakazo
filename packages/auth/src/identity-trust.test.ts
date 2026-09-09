@@ -112,6 +112,36 @@ function fixture({
 
 beforeEach(() => vi.clearAllMocks());
 
+describe("named development origins", () => {
+  it.each(["https://rakazo.localhost", "https://rakazo.test"])(
+    "accepts authentication through the configured proxy origin %s",
+    async (origin) => {
+      const f = fixture({
+        delivery: false,
+        baseURL: origin,
+        webOrigin: origin,
+        requestOrigin: origin,
+      });
+      const response = await f.signup();
+      expect(response.status).toBe(200);
+      expect(response.headers.get("set-cookie")).toContain("Secure");
+      expect((await f.signin()).status).toBe(200);
+      expect(buildTrustedOrigins({ baseURL: origin, webOrigin: origin })).toEqual([origin]);
+    },
+  );
+
+  it.each([
+    "https://other.localhost",
+    "https://rakazo.localhost.example.test",
+    "http://rakazo.localhost",
+  ])("does not broaden trust to %s", async (requestOrigin) => {
+    const origin = "https://rakazo.localhost";
+    const f = fixture({ delivery: false, baseURL: origin, webOrigin: origin, requestOrigin });
+    expect((await f.signup()).status).toBe(403);
+    expect(f.data.user).toHaveLength(0);
+  });
+});
+
 describe("loopback trusted origins", () => {
   it.each([
     ["http://127.0.0.1:5173", "http://localhost:5173"],

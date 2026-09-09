@@ -86,7 +86,7 @@ describe("dev worker migration safety", () => {
     const bootstrap = source.slice(source.indexOf("export async function bootstrap("));
     const guard = bootstrap.indexOf("await prepareWorkerDatabase({ root, env, runner })");
     expect(guard).toBeGreaterThan(bootstrap.indexOf('await client.query("SELECT 1")'));
-    expect(guard).toBeLessThan(bootstrap.indexOf("await ensureWorker({ root, env })"));
+    expect(guard).toBeLessThan(bootstrap.indexOf("await ensureWorker({ root, env: workerEnv })"));
     expect(bootstrap).not.toContain('"db:generate"');
     expect(bootstrap).not.toContain('"db:migrate"');
   });

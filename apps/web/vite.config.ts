@@ -17,9 +17,9 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv, type PreviewServer, type ViteDevServer } from "vite";
 import { resolveScreenProxySecret } from "../../packages/core/src/secrets-guard.ts";
+import { viteDevNetwork } from "./portless";
 import { resolveNovncTarget, safeProxyHeaders } from "./src/screen-proxy.js";
 
-const webPort = Number(process.env.WEB_PORT ?? 5173);
 const DESKTOP_STACK_PROBE_PATH = "/.well-known/rakazo-desktop-stack";
 const DESKTOP_STACK_TOKEN_HEADER = "x-rakazo-desktop-stack-token";
 
@@ -153,6 +153,7 @@ function attachNovncProxy(server: ViteDevServer | PreviewServer, secret: string)
 export default defineConfig(({ mode }) => {
   const rootEnv = loadEnv(mode, path.resolve(import.meta.dirname, "../.."), "");
   const api = process.env.API_PROXY_TARGET ?? rootEnv.API_PROXY_TARGET ?? "http://127.0.0.1:3100";
+  const devNetwork = viteDevNetwork(process.env);
   const previewHost = process.env.RAKAZO_HOST ?? rootEnv.RAKAZO_HOST ?? "localhost";
   const screenProxySecret = () =>
     resolveScreenProxySecret({
@@ -200,8 +201,10 @@ export default defineConfig(({ mode }) => {
     ],
     server: {
       host: "127.0.0.1",
-      port: webPort,
+      port: devNetwork.port,
       strictPort: true,
+      ...("allowedHosts" in devNetwork ? { allowedHosts: devNetwork.allowedHosts } : {}),
+      ...("hmr" in devNetwork ? { hmr: devNetwork.hmr } : {}),
       fs: {
         strict: true,
         allow: [
