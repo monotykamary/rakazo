@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -28,11 +28,26 @@ async function fixture(scenario: Record<string, unknown> = {}) {
 }
 
 afterEach(async () => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe("LocalPiModelRuntimeService", () => {
+  it("supports a new root session without accepting foreign or malformed checkpoints", async () => {
+    const { service } = await fixture();
+    expect(service.supportsCheckpoint({})).toBe(true);
+    for (const checkpoint of [
+      null,
+      undefined,
+      [],
+      "",
+      { runtime: "managed" },
+      { runtime: "pi-local", cwdHash: "foreign" },
+    ])
+      expect(service.supportsCheckpoint(checkpoint)).toBe(false);
+  });
+
   it("keeps forwarding Pi wrappers on the caller PATH when package runners shadow Pi", async () => {
     const { root, command } = await fixture({
       availableModels: [{ provider: "offline", id: "actual" }],
@@ -103,6 +118,160 @@ describe("LocalPiModelRuntimeService", () => {
         thinkingLevel: "medium",
       },
     });
+  });
+
+  it("reuses successful reads and returns defensive copies", async () => {
+    const { root, service } = await fixture({
+      provider: "offline",
+      model: "cached",
+      availableModels: [{ provider: "offline", id: "cached", reasoning: true }],
+    });
+
+    const first = await service.read();
+    first.catalog[0]!.id = "mutated";
+    first.catalog[0]!.thinkingLevels!.push("max");
+    first.profileDefault!.modelId = "mutated";
+    const second = await service.read();
+
+    expect(second.catalog[0]).toMatchObject({ id: "cached", thinkingLevels: ["off", "medium"] });
+    expect(second.profileDefault?.modelId).toBe("cached");
+    expect(
+      (await readLocalPiEmulatorLog(root)).filter((entry) => entry.type === "start"),
+    ).toHaveLength(1);
+  });
+
+  it("singleflights concurrent reads", async () => {
+    const { root, service } = await fixture();
+
+    const [first, second] = await Promise.all([service.read(), service.read()]);
+
+    expect(second).toEqual(first);
+    expect(
+      (await readLocalPiEmulatorLog(root)).filter((entry) => entry.type === "start"),
+    ).toHaveLength(1);
+  });
+
+  it("keys cached profiles by canonical cwd without crossing project settings", async () => {
+    const { root, service } = await fixture({
+      provider: "root-provider",
+      model: "root-model",
+      availableModels: [{ provider: "root-provider", id: "root-model" }],
+    });
+    const project = join(root, "project");
+    const alias = join(root, "project-alias");
+    await mkdir(project);
+    await writeLocalPiScenario(project, {
+      provider: "project-provider",
+      model: "project-model",
+      availableModels: [{ provider: "project-provider", id: "project-model" }],
+    });
+    await symlink(project, alias, "dir");
+
+    const projectProfile = await service.read(undefined, project);
+    const aliasProfile = await service.read(undefined, alias);
+    const rootProfile = await service.read();
+
+    expect(aliasProfile).toEqual(projectProfile);
+    expect(projectProfile.catalog[0]?.id).toBe("project-model");
+    expect(rootProfile.catalog[0]?.id).toBe("root-model");
+    expect(
+      (await readLocalPiEmulatorLog(project)).filter((entry) => entry.type === "start"),
+    ).toHaveLength(1);
+    expect(
+      (await readLocalPiEmulatorLog(root)).filter((entry) => entry.type === "start"),
+    ).toHaveLength(1);
+  });
+
+  it("expires successful profiles after five minutes", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    const { root, service } = await fixture({
+      model: "first",
+      availableModels: [{ provider: "offline", id: "first" }],
+    });
+    await service.read();
+    await writeLocalPiScenario(root, {
+      model: "second",
+      availableModels: [{ provider: "offline", id: "second" }],
+    });
+
+    vi.setSystemTime(new Date("2026-01-01T00:04:59.999Z"));
+    expect((await service.read()).catalog[0]?.id).toBe("first");
+    vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+    expect((await service.read()).catalog[0]?.id).toBe("second");
+    expect(
+      (await readLocalPiEmulatorLog(root)).filter((entry) => entry.type === "start"),
+    ).toHaveLength(2);
+  });
+
+  it("refreshes explicitly, drops stale success on failure, and retries failures", async () => {
+    const { root, service } = await fixture({
+      model: "first",
+      availableModels: [{ provider: "offline", id: "first" }],
+    });
+    await service.read();
+    await writeLocalPiScenario(root, {
+      model: "second",
+      availableModels: [{ provider: "offline", id: "second" }],
+    });
+    expect((await service.read(undefined, undefined, { refresh: true })).catalog[0]?.id).toBe(
+      "second",
+    );
+
+    await writeLocalPiScenario(root, { exitOnCommand: "get_available_models" });
+    await expect(service.read(undefined, undefined, { refresh: true })).rejects.toMatchObject({
+      code: "PI_DISCONNECTED",
+    });
+    await writeLocalPiScenario(root, {
+      model: "third",
+      availableModels: [{ provider: "offline", id: "third" }],
+    });
+    expect((await service.read()).catalog[0]?.id).toBe("third");
+    expect(
+      (await readLocalPiEmulatorLog(root)).filter((entry) => entry.type === "start"),
+    ).toHaveLength(4);
+  });
+
+  it("bounds canonical cwd cache entries", async () => {
+    const { root, service } = await fixture();
+    const projects: string[] = [];
+    for (let index = 0; index < 17; index += 1) {
+      const project = join(root, `project-${index}`);
+      projects.push(project);
+      await mkdir(project);
+      await writeLocalPiScenario(project, {
+        model: `model-${index}`,
+        availableModels: [{ provider: "offline", id: `model-${index}` }],
+      });
+      await service.read(undefined, project);
+    }
+
+    await service.read(undefined, projects[0]);
+
+    expect(
+      (await readLocalPiEmulatorLog(projects[0]!)).filter((entry) => entry.type === "start"),
+    ).toHaveLength(2);
+    expect(
+      (await readLocalPiEmulatorLog(projects[16]!)).filter((entry) => entry.type === "start"),
+    ).toHaveLength(1);
+  });
+
+  it("keeps validate uncached", async () => {
+    const { root, service } = await fixture();
+    const selection = {
+      provider: "offline",
+      modelId: "offline-model",
+      thinkingLevel: "off" as const,
+    };
+
+    await service.read();
+    await service.read();
+    await service.validate(selection);
+    await service.validate(selection);
+
+    expect(
+      (await readLocalPiEmulatorLog(root)).filter((entry) => entry.type === "start"),
+    ).toHaveLength(3);
   });
 
   it("keeps the full catalog and only whitelisted metadata", async () => {
@@ -229,20 +398,28 @@ describe("LocalPiModelRuntimeService", () => {
     await expect(service.read()).rejects.toThrow("PI_START_FAILED");
   });
 
-  it("terminates an in-flight probe when aborted", async () => {
-    const { root, service } = await fixture({ hangOnCommand: "get_available_models" });
+  it("isolates caller cancellation from a shared profile probe", async () => {
+    const availableModels = Array.from({ length: 300 }, (_, index) => ({
+      provider: "offline",
+      id: `model-${index}`,
+    }));
+    const { root, service } = await fixture({ availableModels });
     const controller = new AbortController();
-    const reading = service.read(controller.signal);
-    let start: Record<string, unknown> | undefined;
-    for (let attempt = 0; attempt < 100 && !start; attempt += 1) {
-      start = (await readLocalPiEmulatorLog(root)).find((entry) => entry.type === "start");
-      if (!start) await new Promise((resolve) => setTimeout(resolve, 10));
+    const cancelled = service.read(controller.signal);
+    let started = false;
+    for (let attempt = 0; attempt < 100 && !started; attempt += 1) {
+      started = (await readLocalPiEmulatorLog(root)).some((entry) => entry.type === "start");
+      if (!started) await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    expect(start?.pid).toEqual(expect.any(Number));
-    controller.abort(new Error("cancelled"));
+    expect(started).toBe(true);
+    const surviving = service.read();
+    const reason = new Error("cancelled");
+    controller.abort(reason);
 
-    await expect(reading).rejects.toThrow();
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    expect(() => process.kill(start!.pid as number, 0)).toThrow();
+    await expect(cancelled).rejects.toBe(reason);
+    await expect(surviving).resolves.toMatchObject({ catalog: expect.any(Array) });
+    expect(
+      (await readLocalPiEmulatorLog(root)).filter((entry) => entry.type === "start"),
+    ).toHaveLength(1);
   });
 });

@@ -16,22 +16,30 @@ export function PiRuntimeModelSettings({ botId, threadId, participantId }: Model
   const revision = useRef(0);
   const edited = useRef(false);
   const saving = useRef(false);
-  const refresh = useCallback(async () => {
-    if (saving.current) return;
-    const request = ++revision.current;
-    setLoading(true);
-    setError(undefined);
-    try {
-      const next = await rpc.models.runtime({ botId, threadId, participantId });
-      if (request !== revision.current) return;
-      setRuntime(next);
-      if (!edited.current) setSelection(next.selection?.requested ?? next.current);
-    } catch {
-      if (request === revision.current) setError(t`Could not refresh models`);
-    } finally {
-      if (request === revision.current) setLoading(false);
-    }
-  }, [botId, threadId, participantId]);
+  const refresh = useCallback(
+    async (force = false) => {
+      if (saving.current) return;
+      const request = ++revision.current;
+      setLoading(true);
+      setError(undefined);
+      try {
+        const next = await rpc.models.runtime({
+          botId,
+          threadId,
+          participantId,
+          ...(force ? { refresh: true } : {}),
+        });
+        if (request !== revision.current) return;
+        setRuntime(next);
+        if (!edited.current) setSelection(next.selection?.requested ?? next.current);
+      } catch {
+        if (request === revision.current) setError(t`Could not refresh models`);
+      } finally {
+        if (request === revision.current) setLoading(false);
+      }
+    },
+    [botId, threadId, participantId],
+  );
   useEffect(() => {
     edited.current = false;
     saving.current = false;
@@ -121,7 +129,12 @@ export function PiRuntimeModelSettings({ botId, threadId, participantId }: Model
         >
           {participantId ? t`Use bot model` : t`Use Pi selection`}
         </Button>
-        <Button size="sm" variant="ghost" disabled={busy || loading} onClick={() => void refresh()}>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={busy || loading}
+          onClick={() => void refresh(true)}
+        >
           {loading ? t`Refreshing…` : t`Refresh`}
         </Button>
       </div>

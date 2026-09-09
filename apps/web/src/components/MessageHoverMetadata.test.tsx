@@ -37,6 +37,17 @@ describe("MessageHoverMetadata", () => {
     expect(html).not.toContain("<time");
   });
 
+  it("keeps full-width draft actions below the card without widening the transcript", () => {
+    const html = renderToStaticMarkup(
+      <MessageHoverMetadata below side="end">
+        <div data-testid="message-actions" />
+      </MessageHoverMetadata>,
+    );
+    expect(html).toContain("top-full end-0 mt-1");
+    expect(html).not.toContain("start-full");
+    expect(html).not.toContain("top-1/2");
+  });
+
   it("pins the rail open while a nested menu is active", () => {
     const html = renderToStaticMarkup(
       <MessageHoverMetadata pinned side="end">

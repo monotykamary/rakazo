@@ -10,6 +10,7 @@ import {
   wakePremoveQueue,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import { resolveQueueAttachments } from "./artifacts.js";
 
 export async function listQueue(
   prisma: PrismaClient,
@@ -33,9 +34,21 @@ export async function mutateQueue(
   jobs?: JobPublisher,
 ) {
   try {
-    const result = await mutatePremoveQueue(prisma, actor, input);
+    const result = await mutatePremoveQueue(prisma, actor, input, {
+      stageComposerMessage: true,
+      resolveAttachments: (tx, artifactIds) =>
+        resolveQueueAttachments(
+          { prisma: tx },
+          actor,
+          { threadId: input.threadId, botId: input.botId },
+          artifactIds,
+        ).then(({ blocks }) => blocks),
+    });
     if (result.ok && (!result.snapshot.paused || input.operation.type === "drain") && jobs) {
-      const runId = await wakePremoveQueue(prisma, actor, { ...input, spaceId: actor.spaceId });
+      const runId = await wakePremoveQueue(prisma, actor, {
+        ...input,
+        spaceId: actor.spaceId,
+      });
       if (runId)
         await jobs
           .enqueue(runContinueJob(runId))

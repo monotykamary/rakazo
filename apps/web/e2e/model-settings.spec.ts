@@ -2,6 +2,113 @@ import { expect, test } from "@playwright/test";
 import type { ModelSelection, ModelSelectionStatus } from "@rakazo/contracts";
 import { captureScreenshot } from "./helpers";
 
+for (const screen of ["", "?bot", "?worker"]) {
+  test(`model discovery reuses cache except explicit Refresh (${screen || "global"})`, async ({
+    page,
+  }) => {
+    const inputs: Array<Record<string, unknown>> = [];
+    await page.route("**/rpc/**", (route) => {
+      if (new URL(route.request().url()).pathname === "/rpc/models/runtime") {
+        inputs.push(route.request().postDataJSON().json);
+        return route.fulfill({ json: { json: snapshot() } });
+      }
+      return route.fulfill({ status: 503, body: "Offline fixture" });
+    });
+    await page.route("**/api/**", (route) => route.fulfill({ json: {} }));
+    await page.goto(`/e2e/fixtures/pi-models.html${screen}`);
+    if (screen === "?bot") await page.getByText("Advanced", { exact: true }).click();
+    const refresh = page.getByRole("button", { name: "Refresh", exact: true });
+    await expect(refresh).toBeEnabled();
+    expect(inputs.length).toBeGreaterThan(0);
+    expect(inputs.every((input) => input.refresh === undefined)).toBe(true);
+    await refresh.click();
+    await expect.poll(() => inputs.some((input) => input.refresh === true)).toBe(true);
+    await expect(refresh).toBeEnabled();
+    inputs.length = 0;
+    await page.reload();
+    if (screen === "?bot") await page.getByText("Advanced", { exact: true }).click();
+    await expect(refresh).toBeEnabled();
+    expect(inputs.length).toBeGreaterThan(0);
+    expect(inputs.every((input) => input.refresh === undefined)).toBe(true);
+  });
+}
+
+for (const [theme, width] of [
+  ["light", 1280],
+  ["dark", 1280],
+  ["light", 375],
+  ["dark", 375],
+] as const) {
+  test(`inventory matches Settings spacing (${theme}, ${width})`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 800 });
+    await page.route("**/rpc/**", (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === "/rpc/models/runtime") return route.fulfill({ json: { json: snapshot() } });
+      if (path === "/rpc/approvalRules/list") return route.fulfill({ json: { json: [] } });
+      return route.fulfill({ status: 503, body: "Offline fixture" });
+    });
+    await page.route("**/api/**", (route) => route.fulfill({ json: {} }));
+    const measure = () =>
+      page.getByRole("dialog").evaluate((dialog) => {
+        for (const animation of dialog.getAnimations()) animation.finish();
+        const style = getComputedStyle(dialog);
+        const heading = dialog.querySelector("h2")!;
+        const panel = dialog.querySelector("section")!;
+        const panelStyle = getComputedStyle(panel);
+        return {
+          width: dialog.getBoundingClientRect().width,
+          padding: style.paddingLeft,
+          radius: style.borderRadius,
+          title: getComputedStyle(heading).fontSize,
+          panelPadding: panelStyle.paddingLeft,
+          panelRadius: panelStyle.borderRadius,
+          panelMargin: panelStyle.marginTop,
+        };
+      });
+    await page.goto("/e2e/fixtures/pi-models.html?account");
+    await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+    const reference = await measure();
+    await page.goto("/e2e/fixtures/pi-models.html");
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.classList.toggle("dark", theme === "dark");
+    }, theme);
+    await expect(page.getByRole("option")).toHaveCount(catalog.length);
+    expect(await measure()).toEqual(reference);
+    expect(reference.title).toBe("24px");
+    expect(reference.padding).toBe(width < 640 ? "24px" : "32px");
+    const search = page.getByRole("combobox", { name: "Search models" });
+    const assertGap = async () => {
+      const input = await page.locator('[data-slot="command-input-wrapper"]').boundingBox();
+      const row = await page.getByRole("option").first().boundingBox();
+      expect(row!.y - (input!.y + input!.height)).toBeGreaterThanOrEqual(12);
+    };
+    await assertGap();
+    const panel = await page.getByTestId("model-inventory-panel").boundingBox();
+    const refresh = await page.getByRole("button", { name: "Refresh", exact: true }).boundingBox();
+    expect(refresh!.y - (panel!.y + panel!.height)).toBeGreaterThanOrEqual(20);
+    const dialog = page.getByRole("dialog");
+    expect(await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+    const bounds = await dialog.boundingBox();
+    expect(bounds!.x).toBeGreaterThanOrEqual(16);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width - 16);
+    await expect(page.getByTestId("pi-profile-default")).not.toBeVisible();
+    await captureScreenshot(page, testInfo, `models-${theme}-${width}`);
+    await search.fill("research");
+    await expect(page.getByRole("option")).toHaveCount(1);
+    await assertGap();
+    await page.getByText("Pi profile default", { exact: true }).click();
+    await expect(page.getByTestId("pi-profile-default")).toBeVisible();
+    await captureScreenshot(page, testInfo, `models-${theme}-${width}-details`);
+    await search.fill("no-match-fixture");
+    await expect(page.getByText("No matching models", { exact: true })).toBeVisible();
+    const input = await page.locator('[data-slot="command-input-wrapper"]').boundingBox();
+    const empty = await page.getByText("No matching models", { exact: true }).boundingBox();
+    expect(empty!.y - (input!.y + input!.height)).toBeGreaterThanOrEqual(12);
+    await captureScreenshot(page, testInfo, `models-${theme}-${width}-empty`);
+  });
+}
+
 const current: ModelSelection = {
   provider: "custom-extension",
   modelId: "actual-running-v2",
@@ -57,17 +164,21 @@ test("global inventory searches extension identities and labels only the Pi prof
   });
   await page.goto("/e2e/fixtures/pi-models.html");
   await expect(page.getByTestId("pi-profile-default")).toHaveText(
-    "Pi profile default: custom-extension/profile-startup",
+    "custom-extension/profile-startup",
   );
   await page.getByRole("combobox", { name: "Search models" }).fill("custom-research-2026");
   await expect(page.getByRole("option")).toHaveCount(1);
-  await expect(page.getByRole("option")).toContainText("private-extension/custom-research-2026");
+  await expect(page.getByRole("option")).toContainText("Research");
+  await expect(page.getByRole("option")).toHaveAttribute(
+    "title",
+    "private-extension/custom-research-2026",
+  );
   await page.getByRole("option").click();
   await expect(page.getByTestId("selected-model")).toHaveCount(0);
   await page.getByRole("combobox", { name: "Search models" }).press("Enter");
   await expect(page.getByTestId("selected-model")).toHaveCount(0);
   await expect(page.getByTestId("pi-profile-default")).toHaveText(
-    "Pi profile default: custom-extension/profile-startup",
+    "custom-extension/profile-startup",
   );
   await expect(
     page.getByRole("button", { name: /Use model|Connect|API key|Visibility|Rotation/ }),
@@ -156,10 +267,12 @@ test("worker preserves unavailable intent, shows actual current, and handles pen
   };
   let failWrite = false;
   await page.route("**/rpc/models/runtime", async (route) => {
-    expect(route.request().postDataJSON().json).toEqual({
+    const input = route.request().postDataJSON().json;
+    expect(input).toEqual({
       botId: "bot-fixture",
       threadId: "thread-fixture",
       participantId: "worker-fixture",
+      ...(input.refresh ? { refresh: true } : {}),
     });
     await route.fulfill({ json: { json: snapshot(status) } });
   });

@@ -15,9 +15,15 @@ export interface DurableQueueState {
   placements?: Record<string, QueuePlacement>;
   targets?: Record<
     string,
-    { participantId: string; generation: number; placement: { cwd: string; worktreeId?: string } }
+    {
+      participantId: string;
+      generation: number;
+      placement: { cwd: string; worktreeId?: string };
+    }
   >;
-  stagedMessages?: Record<string, { messageId: string; blocks: MessageBlock[] }>;
+  stagedMessages?: Record<string, { messageId?: string; blocks: MessageBlock[] }>;
+  /** Resolved attachment drafts keyed by row; committed only by edit-save. */
+  stagedMessageEdits?: Record<string, { blocks: MessageBlock[] }>;
   owner?: { runId: string; leaseOwner: string; leaseFence: number };
   dispatchToken?: string;
   drainIntent?: { requestId: string; rowIds: string[] };
@@ -60,7 +66,10 @@ export async function hydratePremoveQueue(state: DurableQueueState, ports: Queue
   let hydrating = true;
   const controller = new QueueController({
     sessionId: state.checkpoint.sessionId,
-    checkpoint: { ...state.checkpoint, revision: state.checkpoint.revision - replay.length },
+    checkpoint: {
+      ...state.checkpoint,
+      revision: state.checkpoint.revision - replay.length,
+    },
     modes: state.view.modes,
     ports: {
       ...ports,

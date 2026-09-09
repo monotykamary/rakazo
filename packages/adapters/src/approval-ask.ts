@@ -4,6 +4,24 @@ import { redactSecrets } from "@rakazo/core";
 const MAX_APPROVAL_SUMMARY_LENGTH = 500;
 const MAX_APPROVAL_DETAIL_LENGTH = 4_000;
 
+export function buildOutgoingDraftAskBlock(
+  effectId: string,
+  draft: Extract<MessageBlock, { kind: "ask" }>["draft"],
+): MessageBlock {
+  if (!draft) throw new TypeError("Outgoing draft preview is required");
+  return {
+    kind: "ask",
+    approvalEffectId: effectId,
+    text: "Review message",
+    draft,
+    status: "pending",
+    actions: [
+      { id: "send", label: "Send" },
+      { id: "discard", label: "Discard", outcome: "cancelled" },
+    ],
+  };
+}
+
 export function buildApprovalAskBlock(
   effectId: string,
   toolName: string,

@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Model header fixture</title></head>
+  <body><div id="root"></div><script type="module">
+    import { i18n } from "@lingui/core";
+    import { I18nProvider } from "@lingui/react";
+    import { createElement as h } from "react";
+    import { createRoot } from "react-dom/client";
+    import { MemoryRouter, Route, Routes } from "react-router-dom";
+    import { ShellPage } from "../../src/pages/Shell.tsx";
+    import "../../src/styles.css";
+
+    i18n.load("en", {}); i18n.activate("en");
+    const group = new URLSearchParams(location.search).has("group");
+    createRoot(document.getElementById("root")).render(h(I18nProvider, {i18n}, h(MemoryRouter, {initialEntries:[group ? "/app/groups/group-fixture" : "/app/bot-fixture"]}, h(Routes, {}, h(Route, {path:"/app/:botId",element:h(ShellPage)}), h(Route, {path:"/app/groups/:groupId",element:h(ShellPage)})))));
+  </script></body>
+</html>

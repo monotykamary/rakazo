@@ -251,13 +251,13 @@ export function BotSettings({
   const modelScope = useRef<string | undefined>(bot.id);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  async function refreshModels() {
+  async function refreshModels(force = false) {
     if (modelScope.current !== bot.id) return;
     const revision = ++modelRevision.current;
     setModelLoading(true);
     setModelError(false);
     try {
-      const next = await rpc.models.runtime({ botId: bot.id });
+      const next = await rpc.models.runtime({ botId: bot.id, ...(force ? { refresh: true } : {}) });
       if (revision === modelRevision.current) setRuntime(next);
     } catch {
       if (revision === modelRevision.current) setModelError(true);
@@ -428,7 +428,7 @@ export function BotSettings({
               variant="ghost"
               size="sm"
               disabled={saving || modelLoading}
-              onClick={() => void refreshModels()}
+              onClick={() => void refreshModels(true)}
             >
               {modelLoading ? t`Refreshing…` : t`Refresh`}
             </Button>

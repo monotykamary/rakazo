@@ -3,10 +3,12 @@ import type { ReactNode } from "react";
 export function MessageHoverMetadata({
   side,
   pinned = false,
+  below = false,
   children,
 }: {
   side: "start" | "end";
   pinned?: boolean;
+  below?: boolean;
   children: ReactNode;
 }) {
   // Touch exposes More; hover-capable pointers reveal the full rail on demand.
@@ -17,8 +19,10 @@ export function MessageHoverMetadata({
   return (
     <div
       data-testid="message-hover-rail"
-      className={`absolute top-1/2 z-10 flex -translate-y-1/2 items-center transition-opacity ${reveal} ${
-        side === "end" ? "start-full ms-1" : "end-full me-1"
+      className={`absolute z-10 flex items-center transition-opacity ${reveal} ${
+        below
+          ? "top-full end-0 mt-1"
+          : `top-1/2 -translate-y-1/2 ${side === "end" ? "start-full ms-1" : "end-full me-1"}`
       }`}
     >
       {children}

@@ -54,7 +54,7 @@ export function PiModelPicker({
           placeholder={t`Search models`}
           disabled={disabled}
         />
-        <CommandList aria-label={t`Models`}>
+        <CommandList aria-label={t`Models`} className="mt-3">
           <CommandEmpty>{t`No matching models`}</CommandEmpty>
           {catalog.map((entry) => (
             <CommandItem
@@ -63,6 +63,7 @@ export function PiModelPicker({
               keywords={[entry.provider, entry.id, entry.label, entry.providerName ?? ""]}
               disabled={disabled}
               data-checked={entry === selected}
+              title={readOnly ? `${entry.provider}/${entry.id}` : undefined}
               onSelect={
                 readOnly
                   ? undefined
@@ -77,7 +78,9 @@ export function PiModelPicker({
               <span className="min-w-0">
                 <span className="block">{entry.label}</span>
                 <span className="block break-all text-xs text-muted-foreground">
-                  {entry.provider}/{entry.id}
+                  {readOnly
+                    ? (entry.providerName ?? entry.provider)
+                    : `${entry.provider}/${entry.id}`}
                 </span>
               </span>
             </CommandItem>

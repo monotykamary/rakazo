@@ -1,5 +1,5 @@
 import { useFocusEffect } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -29,11 +29,14 @@ export default function Models() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [revision, setRevision] = useState(0);
+  const forceRefresh = useRef(false);
   useFocusEffect(
     useCallback(() => {
       let active = true;
       setLoading(true);
-      void rpc<PiModelSnapshot>("models/runtime", {})
+      const force = forceRefresh.current;
+      forceRefresh.current = false;
+      void rpc<PiModelSnapshot>("models/runtime", force ? { refresh: true } : {})
         .then((next) => {
           if (!active) return;
           setSnapshot((previous) => retainPiInventory(previous, next));
@@ -70,7 +73,10 @@ export default function Models() {
         <Pressable
           accessibilityRole="button"
           disabled={loading}
-          onPress={() => setRevision((value) => value + 1)}
+          onPress={() => {
+            forceRefresh.current = true;
+            setRevision((value) => value + 1);
+          }}
           style={styles.button}
         >
           <Text style={styles.label}>{t("Refresh")}</Text>

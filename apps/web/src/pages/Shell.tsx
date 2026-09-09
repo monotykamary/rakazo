@@ -67,6 +67,10 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
   GroupAvatar,
   type GroupAvatarMember,
@@ -77,8 +81,12 @@ import {
   PopoverContent,
   PopoverTrigger,
   Skeleton,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
   useFrameState,
 } from "@rakazo/ui-web";
+import { ComposerActionIcon } from "@rakazo/ui-web/components/ui/composer-action-icon";
 import {
   SpringAside,
   SpringButton,
@@ -94,8 +102,10 @@ import {
   ChevronDown,
   Clock,
   Copy,
+  CornerDownRight,
   Cpu,
   Gauge,
+  ListOrdered,
   Lock,
   LogOut,
   Maximize2,
@@ -136,6 +146,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArtifactFileCard } from "../components/ArtifactFileCard";
 import { AskCard } from "../components/AskCard";
 import { ActiveBotGlyph, CollaborationMarker } from "../components/ai/CollaborationMarker";
+import { BotModelSwitcher } from "../components/BotModelSwitcher";
 import { CloudAgentCard } from "../components/CloudAgentCard";
 import { ComputerMaintenanceActions } from "../components/ComputerMaintenanceActions";
 import {
@@ -144,8 +155,13 @@ import {
 } from "../components/ComputersUnavailableHint";
 import { MessageActivityLinks } from "../components/MessageActivityLinks";
 import { MessageHoverMetadata } from "../components/MessageHoverMetadata";
+import { OutgoingDraftCard } from "../components/OutgoingDraftCard";
 import { ThreadInspector, type ThreadInspectorTarget } from "../components/ThreadInspector";
-import { ThreadQueue } from "../components/ThreadQueue";
+import {
+  ThreadQueue,
+  type ThreadQueueEdit,
+  type ThreadQueueHandle,
+} from "../components/ThreadQueue";
 import { SkillDraftCard } from "../components/teach/SkillDraftCard";
 import { TeachCaptureOverlay } from "../components/teach/TeachCaptureOverlay";
 import { TeachComputerOverlayControl } from "../components/teach/TeachComputerOverlay";
@@ -201,6 +217,13 @@ import {
   transcriptMovedDown,
 } from "../lib/transcript-scroll";
 import { speaker } from "../lib/tts";
+import {
+  type ComposerMode,
+  composerModeFromModifiers,
+  enqueueQueueMessage,
+  isMacPlatform,
+  queueComposerBlockReason,
+} from "../lib/use-queue";
 import { ActivityList } from "./ActivityList";
 import type { ContextMenuPosition } from "./BotContextMenu";
 import { CreateGroupForm, GroupSettings, memberName } from "./GroupPanel";
@@ -1939,7 +1962,7 @@ export function ShellPage() {
     async (text: string, mentions: ComposerMention[] = [], promptBotId?: string) => {
       const initialBotTarget = promptBotId ?? activeBotId.current;
       const initialGroupTarget = promptBotId ? undefined : activeGroupId.current;
-      if ((!initialBotTarget && !initialGroupTarget) || sending) return;
+      if ((!initialBotTarget && !initialGroupTarget) || sending) return false;
       const originThreadKey = initialGroupTarget ?? initialBotTarget;
       const attachments = promptBotId
         ? []
@@ -1949,7 +1972,7 @@ export function ShellPage() {
         mentions,
         hasAttachments: attachments.length > 0,
       });
-      if (plan.isNoOp) return;
+      if (plan.isNoOp) return false;
       const reroutedToGroup = Boolean(
         plan.rerouteGroupId && plan.rerouteGroupId !== initialGroupTarget,
       );
@@ -1993,14 +2016,14 @@ export function ShellPage() {
           setAttachmentNotice(null);
           if (reroutedToGroup && groupTarget) {
             navigate(`/app/g/${groupTarget}`);
-            return;
+            return true;
           }
           if (groupTarget && activeGroupId.current === groupTarget) {
             await refreshGroupThreadRef.current(groupTarget);
           } else if (botTarget && activeBotId.current === botTarget) {
             await refreshThreadRef.current(botTarget);
           }
-          return;
+          return true;
         }
         const artifactIds: string[] = [];
         for (const pending of attachments) {
@@ -2061,12 +2084,13 @@ export function ShellPage() {
         void refreshBots().catch(() => undefined);
         if (reroutedToGroup && groupTarget) {
           navigate(`/app/g/${groupTarget}`);
-          return;
+          return true;
         }
         if (groupTarget && activeGroupId.current === groupTarget) setAttachmentNotice(null);
         if (botTarget && activeBotId.current === botTarget) setAttachmentNotice(null);
         if (groupTarget) await refreshGroupThreadRef.current(groupTarget);
         else if (botTarget) await refreshThreadRef.current(botTarget);
+        return true;
       } catch (error) {
         if (reroutedToGroup && groupTarget) {
           setSendError(error instanceof Error ? error.message : t`Failed to send message`);
@@ -2075,6 +2099,7 @@ export function ShellPage() {
         } else if (botTarget && activeBotId.current === botTarget) {
           setSendError(error instanceof Error ? error.message : t`Failed to send message`);
         }
+        return false;
       } finally {
         setSending(false);
       }
@@ -2087,6 +2112,76 @@ export function ShellPage() {
       sending,
       t,
     ],
+  );
+  const queueMessage = useCallback(
+    async (
+      mode: Exclude<ComposerMode, "send">,
+      text: string,
+      mentions: ComposerMention[],
+      explicitBotId?: string,
+    ) => {
+      const groupTarget = activeGroupId.current;
+      const botTarget = groupTarget ? explicitBotId : activeBotId.current;
+      const threadId = snapshotRef.current?.threadId;
+      const originThreadKey = groupTarget ?? botTarget;
+      const blocked = queueComposerBlockReason({
+        hasMentions: mentions.length > 0,
+        hasReply: Boolean(activeReplyTarget),
+        requiresExplicitBot: Boolean(groupTarget),
+        botId: explicitBotId,
+      });
+      if (blocked) {
+        setSendError(
+          blocked === "structured-context"
+            ? t`Send mentions and replies normally`
+            : t`Choose a bot before queueing`,
+        );
+        return false;
+      }
+      if (!threadId || !originThreadKey || !botTarget || sending) return false;
+      const attachments = attachmentsForThread(pendingAttachments, originThreadKey);
+      const trimmed = text.trim();
+      if (!trimmed && attachments.length === 0) return false;
+      setSending(true);
+      setSendError(null);
+      try {
+        const artifactIds: string[] = [];
+        for (const pending of attachments) {
+          const mimeType = inferAttachmentMimeType(pending.file.name, pending.file.type);
+          if (!mimeType) throw new Error(t`Unsupported file type: ${pending.file.name}`);
+          const contentBase64 = await readFileAsBase64(pending.file);
+          const artifact = await rpc.artifacts.create(
+            groupTarget
+              ? { groupId: groupTarget, name: pending.file.name, mimeType, contentBase64 }
+              : { botId: botTarget, name: pending.file.name, mimeType, contentBase64 },
+          );
+          artifactIds.push(artifact.id);
+        }
+        await enqueueQueueMessage(
+          rpc.queue,
+          { threadId, botId: botTarget },
+          { lane: mode, text: trimmed, artifactIds },
+        );
+        revokePendingAttachmentPreviews(attachments);
+        setPendingAttachments((current) =>
+          current.filter((attachment) => attachment.threadKey !== originThreadKey),
+        );
+        setAttachmentNotice(null);
+        setQueueOpen(true);
+        return true;
+      } catch (error) {
+        const stillHere = groupTarget
+          ? activeGroupId.current === groupTarget
+          : activeBotId.current === botTarget;
+        if (stillHere) {
+          setSendError(error instanceof Error ? error.message : t`Could not update queue`);
+        }
+        return false;
+      } finally {
+        setSending(false);
+      }
+    },
+    [activeReplyTarget, pendingAttachments, sending, t],
   );
   const followUpMessage = useCallback(async (text: string) => {
     const id = activeBotId.current;
@@ -3233,6 +3328,22 @@ export function ShellPage() {
             </div>
             <div className="flex items-center gap-1">
               {!inGroup && active ? (
+                <BotModelSwitcher
+                  key={active.id}
+                  botId={active.id}
+                  desired={
+                    active.modelProvider && active.modelId
+                      ? {
+                          provider: active.modelProvider,
+                          modelId: active.modelId,
+                          thinkingLevel: active.thinkingLevel,
+                        }
+                      : null
+                  }
+                  onChanged={() => refreshBots().then(() => undefined)}
+                />
+              ) : null}
+              {!inGroup && active ? (
                 <button
                   type="button"
                   title={t`Agent computer`}
@@ -3343,21 +3454,6 @@ export function ShellPage() {
               ]}
             />
           )}
-          {activeSnapshot?.threadId && (active || activeGroup) && !recordingSkill && (
-            <ThreadQueue
-              key={activeSnapshot.threadId}
-              threadId={activeSnapshot.threadId}
-              members={
-                inGroup
-                  ? (transcriptMembers ?? [])
-                  : active
-                    ? [{ botId: active.id, name: active.name }]
-                    : []
-              }
-              open={queueOpen}
-              onOpenChange={setQueueOpen}
-            />
-          )}
           {active || activeGroup ? (
             <Composer
               key={inGroup ? `group:${groupId}` : `bot:${active?.id}`}
@@ -3379,6 +3475,17 @@ export function ShellPage() {
               onAttachmentPick={onAttachmentPick}
               onRemoveAttachment={removeAttachment}
               onSend={sendMessage}
+              onQueue={queueMessage}
+              queueThreadId={!recordingSkill ? activeSnapshot?.threadId : undefined}
+              queueMembers={
+                inGroup
+                  ? (transcriptMembers ?? [])
+                  : active
+                    ? [{ botId: active.id, name: active.name }]
+                    : []
+              }
+              queueOpen={queueOpen}
+              onQueueOpenChange={setQueueOpen}
               onStop={stopRun}
               onVoice={
                 !inGroup && active
@@ -4163,7 +4270,9 @@ export function ShellPage() {
             botName={active.name}
             transcribe={Boolean(voiceStatus?.transcribe)}
             snapshot={activeSnapshot}
-            onSend={sendMessage}
+            onSend={async (text) => {
+              await sendMessage(text);
+            }}
             onFollowUp={followUpMessage}
             onAnswer={answerMessage}
             onClose={() => setCallOpen(false)}
@@ -4333,7 +4442,7 @@ export function ShellPage() {
   );
 }
 
-const Transcript = memo(function Transcript({
+export const Transcript = memo(function Transcript({
   loading,
   scrollRef,
   artifactTarget,
@@ -4544,6 +4653,9 @@ const Transcript = memo(function Transcript({
           if (!message.blocks.some((block) => !isToolActivityBlock(block)) && !activities.length)
             return null;
           const peerReceipt = message.blocks.length === 0;
+          const hasOutgoingDraft = message.blocks.some(
+            (block) => block.kind === "ask" && block.draft,
+          );
           return (
             <div
               key={message.id}
@@ -4562,15 +4674,18 @@ const Transcript = memo(function Transcript({
                   className={
                     peerReceipt
                       ? undefined
-                      : `relative w-fit min-w-0 ${
-                          message.role === "user"
-                            ? "max-w-[min(70%,calc(100%_-_6rem))]"
-                            : "max-w-[min(74%,calc(100%_-_6rem))]"
+                      : `relative min-w-0 ${
+                          hasOutgoingDraft
+                            ? "mb-12 w-full max-w-xl"
+                            : message.role === "user"
+                              ? "w-fit max-w-[min(70%,calc(100%_-_6rem))]"
+                              : "w-fit max-w-[min(74%,calc(100%_-_6rem))]"
                         }`
                   }
                 >
                   {peerReceipt ? null : (
                     <MessageHoverActions
+                      below={hasOutgoingDraft}
                       message={message}
                       side={message.role === "user" ? "start" : "end"}
                       onReply={onReply}
@@ -4667,7 +4782,7 @@ const Transcript = memo(function Transcript({
   );
 });
 
-const Composer = memo(function Composer({
+export const Composer = memo(function Composer({
   activeName,
   running,
   disabled,
@@ -4684,6 +4799,11 @@ const Composer = memo(function Composer({
   onAttachmentPick,
   onRemoveAttachment,
   onSend,
+  onQueue,
+  queueThreadId,
+  queueMembers,
+  queueOpen,
+  onQueueOpenChange,
   onStop,
   onVoice,
   replyTarget,
@@ -4710,7 +4830,17 @@ const Composer = memo(function Composer({
   fileInputRef: RefObject<HTMLInputElement | null>;
   onAttachmentPick: (files: FileList | null) => void | Promise<void>;
   onRemoveAttachment: (attachment: PendingAttachment) => void;
-  onSend: (text: string, mentions?: ComposerMention[]) => Promise<void>;
+  onSend: (text: string, mentions?: ComposerMention[]) => Promise<boolean>;
+  onQueue: (
+    mode: Exclude<ComposerMode, "send">,
+    text: string,
+    mentions: ComposerMention[],
+    botId?: string,
+  ) => Promise<boolean>;
+  queueThreadId?: string;
+  queueMembers: { botId: string; name: string }[];
+  queueOpen?: boolean;
+  onQueueOpenChange: (open: boolean) => void;
   onStop: () => Promise<void>;
   onVoice?: () => void;
   replyTarget?: ThreadMessage | null;
@@ -4729,17 +4859,48 @@ const Composer = memo(function Composer({
   const [slashQuery, setSlashQuery] = useState<string | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<AgentSkillCatalogEntry | null>(null);
   const [selectedMentions, setSelectedMentions] = useState<ComposerMention[]>([]);
+  const [queueEdit, setQueueEdit] = useState<ThreadQueueEdit | null>(null);
+  const [queueBotId, setQueueBotId] = useState<string>();
+  const [queuePopulated, setQueuePopulated] = useState(false);
+  const [heldMode, setHeldMode] = useState<ComposerMode>("send");
+  const [actionMenuOpen, setActionMenuOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const queueRef = useRef<ThreadQueueHandle>(null);
   const runErrorRef = useRef<HTMLDivElement>(null);
+  const submittingRef = useRef(false);
+  const touchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchLongPressRef = useRef(false);
+  const parkedComposerRef = useRef<{
+    draft: string;
+    mentions: ComposerMention[];
+    skill: AgentSkillCatalogEntry | null;
+  } | null>(null);
+  const macPlatform = useMemo(() => isMacPlatform(), []);
   const presentedRunErrorIdRef = useRef<string | null>(null);
   const mentionListboxId = useId();
   const dragDepth = useRef(0);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const canSend =
+    queueEdit !== null ||
     draft.trim().length > 0 ||
     selectedSkill !== null ||
     selectedMentions.length > 0 ||
     pendingAttachments.length > 0;
+
+  useEffect(() => {
+    const updateMode = (event: KeyboardEvent) =>
+      setHeldMode(composerModeFromModifiers(event, macPlatform));
+    const resetMode = () => setHeldMode("send");
+    window.addEventListener("keydown", updateMode, true);
+    window.addEventListener("keyup", updateMode, true);
+    window.addEventListener("blur", resetMode);
+    return () => {
+      window.removeEventListener("keydown", updateMode, true);
+      window.removeEventListener("keyup", updateMode, true);
+      window.removeEventListener("blur", resetMode);
+      if (touchTimerRef.current) clearTimeout(touchTimerRef.current);
+    };
+  }, [macPlatform]);
 
   useEffect(() => {
     if (!runError || !runErrorId) return;
@@ -4895,17 +5056,82 @@ const Composer = memo(function Composer({
     mentionQuery === null &&
     (slashSkillOptions.length > 0 || slashActionOptions.length > 0);
 
-  function send() {
-    if (!canSend || sending || disabled) return;
-    const text = serializeComposerPrompt(draft, selectedSkill, selectedMentions);
+  function clearComposer() {
     setDraft("");
     setMentionQuery(null);
     setMentionHighlightIndex(0);
     setSlashQuery(null);
     setSelectedSkill(null);
-    const mentions = selectedMentions;
     setSelectedMentions([]);
-    void onSend(text, mentions);
+  }
+
+  function restoreParkedComposer() {
+    const parked = parkedComposerRef.current;
+    parkedComposerRef.current = null;
+    if (!parked) return;
+    setDraft(parked.draft);
+    setSelectedMentions(parked.mentions);
+    setSelectedSkill(parked.skill);
+    setMentionQuery(null);
+    setMentionHighlightIndex(0);
+    setSlashQuery(null);
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+
+  function handleQueueEditChange(edit: ThreadQueueEdit | null) {
+    if (edit) {
+      if (!queueEdit) {
+        parkedComposerRef.current = {
+          draft,
+          mentions: selectedMentions,
+          skill: selectedSkill,
+        };
+      }
+      setQueueEdit(edit);
+      setQueueBotId(edit.botId);
+      setDraft(edit.row.text);
+      setSelectedMentions([]);
+      setSelectedSkill(null);
+      setMentionQuery(null);
+      setSlashQuery(null);
+      window.requestAnimationFrame(() => textareaRef.current?.focus());
+      return;
+    }
+    setQueueEdit(null);
+    restoreParkedComposer();
+  }
+
+  async function submit(mode: ComposerMode, botId?: string) {
+    if (!canSend || sending || disabled || submittingRef.current) return;
+    submittingRef.current = true;
+    try {
+      if (queueEdit) {
+        await queueRef.current?.saveEdit(draft);
+        return;
+      }
+      const text = serializeComposerPrompt(draft, selectedSkill, selectedMentions);
+      const succeeded =
+        mode === "send"
+          ? await onSend(text, selectedMentions)
+          : await onQueue(mode, text, selectedMentions, botId);
+      if (succeeded) {
+        if (mode !== "send" && botId) setQueueBotId(botId);
+        clearComposer();
+      }
+    } finally {
+      submittingRef.current = false;
+      setHeldMode("send");
+    }
+  }
+
+  async function cancelQueueEdit() {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    try {
+      await queueRef.current?.cancelEdit();
+    } finally {
+      submittingRef.current = false;
+    }
   }
 
   function handleDragEnter(event: DragEvent<HTMLFieldSetElement>) {
@@ -4975,6 +5201,16 @@ const Composer = memo(function Composer({
   const showComposerPlaceholder =
     draft.length === 0 && selectedSkill === null && selectedMentions.length === 0;
   const replyName = replyTarget ? (replyTargetName ?? previewMessageText(replyTarget)) : "";
+  const displayedMode = queueEdit ? "send" : heldMode;
+  const actionLabel = queueEdit
+    ? t`Save queue edit`
+    : displayedMode === "steer"
+      ? t`Steer`
+      : displayedMode === "followUp"
+        ? t`Queue`
+        : t`Send`;
+  const defaultQueueBotId = queueMembers.length === 1 ? queueMembers[0]?.botId : queueBotId;
+  const actionIcon = <ComposerActionIcon mode={queueEdit ? "edit" : displayedMode} />;
 
   return (
     <fieldset
@@ -5021,7 +5257,7 @@ const Composer = memo(function Composer({
           </button>
         </div>
       ) : null}
-      {replyTarget ? (
+      {replyTarget && !queueEdit ? (
         <div
           data-testid="reply-chip"
           className="mb-2 flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-1.5 text-[13px] text-foreground/75"
@@ -5042,7 +5278,7 @@ const Composer = memo(function Composer({
           {attachmentNotice}
         </div>
       ) : null}
-      {pendingAttachments.length ? (
+      {!queueEdit && pendingAttachments.length ? (
         <div className="mb-3 flex flex-wrap gap-2">
           {pendingAttachments.map((attachment) => (
             <div
@@ -5073,7 +5309,37 @@ const Composer = memo(function Composer({
           ))}
         </div>
       ) : null}
-      {mentionPickerOpen ? (
+      {queueEdit ? (
+        <div className="mb-2 flex min-w-0 items-center gap-2 rounded-full border border-border bg-muted px-3 py-1.5 text-[13px] text-muted-foreground">
+          <span className="min-w-0 flex-1 truncate">{t`Editing queued message`}</span>
+          {queueEdit.row.images.slice(0, 3).map((image, index) => (
+            <img
+              key={index}
+              src={`data:${image.mimeType};base64,${image.data}`}
+              alt=""
+              aria-hidden="true"
+              className="size-5 rounded border border-border object-cover"
+            />
+          ))}
+          {queueEdit.row.attachments?.slice(0, 2).map((attachment) => (
+            <span
+              key={attachment.artifactId}
+              className="max-w-28 truncate rounded-full border border-border px-2 py-0.5 text-[11px]"
+            >
+              {attachment.name}
+            </span>
+          ))}
+          <button
+            type="button"
+            aria-label={t`Cancel queue edit`}
+            onClick={() => void cancelQueueEdit()}
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+          >
+            <X size={13} strokeWidth={2} />
+          </button>
+        </div>
+      ) : null}
+      {mentionPickerOpen && !queueEdit ? (
         <div
           id={mentionListboxId}
           role="listbox"
@@ -5115,7 +5381,7 @@ const Composer = memo(function Composer({
           })}
         </div>
       ) : null}
-      {showSlashPicker ? (
+      {showSlashPicker && !queueEdit ? (
         <div
           data-testid="slash-picker"
           className="mb-2 overflow-hidden rounded-[14px] border border-border bg-muted"
@@ -5156,9 +5422,25 @@ const Composer = memo(function Composer({
           })}
         </div>
       ) : null}
+      {queueThreadId ? (
+        <ThreadQueue
+          ref={queueRef}
+          threadId={queueThreadId}
+          members={queueMembers}
+          open={queueOpen}
+          onOpenChange={onQueueOpenChange}
+          focusBotId={queueBotId}
+          onEditChange={handleQueueEditChange}
+          onPopulatedChange={setQueuePopulated}
+          onTargetChange={setQueueBotId}
+        />
+      ) : null}
       <div
         data-testid="composer-bar"
-        className="flex items-center gap-3.5 rounded-full border border-border bg-background py-[9px] pe-2.5 ps-3"
+        data-queue-attached={queuePopulated || undefined}
+        className={`flex items-center gap-2 border border-border bg-background py-[9px] pe-2.5 ps-3 ${
+          queuePopulated ? "rounded-b-[18px] rounded-t-md" : "rounded-full"
+        }`}
       >
         <input
           ref={fileInputRef}
@@ -5172,7 +5454,7 @@ const Composer = memo(function Composer({
           variant="outline"
           size="icon"
           aria-label={t`Attach file`}
-          disabled={disabled}
+          disabled={disabled || Boolean(queueEdit)}
           onClick={() => fileInputRef.current?.click()}
           className="rounded-full text-foreground/75"
         >
@@ -5231,6 +5513,12 @@ const Composer = memo(function Composer({
             onChange={(event) => updateDraft(event.target.value)}
             onPaste={handlePaste}
             onKeyDown={(event) => {
+              if (event.key === "Escape" && queueEdit) {
+                event.preventDefault();
+                event.stopPropagation();
+                void cancelQueueEdit();
+                return;
+              }
               if (
                 event.key === "Backspace" &&
                 draft.length === 0 &&
@@ -5267,7 +5555,8 @@ const Composer = memo(function Composer({
               }
               if (action.type === "send") {
                 event.preventDefault();
-                send();
+                const mode = queueEdit ? "send" : composerModeFromModifiers(event, macPlatform);
+                void submit(mode, mode === "send" ? undefined : queueBotId);
               }
             }}
             disabled={disabled}
@@ -5305,39 +5594,130 @@ const Composer = memo(function Composer({
             <Mic size={16} strokeWidth={1.8} />
           </Button>
         ) : null}
-        {running ? (
-          <>
-            <Button
-              size="icon"
-              aria-label={t`Send`}
+        <div className="flex shrink-0 items-center">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon"
+                  className={`${running ? "size-10" : "size-9"} rounded-e-md rounded-s-full`}
+                />
+              }
+              aria-label={actionLabel}
               disabled={sending || !canSend || disabled}
-              onClick={send}
-              className="size-10 rounded-full"
+              onPointerDown={(event) => {
+                if (event.pointerType !== "touch" || queueEdit) return;
+                touchLongPressRef.current = false;
+                touchTimerRef.current = setTimeout(() => {
+                  touchLongPressRef.current = true;
+                  setActionMenuOpen(true);
+                }, 500);
+              }}
+              onPointerUp={() => {
+                if (touchTimerRef.current) clearTimeout(touchTimerRef.current);
+                touchTimerRef.current = null;
+              }}
+              onPointerCancel={() => {
+                if (touchTimerRef.current) clearTimeout(touchTimerRef.current);
+                touchTimerRef.current = null;
+              }}
+              onClick={(event) => {
+                if (touchLongPressRef.current) {
+                  touchLongPressRef.current = false;
+                  event.preventDefault();
+                  return;
+                }
+                const mode = queueEdit ? "send" : composerModeFromModifiers(event, macPlatform);
+                void submit(mode, mode === "send" ? undefined : defaultQueueBotId);
+              }}
             >
-              <ArrowUp size={18} strokeWidth={2} />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              aria-label={t`Stop`}
-              disabled={sending}
-              onClick={() => void onStop()}
-              className="size-10 rounded-full text-foreground/75"
-            >
-              <Square size={12} strokeWidth={0} fill="currentColor" />
-            </Button>
-          </>
-        ) : (
+              {actionIcon}
+            </TooltipTrigger>
+            <TooltipContent>{actionLabel}</TooltipContent>
+          </Tooltip>
+          {!queueEdit ? (
+            <DropdownMenu open={actionMenuOpen} onOpenChange={setActionMenuOpen}>
+              <DropdownMenuTrigger
+                aria-label={t`Choose message action`}
+                render={
+                  <Button
+                    size="icon-sm"
+                    className={`${running ? "h-10" : "h-9"} w-5 rounded-e-full rounded-s-none border-s border-primary-foreground/20 px-0`}
+                  />
+                }
+              >
+                <ChevronDown aria-hidden className="size-3" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => void submit("send")}>
+                  <ArrowUp /> {t`Send`}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {queueMembers.length <= 1 ? (
+                  <>
+                    <DropdownMenuItem
+                      disabled={!queueMembers[0]}
+                      onClick={() => void submit("steer", queueMembers[0]?.botId)}
+                    >
+                      <CornerDownRight /> {t`Steer`}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={!queueMembers[0]}
+                      onClick={() => void submit("followUp", queueMembers[0]?.botId)}
+                    >
+                      <ListOrdered /> {t`Queue`}
+                    </DropdownMenuItem>
+                  </>
+                ) : (
+                  <>
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger>
+                        <CornerDownRight /> {t`Steer`}
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent>
+                        {queueMembers.map((member) => (
+                          <DropdownMenuItem
+                            key={`steer:${member.botId}`}
+                            onClick={() => void submit("steer", member.botId)}
+                          >
+                            {member.name}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger>
+                        <ListOrdered /> {t`Queue`}
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent>
+                        {queueMembers.map((member) => (
+                          <DropdownMenuItem
+                            key={`queue:${member.botId}`}
+                            onClick={() => void submit("followUp", member.botId)}
+                          >
+                            {member.name}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+        </div>
+        {running ? (
           <Button
+            variant="outline"
             size="icon"
-            aria-label={t`Send`}
-            disabled={sending || !canSend || disabled}
-            onClick={send}
-            className="size-9 rounded-full"
+            aria-label={t`Stop`}
+            disabled={sending}
+            onClick={() => void onStop()}
+            className="size-10 rounded-full text-foreground/75"
           >
-            <ArrowUp size={18} strokeWidth={2} />
+            <Square size={12} strokeWidth={0} fill="currentColor" />
           </Button>
-        )}
+        ) : null}
       </div>
     </fieldset>
   );
@@ -5409,6 +5789,7 @@ function previewMessageText(message: ThreadMessage): string {
 }
 
 function MessageHoverActions({
+  below = false,
   message,
   side,
   onReply,
@@ -5416,6 +5797,7 @@ function MessageHoverActions({
 }: {
   message: ThreadMessage;
   side: "start" | "end";
+  below?: boolean;
   onReply: (message: ThreadMessage) => void;
   onReact: (message: ThreadMessage, reaction: MessageReaction) => Promise<void>;
 }) {
@@ -5436,7 +5818,7 @@ function MessageHoverActions({
     "grid h-7 w-7 place-items-center text-muted-foreground transition-colors hover:text-foreground";
 
   return (
-    <MessageHoverMetadata pinned={moreOpen || reactionsOpen} side={side}>
+    <MessageHoverMetadata pinned={moreOpen || reactionsOpen} side={side} below={below}>
       <div data-testid="message-hover-actions" className="flex items-center gap-0.5">
         {canReactToThreadMessage(message) ? (
           <Popover open={reactionsOpen} onOpenChange={setReactionsOpen}>
@@ -5940,6 +6322,19 @@ const MessageView = memo(function MessageView({
                 ))}
               </div>
             </div>
+          );
+        }
+        if (block.kind === "ask" && block.draft) {
+          return (
+            <OutgoingDraftCard
+              key={i}
+              draft={block.draft}
+              approvalEffectId={block.approvalEffectId}
+              message={message}
+              target={artifactTarget}
+              canAnswer={canAnswer}
+              onRefresh={onRefresh}
+            />
           );
         }
         if (block.kind === "ask") {

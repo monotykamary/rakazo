@@ -119,6 +119,7 @@ export function QueueStrip({
   botId,
   runIds = [],
   initialView,
+  label,
   open: controlledOpen,
   onOpenChange,
   onClose,
@@ -127,6 +128,7 @@ export function QueueStrip({
   botId: string;
   runIds?: string[];
   initialView?: "queue" | "execution";
+  label?: string;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   onClose?: () => void;
@@ -149,11 +151,7 @@ export function QueueStrip({
     onClose?.();
   };
   const closeInspect = () => (onClose ? onClose() : setInspect(false));
-  const [addOpen, setAddOpen] = useState(false);
   const [optionsId, setOptionsId] = useState<string>();
-  const [text, setText] = useState("");
-  const [images, setImages] = useState<Images>([]);
-  const [lane, setLane] = useState<"steer" | "followUp">("followUp");
   const [draft, setDraft] = useState("");
   const [draftImages, setDraftImages] = useState<Images>([]);
   const selected = snapshot?.editing?.selectedId;
@@ -186,11 +184,11 @@ export function QueueStrip({
       </Pressable>
     );
   }
-  async function attach(editing: boolean) {
+  async function attach() {
     if (busy) return;
     setAttaching(true);
     try {
-      const previous = editing ? draftImages : images;
+      const previous = draftImages;
       const picked = await pickFromLibrary(previous.length);
       if (picked.skipped.length)
         Alert.alert(
@@ -204,7 +202,7 @@ export function QueueStrip({
           data: item.contentBase64,
         }),
       );
-      (editing ? setDraftImages : setImages)([...previous, ...next]);
+      setDraftImages([...previous, ...next]);
     } catch (cause) {
       Alert.alert(t("Attachments"), String(cause));
     } finally {
@@ -242,19 +240,38 @@ export function QueueStrip({
   }
   return (
     <View>
-      {!initialView && (
-        <View style={styles.controls}>
-          {button(
-            `${t("Queue")} · ${snapshot?.rows.length ?? "…"}${snapshot?.paused ? ` · ${t("Paused")}` : ""}`,
-            () => setOpen(true),
-            false,
-          )}
-          {error || snapshot?.errorHold || snapshot?.uncertainRowIds.length ? (
-            <Text style={{ color: tokens.destructive }}>{t("Needs attention")}</Text>
-          ) : null}
-          {runIds.length > 0 && button(t("Execution"), () => setInspect(true), false)}
-        </View>
-      )}
+      {!initialView &&
+      (rows.length > 0 || error || snapshot?.errorHold || snapshot?.uncertainRowIds.length) ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={label ? `${t("Queue")} · ${label}` : t("Queue")}
+          onPress={() => setOpen(true)}
+          style={{ paddingHorizontal: 12, paddingVertical: 6, minHeight: 44 }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Text style={{ color: tokens.mutedForeground }}>
+              {label ? `${label} · ` : ""}
+              {rows.length > 10 ? "10+" : rows.length}
+            </Text>
+            <View style={{ flex: 1 }}>
+              {rows.slice(0, 2).map((row) => (
+                <Text key={row.id} numberOfLines={1} style={labelStyle}>
+                  {row.lane === "steer" ? `${t("Steer")} · ` : ""}
+                  {row.text || row.attachments?.[0]?.name || t("Attachment")}
+                  {row.images.length || row.attachments?.length ? ` · ${t("Attachment")}` : ""}
+                </Text>
+              ))}
+              {error || snapshot?.errorHold || snapshot?.uncertainRowIds.length ? (
+                <Text numberOfLines={1} style={{ color: tokens.destructive }}>
+                  {t("Needs attention")}
+                </Text>
+              ) : snapshot?.paused ? (
+                <Text style={{ color: tokens.mutedForeground }}>{t("Paused")}</Text>
+              ) : null}
+            </View>
+          </View>
+        </Pressable>
+      ) : null}
       <Modal
         visible={open}
         presentationStyle="pageSheet"
@@ -360,7 +377,7 @@ export function QueueStrip({
                     />
                     {previews(draftImages, setDraftImages)}
                     <View style={styles.controls}>
-                      {button(t("Attach"), () => void attach(true))}
+                      {button(t("Attach"), () => void attach())}
                       {button(
                         t("Save"),
                         () =>
@@ -460,50 +477,6 @@ export function QueueStrip({
                 )}
               </View>
             )}
-            ListFooterComponent={
-              <View>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={t("Add queued message")}
-                  accessibilityState={{ expanded: addOpen }}
-                  style={styles.button}
-                  onPress={() => setAddOpen(!addOpen)}
-                >
-                  <Text style={labelStyle}>{t("Add queued message")}</Text>
-                </Pressable>
-                {addOpen && (
-                  <>
-                    <TextInput
-                      editable={!busy}
-                      accessibilityLabel={t("Queued message")}
-                      multiline
-                      value={text}
-                      onChangeText={setText}
-                      style={[styles.input, labelStyle, { borderColor: tokens.border }]}
-                    />
-                    {previews(images, setImages)}
-                    <View style={styles.controls}>
-                      {button(lane === "steer" ? t("Steer") : t("Follow-up"), () =>
-                        setLane(lane === "steer" ? "followUp" : "steer"),
-                      )}
-                      {button(t("Attach"), () => void attach(false))}
-                      {button(
-                        t("Queue message"),
-                        () =>
-                          void (async () => {
-                            if (await mutate({ type: "enqueue", text, images, lane })) {
-                              setText("");
-                              setImages([]);
-                              setAddOpen(false);
-                            }
-                          })(),
-                        disabled || (!text.trim() && !images.length),
-                      )}
-                    </View>
-                  </>
-                )}
-              </View>
-            }
           />
         </View>
       </Modal>

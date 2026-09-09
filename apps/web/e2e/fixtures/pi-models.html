@@ -10,6 +10,7 @@
     import { BrowserRouter } from "react-router-dom";
     import { PiRuntimeModelSettings } from "../../src/components/WorkerModelSettings.tsx";
     import { rpc } from "../../src/lib/rpc.ts";
+    import { AccountSettingsOverlay } from "../../src/pages/AccountSettingsOverlay.tsx";
     import { ModelSettingsOverlay } from "../../src/pages/ModelSettingsOverlay.tsx";
     import { OnboardingPage } from "../../src/pages/Onboarding.tsx";
     import { BotSettings } from "../../src/pages/shell/bot-panel.tsx";
@@ -18,7 +19,7 @@
     i18n.load("en", {}); i18n.activate("en");
     const params = new URLSearchParams(location.search);
     const bot = {id:"bot-fixture",name:"Fixture bot",title:"",description:"",color:BOT_COLORS[0],status:"idle",computerMode:"shared",memoryScope:null,autoSpeak:false,voiceId:null,modelProvider:"removed-provider",modelId:"retired-model",thinkingLevel:"high"};
-    const screen = params.has("worker") ? h(PiRuntimeModelSettings, {botId:bot.id,threadId:"thread-fixture",participantId:params.has("root") ? undefined : "worker-fixture"}) : params.has("bot") ? h(BotSettings, {bot,memoryProviderConfigured:false,onSkillsChange:()=>{},onSave:(patch)=>rpc.bots.update({botId:bot.id,...patch}),onExport:async()=>{},onClear:()=>{},onPrompt:async()=>{}}) : params.has("onboarding") ? h(OnboardingPage) : h(ModelSettingsOverlay, {onClose:()=>{}});
+    const screen = params.has("account") ? h(AccountSettingsOverlay, {name:"Fixture account",avatarStyle:"robot",onAvatarStyleChange:async()=>{},onClose:()=>{}}) : params.has("worker") ? h(PiRuntimeModelSettings, {botId:bot.id,threadId:"thread-fixture",participantId:params.has("root") ? undefined : "worker-fixture"}) : params.has("bot") ? h(BotSettings, {bot,memoryProviderConfigured:false,onSkillsChange:()=>{},onSave:(patch)=>rpc.bots.update({botId:bot.id,...patch}),onExport:async()=>{},onClear:()=>{},onPrompt:async()=>{}}) : params.has("onboarding") ? h(OnboardingPage) : h(ModelSettingsOverlay, {onClose:()=>{}});
     createRoot(document.getElementById("root")).render(h(I18nProvider, {i18n}, h(BrowserRouter, {}, h("main", {className:"mx-auto max-w-xl bg-background p-6 text-foreground"}, screen))));
   </script></body>
 </html>

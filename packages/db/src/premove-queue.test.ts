@@ -7,6 +7,7 @@ import {
   listPremoveQueue,
   mutatePremoveQueue,
   PAUSED_TURN_CONTINUATION_PROMPT,
+  type PremoveQueueMutationOptions,
   stagePremoveSteeringInTransaction,
   wakePremoveQueue,
 } from "./premove-queue.js";
@@ -24,8 +25,11 @@ function fixture() {
   let chain = Promise.resolve();
   const tx = {
     $queryRaw: vi.fn(),
-    steeringMessage: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn() },
-    event: { create: vi.fn().mockResolvedValue({ id: "event" }) },
+    steeringMessage: {
+      findMany: vi.fn().mockResolvedValue([]),
+      deleteMany: vi.fn(),
+    },
+    event: { create: vi.fn().mockResolvedValue({ id: "event", seq: 1 }) },
     runtimePlacement: { findUnique: vi.fn() },
     runtimeSession: {
       findUnique: vi.fn().mockResolvedValue({
@@ -36,14 +40,19 @@ function fixture() {
             child: {
               participantId: "child",
               parentParticipantId: "old-run",
-              placement: { cwd: "projects/child", worktreeId: "worktrees/child" },
+              placement: {
+                cwd: "projects/child",
+                worktreeId: "worktrees/child",
+              },
             },
           },
         },
       }),
     },
     thread: {
-      update: vi.fn().mockResolvedValue({ nextEventSeq: 1 }),
+      update: vi.fn(async ({ data }) =>
+        data.nextMessageSeq ? { nextMessageSeq: 1 } : { nextEventSeq: 1 },
+      ),
       findFirst: vi.fn(async ({ where }) =>
         (where.userId === undefined || where.userId === actor.userId) &&
         where.spaceId === actor.spaceId
@@ -51,6 +60,7 @@ function fixture() {
           : null,
       ),
     },
+    message: { create: vi.fn().mockResolvedValue({ id: "delivered-message" }) },
     bot: {
       findFirst: vi.fn(
         async ({ where }: { where: Record<string, unknown> }): Promise<unknown> =>
@@ -103,14 +113,19 @@ function fixture() {
     },
   } as unknown as PrismaClient;
   let request = 0;
-  const mutate = async (operation: QueueOperation) => {
+  const mutate = async (operation: QueueOperation, options?: PremoveQueueMutationOptions) => {
     const current = await listPremoveQueue(prisma, actor, scope);
-    const result = await mutatePremoveQueue(prisma, actor, {
-      ...scope,
-      expectedRevision: current.revision,
-      requestId: `request:${++request}`,
-      operation,
-    });
+    const result = await mutatePremoveQueue(
+      prisma,
+      actor,
+      {
+        ...scope,
+        expectedRevision: current.revision,
+        requestId: `request:${++request}`,
+        operation,
+      },
+      options,
+    );
     expect(result.ok).toBe(true);
     return result.snapshot;
   };
@@ -150,9 +165,12 @@ describe("durable premove database service", () => {
         await f.mutate({ type: "enqueue", lane: "steer", text: "later" });
         return { outcome: "accepted" as const };
       });
-      expect(await dispatchPremoveQueue(f.prisma, lease, "agent-end", { send, sendBatch })).toBe(
-        false,
-      );
+      expect(
+        await dispatchPremoveQueue(f.prisma, lease, "agent-end", {
+          send,
+          sendBatch,
+        }),
+      ).toBe(false);
       await Promise.all([
         dispatchPremoveQueue(f.prisma, lease, boundary, { send, sendBatch }),
         dispatchPremoveQueue(f.prisma, lease, boundary, { send, sendBatch }),
@@ -168,8 +186,12 @@ describe("durable premove database service", () => {
       expect((await mutatePremoveQueue(f.prisma, actor, request)).ok).toBe(true);
       expect(f.state()!.drainIntent).toBeUndefined();
       expect(
-        (await mutatePremoveQueue(f.prisma, actor, { ...request, expectedRevision: revision + 1 }))
-          .ok,
+        (
+          await mutatePremoveQueue(f.prisma, actor, {
+            ...request,
+            expectedRevision: revision + 1,
+          })
+        ).ok,
       ).toBe(false);
     },
   );
@@ -181,7 +203,11 @@ describe("durable premove database service", () => {
       { text: "editing" },
     ]) {
       const f = fixture();
-      const snapshot = await f.mutate({ type: "enqueue", lane: "steer", ...head });
+      const snapshot = await f.mutate({
+        type: "enqueue",
+        lane: "steer",
+        ...head,
+      });
       await f.mutate({ type: "enqueue", lane: "followUp", text: "tail" });
       if (head.text === "editing") await f.mutate({ type: "edit-begin", id: snapshot.rows[0]!.id });
       const reply = await mutatePremoveQueue(f.prisma, actor, {
@@ -197,7 +223,11 @@ describe("durable premove database service", () => {
 
   it("locks captured rows, permits canceling pending drain, and never sends without a batch port", async () => {
     const f = fixture();
-    const snapshot = await f.mutate({ type: "enqueue", lane: "steer", text: "first" });
+    const snapshot = await f.mutate({
+      type: "enqueue",
+      lane: "steer",
+      text: "first",
+    });
     await f.mutate({ type: "drain" });
     const blocked = await mutatePremoveQueue(f.prisma, actor, {
       ...scope,
@@ -226,12 +256,18 @@ describe("durable premove database service", () => {
         if (outcome === "missing") return undefined as never;
         return { outcome: outcome as "rejected" | "uncertain" };
       });
-      await dispatchPremoveQueue(f.prisma, lease, "idle", { send: vi.fn(), sendBatch });
+      await dispatchPremoveQueue(f.prisma, lease, "idle", {
+        send: vi.fn(),
+        sendBatch,
+      });
       expect(f.state()!.view.rows.map((row) => row.text)).toEqual(["first", "second"]);
       expect(f.state()!.view.uncertainRowIds).toHaveLength(outcome === "rejected" ? 0 : 2);
       expect(f.state()!.view.errorHold).toBe(true);
       expect(f.state()!.drainIntent).toBeUndefined();
-      await dispatchPremoveQueue(f.prisma, lease, "idle", { send: vi.fn(), sendBatch });
+      await dispatchPremoveQueue(f.prisma, lease, "idle", {
+        send: vi.fn(),
+        sendBatch,
+      });
       expect(sendBatch).toHaveBeenCalledOnce();
       expect(
         (
@@ -254,13 +290,19 @@ describe("durable premove database service", () => {
     f.tx.premoveQueue.findUnique
       .mockResolvedValueOnce({ state, revision: state.view.revision })
       .mockResolvedValueOnce({
-        state: { ...state, owner: { runId: "other", leaseOwner: "other-worker", leaseFence: 2 } },
+        state: {
+          ...state,
+          owner: { runId: "other", leaseOwner: "other-worker", leaseFence: 2 },
+        },
         revision: state.view.revision,
       });
     const sendBatch = vi.fn();
-    expect(await dispatchPremoveQueue(f.prisma, lease, "idle", { send: vi.fn(), sendBatch })).toBe(
-      false,
-    );
+    expect(
+      await dispatchPremoveQueue(f.prisma, lease, "idle", {
+        send: vi.fn(),
+        sendBatch,
+      }),
+    ).toBe(false);
     expect(sendBatch).not.toHaveBeenCalled();
     expect(f.state()!.checkpoint.uncertainRowIds).toEqual([]);
     expect(f.state()!.view.rows).toHaveLength(1);
@@ -295,19 +337,28 @@ describe("durable premove database service", () => {
     const sendBatch = vi.fn(async () => ({ outcome: "accepted" as const }));
     f.tx.premoveQueue.upsert.mockRejectedValueOnce(new Error("write failed"));
     await expect(
-      dispatchPremoveQueue(f.prisma, lease, "idle", { send: vi.fn(), sendBatch }),
+      dispatchPremoveQueue(f.prisma, lease, "idle", {
+        send: vi.fn(),
+        sendBatch,
+      }),
     ).rejects.toThrow("write failed");
     expect(sendBatch).not.toHaveBeenCalled();
     f.tx.event.create.mockRejectedValueOnce(new Error("ack failed"));
     await expect(
-      dispatchPremoveQueue(f.prisma, lease, "idle", { send: vi.fn(), sendBatch }),
+      dispatchPremoveQueue(f.prisma, lease, "idle", {
+        send: vi.fn(),
+        sendBatch,
+      }),
     ).rejects.toThrow("ack failed");
     expect(sendBatch).toHaveBeenCalledOnce();
     expect(f.state()!.view.rows).toHaveLength(1);
     expect(f.state()!.checkpoint.uncertainRowIds).toHaveLength(1);
-    expect(await dispatchPremoveQueue(f.prisma, lease, "idle", { send: vi.fn(), sendBatch })).toBe(
-      false,
-    );
+    expect(
+      await dispatchPremoveQueue(f.prisma, lease, "idle", {
+        send: vi.fn(),
+        sendBatch,
+      }),
+    ).toBe(false);
   });
 
   it("captures the child project rather than root and rejects later child drift", async () => {
@@ -339,7 +390,10 @@ describe("durable premove database service", () => {
     retained.state.participants.child.placement.cwd = "projects/moved";
     const send = vi.fn();
     const validatePlacement = vi.fn();
-    await dispatchPremoveQueue(f.prisma, lease, "turn-end", { send, validatePlacement });
+    await dispatchPremoveQueue(f.prisma, lease, "turn-end", {
+      send,
+      validatePlacement,
+    });
     expect(send).not.toHaveBeenCalled();
     expect(validatePlacement).not.toHaveBeenCalled();
     expect(f.state()!.view.rows).toHaveLength(1);
@@ -427,7 +481,11 @@ describe("durable premove database service", () => {
         message: { seq: 1, blocks: [{ kind: "text", text: "older" }] },
       },
     ]);
-    const snapshot = await f.mutate({ type: "enqueue", lane: "steer", text: "newer" });
+    const snapshot = await f.mutate({
+      type: "enqueue",
+      lane: "steer",
+      text: "newer",
+    });
     expect(snapshot.rows.map((row) => row.text)).toEqual(["older", "newer"]);
     expect(f.tx.steeringMessage.deleteMany).toHaveBeenCalledWith({
       where: { id: { in: ["native"] }, claimedAt: null },
@@ -451,7 +509,11 @@ describe("durable premove database service", () => {
       ...scope,
       requestId: "same",
       expectedRevision: 0,
-      operation: { type: "enqueue" as const, lane: "steer" as const, text: "one" },
+      operation: {
+        type: "enqueue" as const,
+        lane: "steer" as const,
+        text: "one",
+      },
     };
     expect((await mutatePremoveQueue(f.prisma, actor, input)).ok).toBe(true);
     expect((await mutatePremoveQueue(f.prisma, actor, input)).ok).toBe(true);
@@ -520,7 +582,11 @@ describe("durable premove database service", () => {
 
   it("removes reviewed commands only after durable completion", async () => {
     const f = fixture();
-    const snapshot = await f.mutate({ type: "enqueue", lane: "steer", text: "/compact" });
+    const snapshot = await f.mutate({
+      type: "enqueue",
+      lane: "steer",
+      text: "/compact",
+    });
     await f.mutate({ type: "resume" });
     const command = vi.fn(async (row, command) => {
       expect(command).toEqual({ kind: "compact" });
@@ -528,7 +594,10 @@ describe("durable premove database service", () => {
       expect(row.id).toBe(snapshot.rows[0]!.id);
       return { outcome: "completed" as const };
     });
-    await dispatchPremoveQueue(f.prisma, lease, "idle", { send: vi.fn(), command });
+    await dispatchPremoveQueue(f.prisma, lease, "idle", {
+      send: vi.fn(),
+      command,
+    });
     expect(command).toHaveBeenCalledOnce();
     expect(f.state()!.view.rows).toEqual([]);
   });
@@ -571,10 +640,16 @@ describe("durable premove database service", () => {
     expect(f.state()!.view.gracefulPausePending).toBe(true);
     const send = vi.fn();
     const gracefulPause = vi.fn().mockResolvedValue(undefined);
-    await dispatchPremoveQueue(f.prisma, lease, "paused", { send, gracefulPause });
+    await dispatchPremoveQueue(f.prisma, lease, "paused", {
+      send,
+      gracefulPause,
+    });
     expect(gracefulPause).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
-    expect(f.state()!.view).toMatchObject({ paused: true, gracefulPausePending: false });
+    expect(f.state()!.view).toMatchObject({
+      paused: true,
+      gracefulPausePending: false,
+    });
   });
 
   it("does not strand an idle queue waiting for a nonexistent runtime pause", async () => {
@@ -634,7 +709,9 @@ describe("durable premove database service", () => {
     // Empty rows plus the accepted resume wake exactly one fenced continuation run.
     expect(await wakePremoveQueue(f.prisma, actor, scope)).toBe("new-run");
     expect(f.tx.task.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ prompt: PAUSED_TURN_CONTINUATION_PROMPT }),
+      data: expect.objectContaining({
+        prompt: PAUSED_TURN_CONTINUATION_PROMPT,
+      }),
     });
     expect(f.tx.run.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -672,7 +749,9 @@ describe("durable premove database service", () => {
       status: "queued",
       taskId: "queued-task",
     });
-    superseded.tx.task.findUnique.mockResolvedValue({ prompt: "real user prompt" });
+    superseded.tx.task.findUnique.mockResolvedValue({
+      prompt: "real user prompt",
+    });
     expect(await wakePremoveQueue(superseded.prisma, actor, scope)).toBe("queued-run");
     expect(superseded.tx.task.update).not.toHaveBeenCalled();
     expect(superseded.state()!.resumeIntent).toBeUndefined();
@@ -686,7 +765,9 @@ describe("durable premove database service", () => {
     });
     expect(await wakePremoveQueue(running.prisma, actor, scope)).toBeNull();
     expect(running.tx.task.update).not.toHaveBeenCalled();
-    expect(running.state()!.resumeIntent).toMatchObject({ requestId: "resume-3" });
+    expect(running.state()!.resumeIntent).toMatchObject({
+      requestId: "resume-3",
+    });
   });
 
   it("fails closed without a wake when session generation or placement drifted from the parked turn", async () => {
@@ -725,7 +806,10 @@ describe("durable premove database service", () => {
       const altered = f.state()!;
       if (field === "placement") delete altered.pausedTurn!.placement;
       else altered.resumeIntent!.userId = "another-user";
-      await f.tx.premoveQueue.upsert({ create: { state: altered }, update: { state: altered } });
+      await f.tx.premoveQueue.upsert({
+        create: { state: altered },
+        update: { state: altered },
+      });
       await expect(wakePremoveQueue(f.prisma, actor, scope)).rejects.toThrow(
         "Paused context changed",
       );
@@ -745,12 +829,160 @@ describe("durable premove database service", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("delivers explicit steer and follow-up composer rows only at their FIFO boundaries", async () => {
+    const f = fixture();
+    await f.mutate(
+      { type: "enqueue", lane: "steer", text: "steer now" },
+      { stageComposerMessage: true },
+    );
+    await f.mutate(
+      { type: "enqueue", lane: "followUp", text: "after settling" },
+      { stageComposerMessage: true },
+    );
+    await f.mutate({ type: "resume" });
+    const send = vi.fn(async (_row: { text: string }) => ({ outcome: "accepted" as const }));
+    expect(f.tx.message.create).not.toHaveBeenCalled();
+
+    expect(await dispatchPremoveQueue(f.prisma, lease, "turn-end", { send })).toBe(true);
+    expect(send.mock.calls.map(([row]) => row.text)).toEqual(["steer now"]);
+    expect(f.tx.message.create).toHaveBeenCalledTimes(1);
+    expect(await dispatchPremoveQueue(f.prisma, lease, "turn-end", { send })).toBe(false);
+    expect(send).toHaveBeenCalledTimes(1);
+
+    expect(await dispatchPremoveQueue(f.prisma, lease, "settled", { send })).toBe(true);
+    expect(send.mock.calls.map(([row]) => row.text)).toEqual(["steer now", "after settling"]);
+    expect(f.tx.message.create).toHaveBeenCalledTimes(2);
+    expect(f.state()!.view.rows).toEqual([]);
+  });
+
+  it("authorizes composer artifacts before mutation and leaves no queue state on failure", async () => {
+    const f = fixture();
+    const resolveAttachments = vi.fn().mockRejectedValue(new Error("foreign artifact"));
+    await expect(
+      f.mutate(
+        {
+          type: "enqueue",
+          lane: "steer",
+          text: "private",
+          artifactIds: ["foreign"],
+        },
+        { stageComposerMessage: true, resolveAttachments },
+      ),
+    ).rejects.toThrow("foreign artifact");
+    expect(f.state()).toBeUndefined();
+    expect(f.tx.premoveQueue.upsert).not.toHaveBeenCalled();
+    expect(f.tx.message.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps resolved attachments through drafts and publishes only the delivered edit", async () => {
+    const f = fixture();
+    const resolveAttachments: NonNullable<PremoveQueueMutationOptions["resolveAttachments"]> =
+      vi.fn(async (_tx, artifactIds: string[]) =>
+        artifactIds.map((artifactId) => ({
+          kind: "file" as const,
+          artifactId,
+          name: `${artifactId}.txt`,
+          mimeType: "text/plain",
+          size: artifactId.length,
+        })),
+      );
+    let snapshot = await f.mutate(
+      {
+        type: "enqueue",
+        lane: "steer",
+        text: "original",
+        artifactIds: ["first"],
+      },
+      { stageComposerMessage: true, resolveAttachments },
+    );
+    const rowId = snapshot.rows[0]!.id;
+    expect(snapshot.rows[0]!.attachments?.map((item) => item.artifactId)).toEqual(["first"]);
+    expect(f.tx.message.create).not.toHaveBeenCalled();
+
+    await f.mutate({ type: "edit-begin", id: rowId });
+    snapshot = await f.mutate({
+      type: "edit-patch",
+      patch: { text: "edited" },
+    });
+    expect(snapshot.editing!.rows[0]!.attachments?.map((item) => item.artifactId)).toEqual([
+      "first",
+    ]);
+    snapshot = await f.mutate(
+      { type: "edit-patch", patch: { artifactIds: ["draft"] } },
+      { resolveAttachments },
+    );
+    expect(snapshot.rows[0]!.attachments?.map((item) => item.artifactId)).toEqual(["first"]);
+    expect(snapshot.editing!.rows[0]!.attachments?.map((item) => item.artifactId)).toEqual([
+      "draft",
+    ]);
+    snapshot = await f.mutate({ type: "edit-cancel" });
+    expect(snapshot.rows[0]!.attachments?.map((item) => item.artifactId)).toEqual(["first"]);
+
+    await f.mutate({ type: "edit-begin", id: rowId });
+    await f.mutate(
+      {
+        type: "edit-patch",
+        patch: { text: "delivered", artifactIds: ["final"] },
+      },
+      { resolveAttachments },
+    );
+    snapshot = await f.mutate({ type: "edit-save" });
+    expect(snapshot.rows[0]).toMatchObject({
+      text: "delivered",
+      lane: "steer",
+    });
+    expect(snapshot.rows[0]!.attachments?.map((item) => item.artifactId)).toEqual(["final"]);
+    expect(f.tx.message.create).not.toHaveBeenCalled();
+
+    await f.mutate({ type: "resume" });
+    const send = vi.fn(async (row) => {
+      expect(row.text).toBe("delivered");
+      expect(row.blocks).toEqual([
+        {
+          kind: "file",
+          artifactId: "final",
+          name: "final.txt",
+          mimeType: "text/plain",
+          size: 5,
+        },
+      ]);
+      return { outcome: "accepted" as const };
+    });
+    const notifyDeliveredMessage = vi.fn().mockResolvedValue(undefined);
+    await dispatchPremoveQueue(f.prisma, lease, "turn-end", {
+      send,
+      notifyDeliveredMessage,
+    });
+    expect(send).toHaveBeenCalledOnce();
+    expect(notifyDeliveredMessage).toHaveBeenCalledWith("thread", 1);
+    expect(f.tx.message.create).toHaveBeenCalledOnce();
+    expect(f.tx.message.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        role: "user",
+        runId: "run",
+        clientNonce: expect.stringMatching(/^queue-delivery:/),
+        blocks: [
+          { kind: "text", text: "delivered" },
+          {
+            kind: "file",
+            artifactId: "final",
+            name: "final.txt",
+            mimeType: "text/plain",
+            size: 5,
+          },
+        ],
+      }),
+    });
+    expect(f.state()!.view.rows).toEqual([]);
+  });
+
   it("stages owned messages only once and retains file attachments for the runtime", async () => {
     const f = fixture();
     const input = {
       ...scope,
       messageId: "message",
       blocks: [
+        { kind: "text" as const, text: "original" },
         {
           kind: "file" as const,
           artifactId: "artifact",
@@ -771,9 +1003,14 @@ describe("durable premove database service", () => {
       true,
     );
     expect(f.state()!.view.rows).toHaveLength(1);
+    const rowId = f.state()!.view.rows[0]!.id;
+    await f.mutate({ type: "edit-begin", id: rowId });
+    await f.mutate({ type: "edit-patch", patch: { text: "edited" } });
+    await f.mutate({ type: "edit-save" });
     await f.mutate({ type: "resume" });
     const send = vi.fn(async (row) => {
-      expect(row.blocks).toEqual(input.blocks);
+      expect(row.text).toBe("edited");
+      expect(row.blocks).toEqual(input.blocks.slice(1));
       return { outcome: "accepted" as const };
     });
     await dispatchPremoveQueue(f.prisma, lease, "turn-end", { send });

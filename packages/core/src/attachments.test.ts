@@ -95,6 +95,40 @@ describe("attachment helpers", () => {
   });
 });
 
+describe("outgoing draft history", () => {
+  it.each(["pending", "sending", "sent", "discarded", "uncertain"] as const)(
+    "preserves reviewed content and truthful %s state without approval tokens",
+    (status) => {
+      const fields = {
+        to: ["reviewer@example.test"],
+        subject: "Reviewed subject",
+        body: "Reviewed body\nwith a second line",
+      };
+      const history = blocksToAgentHistoryText([
+        {
+          kind: "ask",
+          text: "Review message",
+          approvalEffectId: "effect-fixture",
+          draft: {
+            kind: "outgoing_message",
+            revision: 2,
+            hash: "a".repeat(64),
+            status,
+            channel: "email",
+            canApprove: true,
+            ownerUserId: "owner-fixture",
+            fields,
+            editable: ["body"],
+          },
+        },
+      ]);
+      expect(history).toBe(`[email draft: ${status}] ${JSON.stringify({ fields })}`);
+      expect(history).not.toContain("effect-fixture");
+      expect(history).not.toContain("a".repeat(64));
+    },
+  );
+});
+
 describe("peer message history", () => {
   it("keeps attribution so a later turn knows a bot spoke, not the user", () => {
     expect(

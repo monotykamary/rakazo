@@ -179,6 +179,37 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 describe("native Pi model UI", () => {
+  it("opens the compact current-model label and saves only the explicit bot worker", async () => {
+    const factory = () =>
+      ModelSelectionControl({ botId: "bot", worker: { threadId: "thread" }, compact: true });
+    render(factory);
+    await flush();
+    render(factory);
+    await flush();
+    const tree = render(factory);
+    expect(nodes(tree).find((node) => node.visible !== undefined)?.visible).toBe(false);
+    button(tree, "current-id").onPress!();
+    render(factory);
+    await flush();
+    render(factory);
+    await flush();
+    hooks.rpc.mockResolvedValueOnce({ ...snapshot().selection!, status: "applied" });
+    button(render(factory), "Save").onPress!();
+    await flush();
+    expect(hooks.rpc).toHaveBeenCalledWith("models/setWorkerSelection", {
+      botId: "bot",
+      threadId: "thread",
+      selection: requested,
+    });
+    expect(
+      hooks.rpc.mock.calls.every(
+        ([route, input]) =>
+          (route === "models/runtime" || route === "models/setWorkerSelection") &&
+          input.botId === "bot" &&
+          input.threadId === "thread",
+      ),
+    ).toBe(true);
+  });
   it("an old save cannot clear a new scope's busy state", async () => {
     let participantId = "first";
     const factory = () =>
@@ -334,6 +365,7 @@ describe("native Pi model UI", () => {
     render(Models);
     await flush();
     tree = render(Models);
+    expect(hooks.rpc).toHaveBeenLastCalledWith("models/runtime", { refresh: true });
     expect(text(tree)).toContain("Offline");
     expect(text(tree)).toContain("profile-id");
     expect(nodes(tree).find((node) => node.data)!.data).toHaveLength(1);
@@ -372,6 +404,11 @@ describe("native Pi model UI", () => {
     expect(text(next)).toContain(modelIdentity(requested));
     expect(text(next)).toContain(modelIdentity(current));
     expect(text(next)).toContain("Pi unavailable");
+    expect(hooks.rpc).toHaveBeenLastCalledWith("models/runtime", {
+      botId: "bot",
+      threadId: "thread",
+      refresh: true,
+    });
     expect(button(next, "Save").disabled).toBe(true);
   });
   it("global inventory reads only {}, labels the profile default, and searches real identities", async () => {

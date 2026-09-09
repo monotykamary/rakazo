@@ -38,6 +38,7 @@ import {
   isValidServiceName,
   ModelHiddenError,
   ModelSelectionSchema,
+  OutgoingDraftFieldsSchema,
   ServiceChangesInputSchema,
   ServiceDeclareInputSchema,
   ThinkingLevelSchema,
@@ -81,6 +82,7 @@ import {
   userTurnBlocksForRun,
 } from "@rakazo/core";
 import { approvalEffectKey } from "@rakazo/core/node/approval-effect-key";
+import { parseOutgoingDraftRequest } from "@rakazo/core/node/outgoing-message-draft";
 import {
   appendEventInTransaction,
   assertModelVisibleForOwner,
@@ -104,6 +106,7 @@ import {
   pendingPremoveMessageIds,
   SpaceLimitError,
   setRuntimePlacement,
+  settleOutgoingDraftMessage,
   type ThreadEvents,
   WorkScopeError,
   wakePremoveQueue,
@@ -121,7 +124,7 @@ import {
   formatAgentEnvironmentInstruction,
   redactAgentCommandResult,
 } from "./agent-environment.js";
-import { buildApprovalAskBlock } from "./approval-ask.js";
+import { buildApprovalAskBlock, buildOutgoingDraftAskBlock } from "./approval-ask.js";
 import {
   approvalPausedToolResult,
   approvalReplayPathError,
@@ -254,6 +257,12 @@ import {
 } from "./model-vision.js";
 import type { OfficeModelRuntimeResolver } from "./office-model-preflight.js";
 import { manageOfficeTool } from "./office-tools.js";
+import {
+  bindOutgoingMessageRoutes,
+  outgoingDraftDeliveryOutcome,
+  outgoingDraftMappingMatchesTool,
+  resolveOutgoingMessageDraft,
+} from "./outgoing-message-draft.js";
 import { resolveParticipantModel } from "./participant-model.js";
 import { toOAuthCredential } from "./pi-credentials.js";
 import type { PiModelRuntimeService } from "./pi-model-runtime.js";
@@ -1574,7 +1583,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
               (WorkToolName.safeParse(tool.name).success &&
                 dispatchedWork.tools.includes(tool.name))),
         );
-        const exposedConnectorTools = discovered.filter(
+        const authorizedConnectorTools = bindOutgoingMessageRoutes(
+          discovered,
+          context.connectedConnections ?? [],
+        );
+        const exposedConnectorTools = authorizedConnectorTools.filter(
           (tool) =>
             !dispatchedWork && !builtinAgentTools.some((builtin) => builtin.name === tool.name),
         );
@@ -1861,11 +1874,29 @@ export function createRunExecutor(deps: ExecutorDeps) {
           if (IMAGE_RETURNING_COMPUTER_TOOLS.has(name) && !acceptsImages) {
             return { error: MODEL_CANNOT_SEE_MESSAGE };
           }
+          let outgoingDraft: ReturnType<typeof resolveOutgoingMessageDraft> | undefined;
+          if (name === "draft_message") {
+            const fields = OutgoingDraftFieldsSchema.safeParse(args);
+            if (!fields.success) return { error: "Invalid outgoing draft fields." };
+            outgoingDraft = resolveOutgoingMessageDraft({
+              tools: exposedConnectorTools,
+              connections: context.connectedConnections ?? [],
+              fields: fields.data,
+              ownerUserId: run.userId,
+              secrets: runSecrets,
+            });
+            if ("error" in outgoingDraft) return { error: outgoingDraft.error };
+            name = outgoingDraft.toolName;
+            args = outgoingDraft.args;
+          }
           let connectorCall: ConnectorCall = {
             tool: name,
             args,
             executionId,
-            route: connectorRoutes.get(name),
+            route:
+              outgoingDraft && !("error" in outgoingDraft)
+                ? outgoingDraft.route
+                : connectorRoutes.get(name),
           };
           const onCatalogExecuteRoute = Boolean(
             connectorCall.route &&
@@ -1887,7 +1918,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
               error: "Invalid cloud agent arguments. Raw environment variables are not supported.",
             };
           }
-          let effectRequest: unknown = args;
+          let effectRequest: unknown =
+            outgoingDraft && !("error" in outgoingDraft) ? outgoingDraft.request : args;
           if (connectorCall.route && deps.connector?.resolveCall) {
             try {
               const resolved = await deps.connector.resolveCall(connectorCall, context);
@@ -1927,6 +1959,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
             };
           }
           if (
+            !outgoingDraft &&
             !catalogRemapped &&
             connectorCall.route?.resourceId &&
             connectorCall.route.connectorId &&
@@ -2006,6 +2039,20 @@ export function createRunExecutor(deps: ExecutorDeps) {
               CATALOG_APPROVAL_TOOL,
             );
             if (resourceError) return { error: resourceError };
+            const approvedDraft = parseOutgoingDraftRequest(nextApprovedRequest);
+            if (
+              approvedDraft &&
+              !outgoingDraftMappingMatchesTool(approvedDraft.draft.mapping, {
+                name,
+                description: "",
+                route: liveRoute,
+                inputSchema: resolvedToolSchema ?? connectorSchemas.get(name) ?? {},
+              })
+            ) {
+              return {
+                error: "The draft sending capability changed; review a new draft before sending.",
+              };
+            }
             const approvedRequest = approvedEffectReplays.take(nextApprovedTool)!;
             const approvedCatalog = catalogApprovalDetails(approvedRequest, CATALOG_APPROVAL_TOOL);
             if (approvedCatalog && !catalogRemapped) {
@@ -2046,7 +2093,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
           const requiresApprovalByDefault =
             requiresUnattendedApproval || toolRequiresApproval(name, viaConnector, args);
           const requiresMandatoryApproval =
-            requiresUnattendedApproval || toolRequiresExplicitApproval(name, args);
+            Boolean(outgoingDraft) ||
+            requiresUnattendedApproval ||
+            toolRequiresExplicitApproval(name, args);
           const connectorKind = connectorKindFromToolName(
             name,
             connectedPlugins.map((plugin) => plugin.provider),
@@ -2245,9 +2294,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
               leaseOwner: workerId,
               leaseFence: fence,
               blocks: [
-                buildApprovalAskBlock(applied!.effect.id, name, args, runSecrets, {
-                  reviewReason,
-                }),
+                outgoingDraft && !("error" in outgoingDraft)
+                  ? buildOutgoingDraftAskBlock(applied!.effect.id, outgoingDraft.preview)
+                  : buildApprovalAskBlock(applied!.effect.id, name, args, runSecrets, {
+                      reviewReason,
+                    }),
               ],
             });
             // pauseRunForInput returning false after a successful renew means the run row no
@@ -3703,7 +3754,21 @@ export function createRunExecutor(deps: ExecutorDeps) {
               }
               if (event.type === "error") result = { error: event.message };
             }
-            return finish(result);
+            const finished = await finish(result);
+            if (applied && parseOutgoingDraftRequest(applied.effect.request)) {
+              const delivery = outgoingDraftDeliveryOutcome(finished, runSecrets);
+              const settled = await settleOutgoingDraftMessage(deps.prisma, {
+                effectId: applied.effect.id,
+                status: delivery.status,
+                ...(delivery.error ? { error: delivery.error } : {}),
+              });
+              if (settled) {
+                await deps.events.notify(settled.threadId, settled.eventSeq).catch((error) => {
+                  getLogger().error("outgoing draft status notification", error);
+                });
+              }
+            }
+            return finished;
           }
           return finish({ error: `unknown tool ${name}` });
         };
@@ -4043,6 +4108,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
                       scope,
                       boundary === "before_model" ? "turn-end" : boundary,
                       {
+                        notifyDeliveredMessage: (threadId, eventSeq) =>
+                          deps.events.notify(threadId, eventSeq),
                         validatePlacement: async (placement) => {
                           await validate(placement.worktreePath ?? placement.projectPath ?? ".");
                         },

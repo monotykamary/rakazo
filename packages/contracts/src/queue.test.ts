@@ -12,8 +12,10 @@ it("accepts drain only as a server-selected revisioned operation", () => {
   };
   expect(QueueMutationSchema.safeParse(input).success).toBe(true);
   expect(
-    QueueMutationSchema.safeParse({ ...input, operation: { type: "drain", rowIds: ["skip"] } })
-      .success,
+    QueueMutationSchema.safeParse({
+      ...input,
+      operation: { type: "drain", rowIds: ["skip"] },
+    }).success,
   ).toBe(false);
 });
 
@@ -28,7 +30,12 @@ it("accepts a child target but no client-selected session or cross-scope target"
     botId: "bot",
     requestId: "target",
     expectedRevision: 0,
-    operation: { type: "enqueue", lane: "steer", text: "help", target: { participantId: "child" } },
+    operation: {
+      type: "enqueue",
+      lane: "steer",
+      text: "help",
+      target: { participantId: "child" },
+    },
   };
   expect(QueueMutationSchema.safeParse(input).success).toBe(true);
   for (const extra of [
@@ -40,7 +47,10 @@ it("accepts a child target but no client-selected session or cross-scope target"
     expect(
       QueueMutationSchema.safeParse({
         ...input,
-        operation: { ...input.operation, target: { ...input.operation.target, ...extra } },
+        operation: {
+          ...input.operation,
+          target: { ...input.operation.target, ...extra },
+        },
       }).success,
     ).toBe(false);
   }
@@ -55,8 +65,10 @@ it("placement recovery accepts only a row identity, never a client cwd", () => {
   };
   expect(QueueMutationSchema.safeParse(input).success).toBe(true);
   expect(
-    QueueMutationSchema.safeParse({ ...input, operation: { ...input.operation, cwd: "/host" } })
-      .success,
+    QueueMutationSchema.safeParse({
+      ...input,
+      operation: { ...input.operation, cwd: "/host" },
+    }).success,
   ).toBe(false);
 });
 it("requires revisions and bounds mutation attachments", () => {
@@ -68,9 +80,33 @@ it("requires revisions and bounds mutation attachments", () => {
     operation: { type: "enqueue", lane: "steer", text: "hello" },
   };
   expect(QueueMutationSchema.safeParse(input).success).toBe(true);
+  expect(
+    QueueMutationSchema.safeParse({
+      ...input,
+      operation: { ...input.operation, artifactIds: ["artifact"] },
+    }).success,
+  ).toBe(true);
+  expect(
+    QueueMutationSchema.safeParse({
+      ...input,
+      operation: {
+        type: "edit-patch",
+        patch: { text: "updated", artifactIds: ["artifact"] },
+      },
+    }).success,
+  ).toBe(true);
   expect(QueueMutationSchema.safeParse({ ...input, expectedRevision: undefined }).success).toBe(
     false,
   );
+  expect(
+    QueueMutationSchema.safeParse({
+      ...input,
+      operation: {
+        ...input.operation,
+        artifactIds: ["a", "b", "c", "d", "e", "f"],
+      },
+    }).success,
+  ).toBe(false);
   expect(
     QueueMutationSchema.safeParse({
       ...input,

@@ -8,30 +8,36 @@ test("thread queue, retained Flow, and Pi inventory screens", async ({ page }, t
   const userName = `Queue Screens ${stamp}`;
   await signup(page, `queue-screens-${stamp}@rakazo.test`, "password12", userName);
   await completeOnboarding(page);
-  await expect(page.getByRole("button", { name: /^Queue ·/ })).toHaveCount(0);
-  await expect(page.getByText("Paused", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("thread-queue")).not.toBeVisible();
+  await expect(page.getByText("Add queued message", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Queued message" })).toHaveCount(0);
   await captureScreenshot(page, testInfo, "app-calm-empty-thread");
-  await expect(page.getByRole("button", { name: "Advanced", exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Queue", exact: true }).click();
-  await expect(page.getByTestId("thread-queue")).toBeVisible();
-  await expect(page.getByRole("dialog", { name: "Queue", exact: true })).toHaveCount(0);
-  await captureScreenshot(page, testInfo, "app-empty-queue-discovered");
-  const pause = page.getByRole("button", { name: "Pause", exact: true });
-  if (await pause.isVisible()) await pause.click();
-  await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Add queued message", exact: true }).click();
-  await page
-    .getByRole("textbox", { name: "Queued message", exact: true })
-    .fill("Review the retained work");
-  await page.getByRole("button", { name: "Queue message", exact: true }).click();
+
+  const composer = page.getByPlaceholder(/^Message /);
+  await composer.fill("Review the retained work");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "review-notes.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("offline fixture"),
+  });
+  await expect(page.getByRole("button", { name: "Remove review-notes.txt" })).toBeVisible();
+  await page.getByRole("button", { name: "Choose message action" }).click();
+  await page.getByRole("menuitem", { name: "Queue", exact: true }).click();
   await expect(page.locator("[data-row-id]")).toContainText("Review the retained work");
+  await expect(page.locator("[data-row-id]")).toContainText("review-notes.txt");
+  await expect(page.getByRole("button", { name: "Queue, 1 message" })).toBeVisible();
   // Before the first run there is no authorized project placement to drain into.
-  await expect(page.getByRole("button", { name: "Drain all", exact: true })).toBeDisabled();
-  await expect(
-    page.getByRole("button", { name: "Use current project", exact: true }),
-  ).toBeVisible();
+  await page.getByLabel("Queue options").click();
+  await expect(page.getByRole("menuitem", { name: "Drain all", exact: true })).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await page
+    .locator("[data-row-id]")
+    .getByLabel(/Options for queued message:/)
+    .click();
+  await expect(page.getByRole("menuitem", { name: "Use current project" })).toBeVisible();
+  await page.keyboard.press("Escape");
   await captureScreenshot(page, testInfo, "app-thread-queue");
-  await page.getByRole("button", { name: "Queue", exact: true }).click();
+  await page.getByRole("button", { name: "Queue, 1 message" }).click();
 
   // Two real runs exercise the selector without depending on queued-work placement.
   const botId = activeBotId(page);
@@ -110,10 +116,11 @@ test("thread queue, retained Flow, and Pi inventory screens", async ({ page }, t
   await page.getByRole("button", { name: new RegExp(userName) }).click();
   await page.getByRole("button", { name: "Models", exact: true }).click();
   await page.getByRole("combobox", { name: "Search models" }).fill("research-model");
+  await page.getByText("Pi profile default", { exact: true }).click();
   await expect(page.getByTestId("pi-profile-default")).toContainText(
     "custom-extension/research-model",
   );
-  await expect(page.getByRole("option")).toContainText("custom-extension/research-model");
+  await expect(page.getByRole("option")).toContainText("custom-extension");
   await expect(
     page.getByRole("button", { name: "Rotation and fallback", exact: true }),
   ).toHaveCount(0);

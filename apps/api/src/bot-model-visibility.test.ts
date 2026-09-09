@@ -1,4 +1,5 @@
 import { createRouterClient } from "@orpc/server";
+import { LocalPiModelRuntimeService } from "@rakazo/adapters";
 import type { Actor } from "@rakazo/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { createRouter, type RouterDeps } from "./router.js";
@@ -48,7 +49,7 @@ function fixture(owner = false) {
   const piModels = {
     read: vi.fn(),
     validate: vi.fn(async () => {}),
-    supportsCheckpoint: vi.fn(() => true),
+    supportsCheckpoint: vi.fn((_checkpoint: unknown) => true),
   };
   const prisma = {
     $transaction: vi.fn(
@@ -89,6 +90,25 @@ function fixture(owner = false) {
 }
 
 describe("bot Pi model intent route", () => {
+  it("validates and saves the first bot model before a runtime checkpoint exists", async () => {
+    const f = fixture(true);
+    const runtime = new LocalPiModelRuntimeService({
+      cwd: "/fixture",
+      sessionDir: "/fixture/sessions",
+    });
+    f.piModels.supportsCheckpoint.mockImplementation((checkpoint) =>
+      runtime.supportsCheckpoint(checkpoint),
+    );
+    await f.client.bots.update({
+      botId: "bot",
+      modelProvider: "extension",
+      modelId: "first-model",
+    });
+    expect(f.piModels.validate).toHaveBeenCalledOnce();
+    expect(f.prisma.bot.update).toHaveBeenCalledOnce();
+    expect(f.prisma.spaceModelPreference.findFirst).not.toHaveBeenCalled();
+  });
+
   it.each([
     { thinkingLevel: "low" as const },
     { thinkingLevel: null },

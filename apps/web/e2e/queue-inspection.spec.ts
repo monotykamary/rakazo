@@ -286,66 +286,32 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
     });
   });
   await page.goto("/e2e/fixtures/queue-inspection.html");
-  await expect(page.getByRole("button", { name: "Queue", exact: true })).toBeVisible();
+  const queueRegion = page.getByRole("region", { name: "Queue", exact: true });
+  await expect(page.getByRole("button", { name: "Queue, 2 messages" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Queued message", exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Add queued message", exact: true }).click();
-  await expect(
-    page
-      .getByRole("region", { name: "Queue", exact: true })
-      .getByRole("button", { name: "Execution" }),
-  ).toHaveCount(0);
-  await expect(page.locator('[data-row-id="second"]')).toHaveClass(/ms-5/);
-  await expect(page.getByRole("button", { name: "Use current project" })).toBeEnabled();
+  await expect(queueRegion.getByRole("button", { name: "Execution" })).toHaveCount(0);
+  await expect(page.locator('[data-row-id="second"]')).toHaveAttribute("data-lane", "steer");
   const first = page.locator('[data-row-id="first"]');
-  await first.getByRole("button", { name: "Edit", exact: true }).click();
-  await page.getByRole("textbox", { name: "Edit queued message" }).fill("Review the actual patch");
-  await first.getByLabel("Attachment files").setInputFiles({
-    name: "pixel.png",
-    mimeType: "image/png",
-    buffer: Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII=",
-      "base64",
-    ),
-  });
-  await expect(first.getByAltText("Attachment 1")).toBeVisible();
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(first).toContainText("Review the actual patch");
-  await expect(first.getByAltText("Attachment 1")).toBeVisible();
-  await expect(first.getByRole("textbox", { name: "Edit queued message" })).toHaveCount(0);
-  expect(snapshot.rows[0]?.images[0]?.mimeType).toBe("image/png");
   await expect(first).toContainText("notes.txt");
   expect(snapshot.rows[0]?.attachments?.[0]?.artifactId).toBe("artifact-fixture");
-  await first.getByRole("button", { name: "Edit", exact: true }).click();
-  await expect(first.getByAltText("Attachment 1")).toBeVisible();
-  await first.getByRole("textbox").fill("Keep existing attachments");
-  await first.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(first).toContainText("Keep existing attachments");
-  expect(snapshot.rows[0]?.images).toHaveLength(1);
-  expect(snapshot.rows[0]?.attachments?.[0]?.artifactId).toBe("artifact-fixture");
-  await first.getByLabel("Message options", { exact: true }).click();
-  await page.getByRole("menuitem", { name: "Steer", exact: true }).click();
-  await expect(page.getByRole("menuitem", { name: "Follow-up", exact: true })).toBeVisible();
+
+  await first.getByLabel(/Options for queued message:/).click();
+  await page.getByRole("menuitem", { name: "Use current project", exact: true }).click();
+  await first.getByLabel(/Options for queued message:/).click();
+  await page.getByRole("menuitem", { name: "Move to steer", exact: true }).click();
+  await first.getByLabel(/Options for queued message:/).click();
   await page.getByRole("menuitem", { name: "Hold", exact: true }).click();
-  await expect(first).toContainText("Held");
+  await expect(first.getByLabel("Held")).toBeVisible();
+  await first.getByLabel(/Options for queued message:/).click();
   await page.getByRole("menuitem", { name: "Move down", exact: true }).click();
   await expect(page.locator("[data-row-id]").first()).toHaveAttribute("data-row-id", "second");
-  await page.getByRole("menu").press("Escape");
-  await page.getByRole("button", { name: "Resume", exact: true }).click();
-  await page.getByRole("button", { name: "Pause", exact: true }).click();
+
+  await page.getByLabel("Queue options", { exact: true }).click();
+  await page.getByRole("menuitem", { name: "Resume", exact: true }).click();
+  await page.getByLabel("Queue options", { exact: true }).click();
+  await page.getByRole("menuitem", { name: "Pause", exact: true }).click();
   await page.getByLabel("Queue options", { exact: true }).click();
   await page.getByRole("menuitem", { name: "Pause after tools", exact: true }).click();
-  await expect(page.getByRole("menuitem", { name: "Pause pending" })).toBeDisabled();
-  await page.getByRole("menu").press("Escape");
-  await page.getByRole("textbox", { name: "Queued message", exact: true }).fill("Next run");
-  await page.getByRole("button", { name: "Queue message", exact: true }).click();
-  await expect(page.locator('[data-row-id="third"]')).toContainText("Next run");
-  await expect(page.getByRole("textbox", { name: "Queued message", exact: true })).toHaveCount(0);
-  await page
-    .locator('[data-row-id="third"]')
-    .getByLabel("Message options", { exact: true })
-    .click();
-  await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
-  await expect(page.locator('[data-row-id="third"]')).toHaveCount(0);
   await captureScreenshot(page, testInfo, "queue-controls");
   await page.getByRole("button", { name: "Execution", exact: true }).click();
   const execution = page.getByRole("dialog", { name: "Execution", exact: true });
@@ -389,7 +355,7 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
   await expect(page.getByRole("textbox", { name: "Message to participant" })).toHaveValue(
     "Focus on the failing test",
   );
-  expect(operations.at(-1)?.type).toBe("remove");
+  expect(operations.at(-1)?.type).toBe("graceful-pause");
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "Queue message", exact: true })
@@ -455,20 +421,13 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
   );
   await expect(outline.getByText("return 2;", { exact: true })).toBeVisible();
   expect(operations.map((operation) => operation.type)).toEqual([
-    "edit-begin",
-    "edit-patch",
-    "edit-save",
-    "edit-begin",
-    "edit-patch",
-    "edit-save",
+    "bind-placement",
     "lane",
     "hold",
     "reorder",
     "resume",
     "pause",
     "graceful-pause",
-    "enqueue",
-    "remove",
     "enqueue",
   ]);
 });

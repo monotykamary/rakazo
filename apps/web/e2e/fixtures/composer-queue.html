@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Composer queue</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      import { i18n } from "@lingui/core";
+      import { I18nProvider } from "@lingui/react";
+      import { createElement as h, useRef, useState } from "react";
+      import { createRoot } from "react-dom/client";
+      import { rpc } from "../../src/lib/rpc.ts";
+      import { enqueueQueueMessage } from "../../src/lib/use-queue.ts";
+      import { Composer } from "../../src/pages/Shell.tsx";
+      import "../../src/styles.css";
+
+      window.__composerEvents = [];
+
+      function Fixture() {
+        const fileInputRef = useRef(null);
+        const params = new URLSearchParams(location.search);
+        const group = params.has("group");
+        const members = group
+          ? [{ botId: "alpha", name: "Alpha" }, { botId: "beta", name: "Beta" }]
+          : [{ botId: "bot", name: "Fixture Bot" }];
+        const [error, setError] = useState(null);
+        const [pending, setPending] = useState(() =>
+          params.has("attachment")
+            ? [{
+                id: "parked-attachment",
+                threadKey: "thread",
+                file: new File(["fixture"], "parked.txt", { type: "text/plain" }),
+              }]
+            : [],
+        );
+        return h(
+          "main",
+          { className: "flex h-dvh flex-col bg-background text-foreground" },
+          h("div", { className: "min-h-0 flex-1 overflow-auto p-6" },
+            h("div", { className: "mx-auto max-w-3xl space-y-4" },
+              h("div", { className: "h-32 rounded-2xl border border-border bg-muted/30" }),
+              h("div", { className: "h-24 rounded-2xl border border-border bg-muted/30" }),
+            ),
+          ),
+          h(Composer, {
+            activeName: "Fixture Bot",
+            running: new URLSearchParams(location.search).has("running"),
+            pendingAttachments: pending,
+            attachmentNotice: null,
+            sendError: error,
+            runError: null,
+            runErrorId: null,
+            onRunErrorPresented: () => {},
+            onDismissError: () => setError(null),
+            sending: false,
+            fileInputRef,
+            onAttachmentPick: () => {},
+            onRemoveAttachment: (attachment) =>
+              setPending((current) => current.filter((item) => item.id !== attachment.id)),
+            onSend: async (text, mentions = []) => {
+              window.__composerEvents.push({ type: "send", text, mentions });
+              if (params.has("failSend")) {
+                setError("Send failed");
+                return false;
+              }
+              return true;
+            },
+            onQueue: async (mode, text, mentions, botId) => {
+              window.__composerEvents.push({ type: mode, text, mentions, botId });
+              if (group && !botId) {
+                setError("Choose a bot before queueing");
+                return false;
+              }
+              try {
+                await enqueueQueueMessage(
+                  rpc.queue,
+                  { threadId: "thread", botId: botId ?? "bot" },
+                  { lane: mode, text },
+                );
+                return true;
+              } catch (cause) {
+                setError(cause instanceof Error ? cause.message : "Could not update queue");
+                return false;
+              }
+            },
+            queueThreadId: "thread",
+            queueMembers: members,
+            onQueueOpenChange: () => {},
+            onStop: async () => {},
+            mentionTargets: [],
+            agentSkills: [],
+          }),
+        );
+      }
+
+      i18n.load("en", {});
+      i18n.activate("en");
+      createRoot(document.getElementById("root")).render(
+        h(I18nProvider, { i18n }, h(Fixture)),
+      );
+    </script>
+  </body>
+</html>

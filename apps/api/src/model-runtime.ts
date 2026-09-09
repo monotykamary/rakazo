@@ -71,7 +71,9 @@ export async function readPiModelRuntime(input: {
     return unavailable(current, selection, "PI_SCOPE_UNSUPPORTED");
   }
   try {
-    const profile = await input.models.read(input.signal);
+    const profile = input.scope.refresh
+      ? await input.models.read(input.signal, undefined, { refresh: true })
+      : await input.models.read(input.signal);
     return {
       ...profile,
       current,

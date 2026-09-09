@@ -1,4 +1,4 @@
-import { PiModelRuntimeError } from "@rakazo/adapters";
+import { LocalPiModelRuntimeService, PiModelRuntimeError } from "@rakazo/adapters";
 import type { Actor } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
@@ -19,15 +19,22 @@ const profile = {
   profileDefault: { provider: "extension", modelId: "model", thinkingLevel: "off" as const },
 };
 
-function prisma(state: unknown) {
+function prisma(
+  state: unknown,
+  botModel: { provider: string | null; modelId: string | null; thinkingLevel: string | null } = {
+    provider: null,
+    modelId: null,
+    thinkingLevel: null,
+  },
+) {
   return {
     thread: { findFirst: vi.fn(async () => ({ id: "thread" })) },
     bot: {
       findFirst: vi.fn(async () => ({
         id: "bot",
-        modelProvider: null,
-        modelId: null,
-        thinkingLevel: null,
+        modelProvider: botModel.provider,
+        modelId: botModel.modelId,
+        thinkingLevel: botModel.thinkingLevel,
         thread: { id: "thread" },
       })),
     },
@@ -139,6 +146,65 @@ describe("readPiModelRuntime", () => {
         models: { read, validate: vi.fn(), supportsCheckpoint: vi.fn(() => false) },
       }),
     ).resolves.toMatchObject({ ...profile, availability: { status: "available", error: null } });
+    expect(read).toHaveBeenCalledOnce();
+  });
+
+  it("forwards explicit refresh without changing ordinary read calls", async () => {
+    const read = vi.fn(async () => profile);
+    const signal = new AbortController().signal;
+    const models = { read, validate: vi.fn() };
+
+    await readPiModelRuntime({
+      prisma: prisma({}),
+      actor,
+      scope: { refresh: true },
+      signal,
+      models,
+    });
+    expect(read).toHaveBeenLastCalledWith(signal, undefined, { refresh: true });
+
+    await readPiModelRuntime({ prisma: prisma({}), actor, scope: {}, signal, models });
+    expect(read).toHaveBeenLastCalledWith(signal);
+  });
+
+  it("reads bot selection state afresh while reusing the runtime catalog", async () => {
+    const botModel = { provider: "extension", modelId: "first", thinkingLevel: null };
+    const db = prisma({}, botModel);
+    const discover = vi.fn(async () => profile);
+    let cachedProfile: typeof profile | undefined;
+    const read = vi.fn(async () => (cachedProfile ??= await discover()));
+    const models = { read, validate: vi.fn(), supportsCheckpoint: vi.fn(() => true) };
+    const scope = { botId: "bot", threadId: "thread" };
+
+    const first = await readPiModelRuntime({ prisma: db, actor, scope, models });
+    botModel.modelId = "second";
+    const second = await readPiModelRuntime({ prisma: db, actor, scope, models });
+
+    expect(first.selection?.requested?.modelId).toBe("first");
+    expect(second.selection?.requested?.modelId).toBe("second");
+    expect(first.catalog).toEqual(second.catalog);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(discover).toHaveBeenCalledOnce();
+    expect(db.runtimeSession.findUnique).toHaveBeenCalledTimes(4);
+  });
+
+  it("offers the configured profile to an authorized bot before its first session", async () => {
+    const models = new LocalPiModelRuntimeService({
+      cwd: "/fixture",
+      sessionDir: "/fixture/sessions",
+    });
+    const read = vi.spyOn(models, "read").mockResolvedValue(profile);
+    const result = await readPiModelRuntime({
+      prisma: prisma(null),
+      actor,
+      scope: { botId: "bot" },
+      models,
+    });
+    expect(result).toMatchObject({
+      ...profile,
+      current: null,
+      availability: { status: "available", error: null },
+    });
     expect(read).toHaveBeenCalledOnce();
   });
 

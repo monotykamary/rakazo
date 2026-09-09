@@ -7,10 +7,12 @@ import {
   ModelSelectionStatusSchema,
 } from "./model-selection.js";
 
+const ModelRuntimeRefreshSchema = z.object({ refresh: z.boolean().optional() });
+
 export const ModelRuntimeScopeSchema = z.union([
-  z.object({}).strict(),
-  z.object({ botId: Id }).strict(),
-  ModelSelectionScopeSchema,
+  ModelRuntimeRefreshSchema.strict(),
+  ModelRuntimeRefreshSchema.extend({ botId: Id }).strict(),
+  ModelSelectionScopeSchema.extend({ refresh: z.boolean().optional() }).strict(),
 ]);
 export type ModelRuntimeScope = z.infer<typeof ModelRuntimeScopeSchema>;
 

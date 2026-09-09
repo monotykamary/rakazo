@@ -17,6 +17,9 @@ import { record } from "./pi-rpc-protocol.js";
 import { JsonPeer } from "./pi-rpc-transport.js";
 
 const PROBE_TIMEOUT_MS = 15_000;
+// Cache only completed public profiles; refresh and failures discard prior success.
+const PROFILE_CACHE_TTL_MS = 5 * 60_000;
+const MAX_PROFILE_CACHE_ENTRIES = 16;
 const MAX_PUBLIC_LABEL = 500;
 
 export type PiModelRuntimeErrorCode =
@@ -44,7 +47,11 @@ export type PiModelProfile = {
 };
 
 export interface PiModelRuntimeService {
-  read(signal?: AbortSignal, cwd?: string): Promise<PiModelProfile>;
+  read(
+    signal?: AbortSignal,
+    cwd?: string,
+    options?: { refresh?: boolean },
+  ): Promise<PiModelProfile>;
   validate(selection: ModelSelection, signal?: AbortSignal, cwd?: string): Promise<void>;
   supportsCheckpoint?(checkpoint: unknown): boolean;
 }
@@ -110,10 +117,44 @@ export function unavailablePiModelRuntime(reason: string): PiModelRuntimeService
   };
 }
 
+type ProfileCacheEntry = {
+  loading: Promise<PiModelProfile>;
+  profile?: PiModelProfile;
+  expiresAt?: number;
+};
+
+function cloneProfile(profile: PiModelProfile): PiModelProfile {
+  return {
+    catalog: profile.catalog.map((entry) => ({
+      ...entry,
+      thinkingLevels: [...(entry.thinkingLevels ?? [])],
+    })),
+    profileDefault: profile.profileDefault ? { ...profile.profileDefault } : null,
+  };
+}
+
+async function waitForCaller<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return operation;
+  signal.throwIfAborted();
+  let onAbort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(signal.reason);
+        signal.addEventListener("abort", onAbort, { once: true });
+      }),
+    ]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
 export class LocalPiModelRuntimeService implements PiModelRuntimeService {
   private readonly command: string;
   private readonly cwd: string;
   private readonly cwdHash: string;
+  private readonly profileCache = new Map<string, ProfileCacheEntry>();
 
   constructor(options: LocalPiRuntimeOptions) {
     if (!options.cwd || !isAbsolute(options.cwd)) throw new Error("Local Pi cwd must be absolute");
@@ -127,11 +168,58 @@ export class LocalPiModelRuntimeService implements PiModelRuntimeService {
   }
 
   supportsCheckpoint(checkpoint: unknown): boolean {
+    if (!checkpoint || typeof checkpoint !== "object" || Array.isArray(checkpoint)) return false;
     const value = record(checkpoint);
+    // A new authorized bot has not created a session yet; its initial catalog is
+    // the configured root profile. Existing or malformed checkpoints never fall back.
+    if (!Object.keys(value).length) return true;
     return value.runtime === "pi-local" && value.cwdHash === this.cwdHash;
   }
 
-  async read(signal?: AbortSignal, cwd?: string): Promise<PiModelProfile> {
+  async read(
+    signal?: AbortSignal,
+    cwd?: string,
+    options?: { refresh?: boolean },
+  ): Promise<PiModelProfile> {
+    signal?.throwIfAborted();
+    const probeCwd = await this.probeCwd(cwd).catch((cause: unknown) => {
+      if (signal?.aborted) throw signal.reason;
+      throw new PiModelRuntimeError("PI_WORKSPACE_UNAVAILABLE", { cause });
+    });
+    signal?.throwIfAborted();
+
+    const cached = this.profileCache.get(probeCwd);
+    if (cached?.profile && cached.expiresAt !== undefined && cached.expiresAt > Date.now()) {
+      if (!options?.refresh) {
+        this.touchProfileCache(probeCwd, cached);
+        return cloneProfile(cached.profile);
+      }
+      this.profileCache.delete(probeCwd);
+    } else if (cached) {
+      if (!cached.profile) {
+        this.touchProfileCache(probeCwd, cached);
+        return cloneProfile(await waitForCaller(cached.loading, signal));
+      }
+      this.profileCache.delete(probeCwd);
+    }
+
+    const loading = this.discoverProfile(probeCwd);
+    const entry: ProfileCacheEntry = { loading };
+    this.setProfileCache(probeCwd, entry);
+    void loading.then(
+      (profile) => {
+        if (this.profileCache.get(probeCwd) !== entry) return;
+        entry.profile = cloneProfile(profile);
+        entry.expiresAt = Date.now() + PROFILE_CACHE_TTL_MS;
+      },
+      () => {
+        if (this.profileCache.get(probeCwd) === entry) this.profileCache.delete(probeCwd);
+      },
+    );
+    return cloneProfile(await waitForCaller(loading, signal));
+  }
+
+  private discoverProfile(cwd: string): Promise<PiModelProfile> {
     return this.probe(
       async (peer, probeSignal) => {
         const [availableValue, stateValue] = await Promise.all([
@@ -171,9 +259,23 @@ export class LocalPiModelRuntimeService implements PiModelRuntimeService {
         }
         return { catalog, profileDefault };
       },
-      signal,
+      undefined,
       cwd,
     );
+  }
+
+  private touchProfileCache(cwd: string, entry: ProfileCacheEntry): void {
+    this.profileCache.delete(cwd);
+    this.profileCache.set(cwd, entry);
+  }
+
+  private setProfileCache(cwd: string, entry: ProfileCacheEntry): void {
+    this.profileCache.set(cwd, entry);
+    while (this.profileCache.size > MAX_PROFILE_CACHE_ENTRIES) {
+      const oldest = this.profileCache.keys().next().value;
+      if (oldest === undefined) break;
+      this.profileCache.delete(oldest);
+    }
   }
 
   async validate(selection: ModelSelection, signal?: AbortSignal, cwd?: string): Promise<void> {

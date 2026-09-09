@@ -3,7 +3,11 @@ import type { PrismaClient } from "@rakazo/db";
 import { expect, it, vi } from "vitest";
 import { createRouter, type RouterDeps } from "./router.js";
 
-const queueMocks = vi.hoisted(() => ({ mutate: vi.fn(), wake: vi.fn(), list: vi.fn() }));
+const queueMocks = vi.hoisted(() => ({
+  mutate: vi.fn(),
+  wake: vi.fn(),
+  list: vi.fn(),
+}));
 vi.mock("@rakazo/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@rakazo/db")>()),
   mutatePremoveQueue: queueMocks.mutate,
@@ -70,6 +74,89 @@ it("wakes an explicit drain even while its public snapshot stays paused", async 
     jobs,
   );
   expect(jobs.enqueue).toHaveBeenCalledOnce();
+});
+
+it("resolves queue artifacts for the authorized direct or per-bot group scope", async () => {
+  const { resolveQueueAttachments } = await import("./artifacts.js");
+  const actor = { userId: "user", spaceId: "space" } as never;
+  const artifact = {
+    id: "artifact",
+    name: "brief.pdf",
+    mimeType: "application/pdf",
+    size: 42,
+    storageKey: "fake/artifact",
+  };
+  const directPrisma = {
+    thread: {
+      findFirst: vi.fn().mockResolvedValue({ botId: "bot", groupId: null, group: null }),
+    },
+    artifact: { findMany: vi.fn().mockResolvedValue([artifact]) },
+  };
+  const direct = await resolveQueueAttachments(
+    { prisma: directPrisma as never },
+    actor,
+    { threadId: "thread", botId: "bot" },
+    ["artifact"],
+  );
+  expect(direct.blocks).toEqual([
+    {
+      kind: "file",
+      artifactId: "artifact",
+      name: "brief.pdf",
+      mimeType: "application/pdf",
+      size: 42,
+    },
+  ]);
+  expect(directPrisma.artifact.findMany).toHaveBeenCalledWith({
+    where: expect.objectContaining({
+      botId: "bot",
+      groupId: null,
+      spaceId: "space",
+      userId: "user",
+    }),
+  });
+
+  const groupPrisma = {
+    thread: {
+      findFirst: vi.fn().mockResolvedValue({
+        botId: null,
+        groupId: "group",
+        group: { members: [{ botId: "bot" }, { botId: "peer" }] },
+      }),
+    },
+    artifact: { findMany: vi.fn().mockResolvedValue([artifact]) },
+  };
+  await resolveQueueAttachments(
+    { prisma: groupPrisma as never },
+    actor,
+    { threadId: "group-thread", botId: "bot" },
+    ["artifact"],
+  );
+  expect(groupPrisma.artifact.findMany).toHaveBeenCalledWith({
+    where: expect.objectContaining({
+      spaceId: "space",
+      userId: "user",
+      OR: [{ groupId: "group" }, { groupId: null, botId: { in: ["bot", "peer"] } }],
+    }),
+  });
+});
+
+it("rejects a queue artifact that the authorized scope cannot resolve", async () => {
+  const { resolveQueueAttachments } = await import("./artifacts.js");
+  const prisma = {
+    thread: {
+      findFirst: vi.fn().mockResolvedValue({ botId: "bot", groupId: null, group: null }),
+    },
+    artifact: { findMany: vi.fn().mockResolvedValue([]) },
+  };
+  await expect(
+    resolveQueueAttachments(
+      { prisma: prisma as never },
+      { userId: "user", spaceId: "space" } as never,
+      { threadId: "thread", botId: "bot" },
+      ["foreign"],
+    ),
+  ).rejects.toMatchObject({ name: "IsolationError" });
 });
 
 it("queue and execution routes require authentication before database access", async () => {

@@ -22,6 +22,23 @@ export const DELEGATION_TOOL_NAMES = new Set([
 ]);
 
 export const builtinAgentTools: ConnectorTool[] = [
+  {
+    name: "draft_message",
+    description:
+      "Draft an outgoing email for the user to edit, send, or discard. This never sends immediately and requires explicit user approval. Requires exactly one supported connected sending account.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        to: { type: "array", items: { type: "string" }, maxItems: 50 },
+        cc: { type: "array", items: { type: "string" }, maxItems: 50 },
+        bcc: { type: "array", items: { type: "string" }, maxItems: 50 },
+        subject: { type: "string", maxLength: 2000 },
+        body: { type: "string", maxLength: 100000 },
+      },
+      required: ["to", "body"],
+      additionalProperties: false,
+    },
+  },
   MANAGE_OFFICE_TOOL,
   {
     name: "get_bot_context",

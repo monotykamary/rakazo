@@ -226,6 +226,54 @@ export async function resolveGroupSendAttachments(
   return toAttachmentResolution(ids, rows);
 }
 
+export async function resolveQueueAttachments(
+  deps: { prisma: Pick<PrismaClient, "thread" | "artifact"> },
+  actor: Actor,
+  scope: { threadId: string; botId: string },
+  artifactIds: string[] | undefined,
+) {
+  const ids = normalizeAttachmentIds(artifactIds);
+  const thread = await deps.prisma.thread.findFirst({
+    where: {
+      id: scope.threadId,
+      spaceId: actor.spaceId,
+      userId: actor.userId,
+      OR: [
+        { botId: scope.botId },
+        {
+          group: {
+            archivedAt: null,
+            members: { some: { botId: scope.botId } },
+          },
+        },
+      ],
+    },
+    select: {
+      botId: true,
+      groupId: true,
+      group: {
+        select: {
+          members: {
+            where: { bot: { archivedAt: null } },
+            select: { botId: true },
+          },
+        },
+      },
+    },
+  });
+  if (!thread) throw new IsolationError();
+  if (thread.botId === scope.botId) return resolveSendAttachments(deps, actor, scope.botId, ids);
+  if (thread.groupId && thread.group)
+    return resolveGroupSendAttachments(
+      deps,
+      actor,
+      thread.groupId,
+      thread.group.members.map((member) => member.botId),
+      ids,
+    );
+  throw new IsolationError();
+}
+
 export function buildUserMessageBlocks(
   text: string | undefined,
   attachmentBlocks: ReturnType<typeof messageBlockForArtifact>[],

@@ -32,7 +32,7 @@ const APPROVAL_REQUIRED_BUILTIN_TOOLS = new Set([
   "cloud_agent_reply",
   "cloud_agent_cancel",
 ]);
-const EXPLICIT_APPROVAL_BUILTIN_TOOLS = new Set(["create_space"]);
+const EXPLICIT_APPROVAL_BUILTIN_TOOLS = new Set(["create_space", "draft_message"]);
 
 const UNATTENDED_SAFE_BUILTIN_TOOLS = new Set([
   "get_bot_context",
@@ -247,10 +247,14 @@ export function isSecretAskBlock(block: {
 export function isApprovalAskBlock(block: {
   kind: string;
   approvalEffectId?: string;
+  draft?: unknown;
   actions?: Array<{ id: string; label: string }>;
 }): boolean {
   if (block.kind !== "ask" || !block.approvalEffectId || !block.actions?.length) return false;
   const actionIds = new Set(block.actions.map((action) => action.id));
+  if (block.draft) {
+    return actionIds.size === 2 && actionIds.has("send") && actionIds.has("discard");
+  }
   return (
     actionIds.has("allow") &&
     actionIds.has("deny") &&

@@ -81,6 +81,7 @@ export * from "./office-move-intents.js";
 export * from "./office-tools.js";
 export * from "./openai-compatible-url.js";
 export * from "./openai-voice.js";
+export * from "./outgoing-message-draft.js";
 export * from "./page-browser-session.js";
 export * from "./pi-credentials.js";
 export * from "./pi-local-runtime.js";

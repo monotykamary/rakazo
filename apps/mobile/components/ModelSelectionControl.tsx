@@ -26,8 +26,10 @@ export function ModelSelectionControl({
   worker,
   initial,
   onSaved,
+  compact = false,
 }: {
   botId: string;
+  compact?: boolean;
   worker?: { threadId: string; participantId?: string };
   initial?: ModelSelection | null;
   onSaved?: (selection: ModelSelection | null) => void;
@@ -47,6 +49,7 @@ export function ModelSelectionControl({
   const [query, setQuery] = useState("");
   const [current, setCurrent] = useState<ModelSelection | null>(null);
   const [revision, setRevision] = useState(0);
+  const forceRefresh = useRef(false);
   const selected = options.find((option) => option.key === key);
   const stale = parseModelOptionKey(key);
   const generation = useRef(0);
@@ -80,7 +83,7 @@ export function ModelSelectionControl({
     setQuery("");
   }, [botId, worker?.threadId, worker?.participantId]);
   useEffect(() => {
-    if (!open) return;
+    if (!open && !compact) return;
     let cancelled = false;
     setReady(false);
     let loading = false;
@@ -89,7 +92,13 @@ export function ModelSelectionControl({
       loading = true;
       const request = generation.current;
       try {
-        const next = await rpc<PiModelSnapshot>("models/runtime", { botId, ...worker });
+        const force = forceRefresh.current;
+        forceRefresh.current = false;
+        const next = await rpc<PiModelSnapshot>("models/runtime", {
+          botId,
+          ...worker,
+          ...(force ? { refresh: true } : {}),
+        });
         if (cancelled || request !== generation.current || saving.current) return;
         const available = next.availability.status === "available";
         if (available)
@@ -126,7 +135,7 @@ export function ModelSelectionControl({
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, [open, botId, worker?.threadId, worker?.participantId, revision, status?.status]);
+  }, [open, compact, botId, worker?.threadId, worker?.participantId, revision, status?.status]);
   async function save(reset = false) {
     if (
       busy ||
@@ -188,10 +197,19 @@ export function ModelSelectionControl({
   }
   return (
     <>
-      <Pressable accessibilityRole="button" onPress={() => setOpen(true)} style={styles.button}>
-        <Text style={{ color: tokens.foreground }}>
-          {t("Model")}
-          {initial ? ` · ${initial.modelId}` : ""}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={t("Model")}
+        onPress={() => setOpen(true)}
+        style={[
+          styles.button,
+          compact && { maxWidth: 120, minHeight: 44, justifyContent: "center" },
+        ]}
+      >
+        <Text numberOfLines={1} style={{ color: tokens.foreground }}>
+          {compact
+            ? current?.modelId || initial?.modelId || t("Model")
+            : `${t("Model")}${initial ? ` · ${initial.modelId}` : ""}`}
         </Text>
       </Pressable>
       <Modal
@@ -238,7 +256,10 @@ export function ModelSelectionControl({
           <Pressable
             accessibilityRole="button"
             disabled={busy}
-            onPress={() => setRevision((value) => value + 1)}
+            onPress={() => {
+              forceRefresh.current = true;
+              setRevision((value) => value + 1);
+            }}
             style={styles.button}
           >
             <Text style={{ color: tokens.foreground }}>{t("Refresh")}</Text>

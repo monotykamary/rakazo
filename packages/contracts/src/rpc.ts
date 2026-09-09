@@ -71,7 +71,11 @@ import {
   VoiceInfoSchema,
   VoiceStatusSchema,
 } from "./domain.js";
-import { ProductEventSchema } from "./events.js";
+import {
+  OutgoingDraftFieldsSchema,
+  OutgoingMessageDraftSchema,
+  ProductEventSchema,
+} from "./events.js";
 import { ExecutionInspectInputSchema, ExecutionInspectionSchema } from "./execution.js";
 import { Id, IsoDate } from "./ids.js";
 import { MachineAssignmentSchema, MachinePairingSchema, MachineSchema } from "./machines.js";
@@ -381,9 +385,24 @@ export const appContract = {
           runId: Id,
           messageId: Id,
           answer: z.string().min(1),
+          expectedDraft: z
+            .object({ revision: z.number().int().positive(), hash: z.string().length(64) })
+            .optional(),
         }),
       )
       .output(z.object({ ok: z.literal(true) })),
+    updateDraft: oc
+      .input(
+        threadTarget.safeExtend({
+          runId: Id,
+          messageId: Id,
+          approvalEffectId: Id,
+          expectedRevision: z.number().int().positive(),
+          expectedHash: z.string().length(64),
+          fields: OutgoingDraftFieldsSchema,
+        }),
+      )
+      .output(z.object({ draft: OutgoingMessageDraftSchema })),
     markRead: oc.input(threadTarget).output(z.object({ ok: z.literal(true) })),
     markUnread: oc.input(threadTarget).output(z.object({ ok: z.literal(true) })),
   },

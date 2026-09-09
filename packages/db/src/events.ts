@@ -13,6 +13,11 @@ import {
   routineChangeBlock,
   sanitizeJsonValue,
 } from "@rakazo/core";
+import {
+  outgoingDraftHash,
+  parseOutgoingDraftRequest,
+  revisedOutgoingDraftRequest,
+} from "@rakazo/core/node/outgoing-message-draft";
 import { getLogger } from "@rakazo/logging";
 import { cancelRunsInTransaction } from "./cancel-runs.js";
 import type { Prisma, PrismaClient } from "./client.js";
@@ -187,7 +192,29 @@ export interface AnswerRunInput {
   messageId: string;
   answeredByUserId: string;
   answer: string;
+  expectedDraft?: { revision: number; hash: string };
 }
+
+export interface UpdateOutgoingDraftInput {
+  spaceId: string;
+  threadId: string;
+  runId: string;
+  messageId: string;
+  approvalEffectId: string;
+  answeredByUserId: string;
+  expectedRevision: number;
+  expectedHash: string;
+  fields: import("@rakazo/contracts").OutgoingDraftFields;
+}
+
+export type UpdateOutgoingDraftResult =
+  | {
+      kind: "updated";
+      draft: import("@rakazo/contracts").OutgoingMessageDraft;
+      eventSeq: number;
+    }
+  | { kind: "forbidden" }
+  | { kind: "conflict" };
 
 export interface SendUserMessageInput {
   spaceId: string;
@@ -531,6 +558,102 @@ export async function claimSteering(
   });
 }
 
+export async function updateOutgoingDraft(
+  prisma: PrismaClient,
+  input: UpdateOutgoingDraftInput,
+): Promise<UpdateOutgoingDraftResult> {
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    await tx.$queryRaw`SELECT id FROM threads WHERE id = ${input.threadId} FOR UPDATE`;
+    const run = await tx.run.findFirst({
+      where: {
+        id: input.runId,
+        spaceId: input.spaceId,
+        threadId: input.threadId,
+      },
+      select: { botId: true, userId: true, status: true },
+    });
+    if (run?.status !== "waiting_input") return { kind: "conflict" as const };
+    if (run.userId !== input.answeredByUserId) return { kind: "forbidden" as const };
+    const message = await tx.message.findFirst({
+      where: {
+        id: input.messageId,
+        threadId: input.threadId,
+        runId: input.runId,
+        role: "bot",
+      },
+    });
+    const parsedBlocks = MessageBlockSchema.array().safeParse(message?.blocks);
+    if (!message || !parsedBlocks.success) return { kind: "conflict" as const };
+    const ask = parsedBlocks.data.find(
+      (block) =>
+        block.kind === "ask" &&
+        block.status !== "answered" &&
+        block.approvalEffectId === input.approvalEffectId &&
+        block.draft?.kind === "outgoing_message",
+    );
+    if (ask?.kind !== "ask" || !ask.draft) return { kind: "conflict" as const };
+    if (ask.draft.revision !== input.expectedRevision || ask.draft.hash !== input.expectedHash)
+      return { kind: "conflict" as const };
+    const effect = await tx.externalEffect.findFirst({
+      where: {
+        id: input.approvalEffectId,
+        spaceId: input.spaceId,
+        runId: input.runId,
+        status: "intended",
+      },
+    });
+    const stored = effect ? parseOutgoingDraftRequest(effect.request) : undefined;
+    if (
+      !effect ||
+      !stored ||
+      stored.draft.ownerUserId !== input.answeredByUserId ||
+      stored.draft.revision !== input.expectedRevision ||
+      outgoingDraftHash(effect.request, stored.draft.revision) !== input.expectedHash
+    )
+      return { kind: "conflict" as const };
+    const connection = await tx.connection.findFirst({
+      where: {
+        id: stored.route.resourceId,
+        spaceId: input.spaceId,
+        userId: input.answeredByUserId,
+        connectorId: stored.route.connectorId,
+        status: "connected",
+      },
+      select: { id: true },
+    });
+    if (!connection) return { kind: "conflict" as const };
+    let revised: ReturnType<typeof revisedOutgoingDraftRequest>;
+    try {
+      revised = revisedOutgoingDraftRequest(input.runId, effect.kind, effect.request, input.fields);
+    } catch {
+      return { kind: "conflict" as const };
+    }
+    const updatedEffect = await tx.externalEffect.updateMany({
+      where: { id: effect.id, status: "intended", idempotencyKey: effect.idempotencyKey },
+      data: {
+        request: revised.request as Prisma.InputJsonValue,
+        idempotencyKey: revised.idempotencyKey,
+      },
+    });
+    if (updatedEffect.count !== 1) return { kind: "conflict" as const };
+    const draft = { ...revised.draft, canApprove: true };
+    const blocks = parsedBlocks.data.map((block) => (block === ask ? { ...block, draft } : block));
+    await tx.message.update({
+      where: { id: message.id },
+      data: { blocks: blocks as Prisma.InputJsonValue },
+    });
+    const event = await appendEventInTransaction(tx, {
+      spaceId: input.spaceId,
+      threadId: input.threadId,
+      botId: run.botId,
+      type: "thread.message.updated",
+      runId: input.runId,
+      payload: { messageId: message.id, role: "bot", blocks },
+    });
+    return { kind: "updated" as const, draft, eventSeq: event.seq };
+  });
+}
+
 export async function answerRunInput(
   prisma: PrismaClient,
   input: AnswerRunInput,
@@ -566,6 +689,7 @@ export async function answerRunInput(
     );
     if (pendingAsk?.kind !== "ask") return null;
     const approvalAsk = isApprovalAskBlock(pendingAsk);
+    const outgoingDraft = pendingAsk.draft;
     const secretAsk = isSecretAskBlock(pendingAsk);
     const choiceAsk = !approvalAsk && !secretAsk && Boolean(pendingAsk.actions?.length);
     const selectedChoice = choiceAsk
@@ -574,7 +698,7 @@ export async function answerRunInput(
     if (choiceAsk && !selectedChoice) return null;
     if (secretAsk && !runSecretWriter) return null;
     if (secretAsk && pendingAsk.credential && run.userId !== input.answeredByUserId) return null;
-    let approvalEffect: { id: string; kind: string } | null = null;
+    let approvalEffect: { id: string; kind: string; request: Prisma.JsonValue } | null = null;
     let approvalUserId: string | null = null;
 
     if (approvalAsk) {
@@ -588,6 +712,35 @@ export async function answerRunInput(
         },
       });
       if (!approvalEffect) return null;
+      if (outgoingDraft) {
+        if (run.userId !== input.answeredByUserId) return null;
+        if (input.answer !== "send" && input.answer !== "discard") return null;
+        if (
+          !input.expectedDraft ||
+          input.expectedDraft.revision !== outgoingDraft.revision ||
+          input.expectedDraft.hash !== outgoingDraft.hash
+        )
+          return null;
+        const stored = parseOutgoingDraftRequest(approvalEffect.request);
+        if (
+          !stored ||
+          stored.draft.ownerUserId !== input.answeredByUserId ||
+          stored.draft.revision !== outgoingDraft.revision ||
+          outgoingDraftHash(approvalEffect.request, stored.draft.revision) !== outgoingDraft.hash
+        )
+          return null;
+        const connection = await tx.connection.findFirst({
+          where: {
+            id: stored.route.resourceId,
+            spaceId: input.spaceId,
+            userId: input.answeredByUserId,
+            connectorId: stored.route.connectorId,
+            status: "connected",
+          },
+          select: { id: true },
+        });
+        if (!connection) return null;
+      }
       if (input.answer === "always") {
         if (run.userId !== input.answeredByUserId) return null;
         approvalUserId = input.answeredByUserId;
@@ -609,7 +762,9 @@ export async function answerRunInput(
     if (queued.count !== 1) return null;
 
     if (approvalAsk) {
-      const allowed = input.answer === "allow" || input.answer === "always";
+      const allowed = outgoingDraft
+        ? input.answer === "send"
+        : input.answer === "allow" || input.answer === "always";
       await tx.externalEffect.update({
         where: { id: approvalEffect!.id },
         data: { status: allowed ? "approved" : "denied" },
@@ -678,6 +833,15 @@ export async function answerRunInput(
             ...block,
             status: "answered" as const,
             answer: secretAsk ? "" : input.answer,
+            ...(outgoingDraft
+              ? {
+                  draft: {
+                    ...outgoingDraft,
+                    canApprove: false,
+                    status: input.answer === "send" ? ("sending" as const) : ("discarded" as const),
+                  },
+                }
+              : {}),
           }
         : block,
     );
@@ -944,6 +1108,93 @@ export async function finalizeComputerControlRelease(
   return { runId: committed.runId };
 }
 
+export async function settleOutgoingDraftMessage(
+  prisma: PrismaClient,
+  input: {
+    effectId: string;
+    status: "sent" | "failed" | "unavailable" | "uncertain";
+    error?: string;
+  },
+  realtime?: RealtimeFanout,
+): Promise<{ threadId: string; eventSeq: number } | false> {
+  const committed = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const effect = await tx.externalEffect.findUnique({
+      where: { id: input.effectId },
+      include: { run: { select: { threadId: true, botId: true } } },
+    });
+    if (!effect || !parseOutgoingDraftRequest(effect.request)) return null;
+    await tx.$queryRaw`SELECT id FROM threads WHERE id = ${effect.run.threadId} FOR UPDATE`;
+    return updateOutgoingDraftCardInTransaction(tx, {
+      effectId: effect.id,
+      spaceId: effect.spaceId,
+      threadId: effect.run.threadId,
+      runId: effect.runId,
+      botId: effect.run.botId,
+      status: input.status,
+      error: input.error,
+    });
+  });
+  if (!committed) return false;
+  await notifyRealtime(realtime, committed.threadId, committed.seq);
+  return { threadId: committed.threadId, eventSeq: committed.seq };
+}
+
+async function updateOutgoingDraftCardInTransaction(
+  tx: Prisma.TransactionClient,
+  input: {
+    effectId: string;
+    spaceId: string;
+    threadId: string;
+    runId: string;
+    botId: string;
+    status: "sent" | "failed" | "unavailable" | "uncertain";
+    error?: string;
+  },
+): Promise<{ threadId: string; seq: number } | null> {
+  const messages = await tx.message.findMany({
+    where: { threadId: input.threadId, runId: input.runId, role: "bot" },
+    orderBy: { seq: "desc" },
+  });
+  for (const message of messages) {
+    const parsed = MessageBlockSchema.array().safeParse(message.blocks);
+    if (!parsed.success) continue;
+    const ask = parsed.data.find(
+      (block) =>
+        block.kind === "ask" &&
+        block.approvalEffectId === input.effectId &&
+        block.draft?.kind === "outgoing_message",
+    );
+    if (ask?.kind !== "ask" || !ask.draft) continue;
+    const blocks = parsed.data.map((block) =>
+      block === ask
+        ? {
+            ...block,
+            draft: {
+              ...ask.draft,
+              canApprove: false,
+              status: input.status,
+              ...(input.error ? { error: input.error } : {}),
+            },
+          }
+        : block,
+    );
+    await tx.message.update({
+      where: { id: message.id },
+      data: { blocks: blocks as Prisma.InputJsonValue },
+    });
+    const event = await appendEventInTransaction(tx, {
+      spaceId: input.spaceId,
+      threadId: input.threadId,
+      botId: input.botId,
+      type: "thread.message.updated",
+      runId: input.runId,
+      payload: { messageId: message.id, role: "bot", blocks },
+    });
+    return { threadId: event.threadId, seq: event.seq };
+  }
+  return null;
+}
+
 export async function appendEvent(
   prisma: PrismaClient,
   input: AppendEventInput,
@@ -1046,6 +1297,35 @@ async function finalizeRunOnce(
       data: { status: input.outcome },
     });
     if (task.count !== 1) throw new Error("Run task was not available to finalize");
+
+    if (input.outcome === "failed" && tx.externalEffect) {
+      const pendingDrafts = await tx.externalEffect.findMany({
+        where: { runId: input.runId, status: { in: ["approved", "executing"] } },
+      });
+      for (const effect of pendingDrafts) {
+        if (!parseOutgoingDraftRequest(effect.request)) continue;
+        const uncertain = effect.status === "executing";
+        const error = uncertain
+          ? "Delivery was interrupted, so the outcome is unknown."
+          : "The sending integration became unavailable before delivery.";
+        await tx.externalEffect.updateMany({
+          where: { id: effect.id, status: effect.status },
+          data: {
+            status: uncertain ? "uncertain" : "denied",
+            result: { error, ...(uncertain ? { uncertain: true } : {}) },
+          },
+        });
+        await updateOutgoingDraftCardInTransaction(tx, {
+          effectId: effect.id,
+          spaceId: input.spaceId,
+          threadId: input.threadId,
+          runId: input.runId,
+          botId: input.botId,
+          status: uncertain ? "uncertain" : "unavailable",
+          error,
+        });
+      }
+    }
 
     if (input.outcome === "completed") {
       const completedBlocks = completedRunBlocks(input.blocks, writableRun?.startedAt ?? null, now);

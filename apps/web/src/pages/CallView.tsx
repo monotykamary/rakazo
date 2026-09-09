@@ -42,6 +42,16 @@ export function CallView({
   askPromptRef.current = t`Say yes or no, or answer in a sentence.`;
   const secretPromptRef = useRef(t`Hang up first, then enter the code on screen.`);
   secretPromptRef.current = t`Hang up first, then enter the code on screen.`;
+  const draftPromptRef = useRef(t`Review the draft in chat.`);
+  draftPromptRef.current = t`Review the draft in chat.`;
+  const draftReviewRequired = pendingOutgoingDraft(snapshot);
+
+  useEffect(() => {
+    if (draftReviewRequired) {
+      dictation.stop("cancel");
+      setHeard("");
+    }
+  }, [draftReviewRequired]);
 
   function setCallPhase(next: Phase) {
     phaseRef.current = next;
@@ -63,7 +73,7 @@ export function CallView({
 
   async function listen() {
     if (closing.current) return;
-    if (pendingSecretAsk(snapshotRef.current)) {
+    if (pendingSecretAsk(snapshotRef.current) || pendingOutgoingDraft(snapshotRef.current)) {
       dictation.stop("cancel");
       setCallPhase("listening");
       setHeard("");
@@ -90,6 +100,11 @@ export function CallView({
     }
     dictation.stop("submit");
     const current = snapshotRef.current;
+    if (pendingOutgoingDraft(current)) {
+      setHeard("");
+      setCaption("");
+      return;
+    }
     if (pendingSecretAsk(current)) {
       setHeard("");
       setCaption("");
@@ -170,15 +185,18 @@ export function CallView({
         (block) => block.kind === "ask" && block.status !== "answered",
       );
       const secretAsk = ask && isSecretAskBlock(ask);
-      if (text) {
+      const draftAsk = ask?.kind === "ask" && Boolean(ask.draft);
+      if (text || draftAsk) {
         spokenMessage.current = lastBot.id;
         dictation.stop("cancel");
         void speaker.speak(
-          secretAsk
-            ? `${text}. ${secretPromptRef.current}`
-            : ask
-              ? `${text}. ${askPromptRef.current}`
-              : text,
+          draftAsk
+            ? draftPromptRef.current
+            : secretAsk
+              ? `${text}. ${secretPromptRef.current}`
+              : ask
+                ? `${text}. ${askPromptRef.current}`
+                : text,
           {
             botId,
             messageId: lastBot.id,
@@ -243,7 +261,7 @@ export function CallView({
           <DialogTitle className="text-[22px]">{botName}</DialogTitle>
         </DialogHeader>
         <div className="mt-1 text-[15px] text-foreground/75">
-          {phase === "listening" ? (
+          {draftReviewRequired ? null : phase === "listening" ? (
             <Trans>Listening…</Trans>
           ) : phase === "speaking" ? (
             <Trans>Speaking…</Trans>
@@ -252,7 +270,11 @@ export function CallView({
           )}
         </div>
         <p className="min-h-[3.2em] text-[14.5px] leading-[1.5] text-muted-foreground">
-          {phase === "listening" ? heard || t`Say something. Silence sends it.` : caption}
+          {draftReviewRequired
+            ? t`Review the draft in chat.`
+            : phase === "listening"
+              ? heard || t`Say something. Silence sends it.`
+              : caption}
         </p>
         {error ? <p className="text-[13px] text-destructive">{error}</p> : null}
         <div className="mt-2 flex justify-center gap-3">
@@ -268,6 +290,16 @@ export function CallView({
         </p>
       </DialogContent>
     </Dialog>
+  );
+}
+
+export function pendingOutgoingDraft(snapshot: ThreadSnapshot | null): boolean {
+  const askId = latestAskId(snapshot);
+  const askMessage = snapshot?.messages.find((message) => message.id === askId);
+  return Boolean(
+    askMessage?.blocks.some(
+      (block) => block.kind === "ask" && block.status !== "answered" && block.draft,
+    ),
   );
 }
 

@@ -4,6 +4,7 @@ import type {
   Connection,
   ConnectionCatalogItem,
   MessageBlock,
+  OutgoingMessageDraft,
   Routine,
 } from "@rakazo/contracts";
 import {
@@ -62,11 +63,13 @@ import { AppConnectCard } from "../components/AppConnectCard";
 import { AskActions } from "../components/AskActions";
 import { BotAvatar } from "../components/bot-avatar";
 import { MessageActivityLinks } from "../components/MessageActivityLinks";
+import { ModelSelectionControl } from "../components/ModelSelectionControl";
 import {
   MarkdownArtifactPreview,
   type MarkdownArtifactPreviewTarget,
 } from "../components/markdown-artifact-preview";
 import { NativeSymbol } from "../components/native-symbol";
+import { OutgoingDraftCard } from "../components/OutgoingDraftCard";
 import { PeerMessagesSheet } from "../components/PeerMessagesSheet";
 import { GroupQueueStrip, QueueStrip } from "../components/QueueStrip";
 import {
@@ -92,6 +95,11 @@ import {
 import { mobileTokens } from "../lib/appearance";
 import { type MobileArtifactTarget, openMobileArtifact } from "../lib/artifact-open";
 import { confirmDeleteBot } from "../lib/bot-lifecycle";
+import {
+  type ComposerQueueLane,
+  enqueueComposerDraft,
+  queueDraftError,
+} from "../lib/composer-queue";
 import { cancelFocusPrompt, focusPromptThreadActive } from "../lib/focus-prompt";
 import { dateLocaleForUi, t, useI18n } from "../lib/i18n";
 import { saveLastBotId } from "../lib/last-bot";
@@ -107,6 +115,14 @@ import {
   messagePresentationSegments,
 } from "../lib/message-presentation";
 import { native, useMobileTokens, useResolvedAppearance } from "../lib/native";
+import {
+  type MobileOutgoingDraft,
+  type OutgoingDraftAnswer,
+  type OutgoingDraftEditor,
+  type OutgoingDraftVersion,
+  outgoingDraftAnswerInput,
+  outgoingDraftUpdateInput,
+} from "../lib/outgoing-draft";
 import {
   type PickedAttachment,
   pickDocuments,
@@ -611,14 +627,36 @@ function Thread() {
             />
           </Pressable>
         ) : (
-          <Pressable accessibilityLabel={t("Bot actions")} hitSlop={8} onPress={showBotActions}>
-            <NativeSymbol
-              ios="ellipsis"
-              android="ellipsis-horizontal"
-              size={21}
-              color={tokens.foreground}
-            />
-          </Pressable>
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            {botId && notificationThreadId ? (
+              <ModelSelectionControl
+                botId={botId}
+                worker={{ threadId: notificationThreadId }}
+                compact
+              />
+            ) : null}
+            <Pressable
+              accessibilityLabel={t("Open computer")}
+              hitSlop={8}
+              style={{ padding: 10 }}
+              onPress={() => router.push({ pathname: "/computer", params: { botId: botId ?? "" } })}
+            >
+              <NativeSymbol
+                ios="desktopcomputer"
+                android="desktop-outline"
+                size={21}
+                color={tokens.foreground}
+              />
+            </Pressable>
+            <Pressable accessibilityLabel={t("Bot actions")} hitSlop={8} onPress={showBotActions}>
+              <NativeSymbol
+                ios="ellipsis"
+                android="ellipsis-horizontal"
+                size={21}
+                color={tokens.foreground}
+              />
+            </Pressable>
+          </View>
         ),
     });
   }, [
@@ -633,6 +671,7 @@ function Thread() {
     t,
     tokens,
     colorScheme,
+    notificationThreadId,
     snap?.run?.id,
     snap?.messages,
   ]);
@@ -1096,10 +1135,89 @@ function Thread() {
     selectedMentions.length > 0 ||
     activePendingAttachments.length > 0;
 
+  const queueSending = useRef(false);
+  async function queueDraft(lane: ComposerQueueLane, targetBotId: string) {
+    if (
+      sending ||
+      queueSending.current ||
+      !notificationThreadId ||
+      !canSend ||
+      !isCurrentTarget(botId, groupId) ||
+      activeThreadId.current !== notificationThreadId
+    )
+      return;
+    const invalid = queueDraftError(selectedMentions.length, Boolean(replyTarget));
+    if (invalid) {
+      setError(t(invalid));
+      return;
+    }
+    const originBot = botId;
+    const originGroup = groupId;
+    queueSending.current = true;
+    setSending(true);
+    setError(null);
+    try {
+      await enqueueComposerDraft({
+        rpc,
+        threadId: notificationThreadId,
+        botId: targetBotId,
+        groupId: originGroup,
+        lane,
+        text: serializeComposerPromptText().trim(),
+        attachments: activePendingAttachments,
+        requestId: newClientNonce(),
+      });
+      if (isCurrentTarget(originBot, originGroup)) {
+        setDraft("");
+        setSelectedSkill(null);
+        setMentionQuery(null);
+        setSlashQuery(null);
+        setAttachmentNotice(null);
+        setPendingAttachments((current) =>
+          current.filter((item) => !activePendingAttachments.includes(item)),
+        );
+      }
+    } catch (cause) {
+      if (isCurrentTarget(originBot, originGroup))
+        setError(cause instanceof Error ? cause.message : t("Could not queue message"));
+    } finally {
+      queueSending.current = false;
+      setSending(false);
+    }
+  }
+  function chooseQueueBot(lane: ComposerQueueLane) {
+    if (!inGroup && botId) {
+      void queueDraft(lane, botId);
+      return;
+    }
+    presentMessageActionSheet({
+      actions: (snap?.members ?? []).map((member) => ({
+        text: member.name,
+        onPress: () => void queueDraft(lane, member.botId),
+      })),
+      title: t("Queue for bot"),
+      cancel: t("Cancel"),
+      more: t("More"),
+      colorScheme,
+    });
+  }
+  function showSendActions() {
+    presentMessageActionSheet({
+      actions: [
+        { text: t("Send"), onPress: () => void send() },
+        { text: t("Steer"), onPress: () => chooseQueueBot("steer") },
+        { text: t("Queue"), onPress: () => chooseQueueBot("followUp") },
+      ],
+      cancel: t("Cancel"),
+      more: t("More"),
+      colorScheme,
+    });
+  }
+
   async function send() {
     const initialBotTarget = botId;
     const initialGroupTarget = groupId;
-    if ((!initialBotTarget && !initialGroupTarget) || sending) return;
+    if ((!initialBotTarget && !initialGroupTarget) || sending || queueSending.current) return;
     const originThreadKey = initialGroupTarget ?? initialBotTarget;
     const attachments = attachmentsForThread(pendingAttachments, originThreadKey);
     const plan = resolveComposerSendPlan({
@@ -1254,17 +1372,62 @@ function Thread() {
   }
 
   const answerMessage = useCallback(
-    async (message: MobileMessage, answer: string) => {
+    async (message: MobileMessage, answer: string, expectedDraft?: OutgoingDraftVersion) => {
       const targetBotId = botId;
       const targetGroupId = groupId;
       if ((!targetBotId && !targetGroupId) || !message.runId) return;
-      await rpc("threads/answer", {
-        ...(targetGroupId ? { groupId: targetGroupId } : { botId: targetBotId! }),
-        runId: message.runId,
-        messageId: message.id,
-        answer,
-      });
-      if (isCurrentTarget(targetBotId, targetGroupId)) await refresh();
+      await rpc(
+        "threads/answer",
+        expectedDraft && (answer === "send" || answer === "discard")
+          ? outgoingDraftAnswerInput({
+              botId: targetBotId,
+              groupId: targetGroupId,
+              runId: message.runId,
+              messageId: message.id,
+              answer,
+              draft: expectedDraft,
+            })
+          : {
+              ...(targetGroupId ? { groupId: targetGroupId } : { botId: targetBotId! }),
+              runId: message.runId,
+              messageId: message.id,
+              answer,
+            },
+      );
+      if (isCurrentTarget(targetBotId, targetGroupId)) {
+        if (expectedDraft) void refresh().catch(() => undefined);
+        else await refresh();
+      }
+    },
+    [botId, groupId],
+  );
+
+  const updateMessageDraft = useCallback(
+    async (
+      message: MobileMessage,
+      approvalEffectId: string,
+      draft: MobileOutgoingDraft,
+      editor: OutgoingDraftEditor,
+    ) => {
+      const targetBotId = botId;
+      const targetGroupId = groupId;
+      if ((!targetBotId && !targetGroupId) || !message.runId) {
+        throw new Error(t("No longer active"));
+      }
+      const result = await rpc<{ draft: OutgoingMessageDraft }>(
+        "threads/updateDraft",
+        outgoingDraftUpdateInput({
+          botId: targetBotId,
+          groupId: targetGroupId,
+          runId: message.runId,
+          messageId: message.id,
+          approvalEffectId,
+          draft,
+          editor,
+        }),
+      );
+      if (isCurrentTarget(targetBotId, targetGroupId)) void refresh().catch(() => undefined);
+      return result.draft;
     },
     [botId, groupId],
   );
@@ -1502,6 +1665,7 @@ function Thread() {
               }
               canAnswer={message.id === answerableAskMessageId}
               onAnswer={answerMessage}
+              onUpdateDraft={updateMessageDraft}
               onOpenBot={openBot}
               onPreviewMarkdown={setMarkdownPreview}
               actionProps={actionProps}
@@ -1798,6 +1962,26 @@ function Thread() {
             ]}
           />
         )}
+        <ScrollView style={{ maxHeight: 120, flexGrow: 0 }} keyboardShouldPersistTaps="handled">
+          {notificationThreadId &&
+            !inspector &&
+            (inGroup ? (
+              (snap?.members ?? []).map((member) => (
+                <QueueStrip
+                  key={`${notificationThreadId}:${member.botId}`}
+                  threadId={notificationThreadId}
+                  botId={member.botId}
+                  label={member.name}
+                />
+              ))
+            ) : botId ? (
+              <QueueStrip
+                key={`${notificationThreadId}:${botId}`}
+                threadId={notificationThreadId}
+                botId={botId}
+              />
+            ) : null)}
+        </ScrollView>
         {replyTarget ? (
           <View
             style={{
@@ -1997,6 +2181,7 @@ function Thread() {
           </View>
         ) : null}
         <View
+          pointerEvents={sending && queueSending.current ? "none" : "auto"}
           style={{
             flexDirection: "row",
             gap: 8,
@@ -2117,6 +2302,7 @@ function Thread() {
             ))}
             <TextInput
               value={draft}
+              editable={!sending || !queueSending.current}
               onChangeText={updateDraft}
               accessibilityLabel={
                 displayName ? t("Message {name}", { name: displayName }) : t("Message")
@@ -2157,6 +2343,9 @@ function Thread() {
             accessibilityLabel={t("Send")}
             disabled={sending || !canSend}
             onPress={() => void send()}
+            onLongPress={showSendActions}
+            accessibilityActions={[{ name: "longpress", label: t("Send options") }]}
+            onAccessibilityAction={showSendActions}
             style={{
               backgroundColor: tokens.primary,
               borderRadius: 22,
@@ -2410,6 +2599,7 @@ const MessageBubble = memo(function MessageBubble({
   replyPreview,
   canAnswer,
   onAnswer,
+  onUpdateDraft,
   onOpenBot,
   onPreviewMarkdown,
   actionProps,
@@ -2422,7 +2612,17 @@ const MessageBubble = memo(function MessageBubble({
   members?: MobileSnapshot["members"];
   replyPreview?: MobileMessage;
   canAnswer: boolean;
-  onAnswer: (message: MobileMessage, answer: string) => Promise<void>;
+  onAnswer: (
+    message: MobileMessage,
+    answer: string,
+    expectedDraft?: OutgoingDraftVersion,
+  ) => Promise<void>;
+  onUpdateDraft: (
+    message: MobileMessage,
+    approvalEffectId: string,
+    draft: MobileOutgoingDraft,
+    editor: OutgoingDraftEditor,
+  ) => Promise<OutgoingMessageDraft>;
   onOpenBot: (botId: string, name: string) => void;
   onPreviewMarkdown: (target: MarkdownArtifactPreviewTarget) => void;
   actionProps: MessageActionProps;
@@ -2437,6 +2637,35 @@ const MessageBubble = memo(function MessageBubble({
     (block): block is Extract<MessageBlock, { kind: "app_connect" }> =>
       block.kind === "app_connect",
   );
+  const outgoingDraftAsk = message.blocks.find(
+    (block): block is Extract<MessageBlock, { kind: "ask" }> =>
+      block.kind === "ask" && Boolean(block.draft),
+  );
+  if (outgoingDraftAsk?.draft) {
+    return (
+      <View style={{ gap: 8, width: "100%" }}>
+        <OutgoingDraftCard
+          draft={outgoingDraftAsk.draft}
+          approvalEffectId={outgoingDraftAsk.approvalEffectId}
+          canAnswer={canAnswer}
+          actionProps={actionProps}
+          onAnswer={(answer: OutgoingDraftAnswer, expected) => onAnswer(message, answer, expected)}
+          onUpdate={({ approvalEffectId, draft, editor }) =>
+            onUpdateDraft(message, approvalEffectId, draft, editor)
+          }
+        />
+        {appConnectBlocks.map((block, index) => (
+          <AppConnectCard
+            key={`${block.provider}-${index}`}
+            botId={cardBotId}
+            block={block}
+            accessibilityActions={actionProps.accessibilityActions}
+            onAccessibilityAction={actionProps.onAccessibilityAction}
+          />
+        ))}
+      </View>
+    );
+  }
   const ask = message.blocks.find(
     (block): block is Extract<MessageBlock, { kind: "ask" }> =>
       block.kind === "ask" && !isApprovalAskBlock(block) && !block.actions?.length,

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Actor } from "@rakazo/contracts";
+import type { Actor, QueueMutation } from "@rakazo/contracts";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDb, type PrismaClient } from "./client.js";
 import { clearThread } from "./events.js";
@@ -144,6 +144,98 @@ describePostgres("durable queue and session (PostgreSQL)", { concurrent: false }
     expect(after.rows.map((row) => row.text)).toEqual(["/compact"]);
     expect(after.paused).toBe(true);
     expect(after.inFlight).toBeUndefined();
+  });
+
+  it("persists composer attachment edits and publishes one message only after accepted delivery", async () => {
+    const target = { ...scope, botId: `${id}-composer-bot`, threadId: `${id}-composer-thread` };
+    await prisma.bot.create({
+      data: {
+        id: target.botId,
+        spaceId: actor.spaceId,
+        userId: actor.userId,
+        name: "Composer Test",
+        color: "test",
+      },
+    });
+    await prisma.thread.create({
+      data: {
+        id: target.threadId,
+        botId: target.botId,
+        spaceId: actor.spaceId,
+        userId: actor.userId,
+      },
+    });
+    const task = await prisma.task.create({
+      data: { ...target, userId: actor.userId, prompt: "", status: "running" },
+    });
+    const run = await prisma.run.create({
+      data: {
+        ...target,
+        taskId: task.id,
+        userId: actor.userId,
+        status: "running",
+        trigger: "user",
+        leaseOwner: "composer-worker",
+        leaseFence: 1,
+        leaseExpiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    const runtime = { ...target, runId: run.id, leaseOwner: "composer-worker", leaseFence: 1 };
+    const mutate = async (operation: QueueMutation["operation"]) => {
+      const snapshot = await listPremoveQueue(prisma, actor, target);
+      const result = await mutatePremoveQueue(
+        prisma,
+        actor,
+        { ...target, requestId: randomUUID(), expectedRevision: snapshot.revision, operation },
+        {
+          stageComposerMessage: true,
+          resolveAttachments: async (_tx, ids) =>
+            ids.map((artifactId) => ({
+              kind: "file" as const,
+              artifactId,
+              name: `${artifactId}.txt`,
+              mimeType: "text/plain",
+              size: 3,
+            })),
+        },
+      );
+      expect(result.ok).toBe(true);
+      return result.snapshot;
+    };
+    const initial = await mutate({
+      type: "enqueue",
+      lane: "steer",
+      text: "original",
+      artifactIds: ["old-file"],
+    });
+    const rowId = initial.rows[0]!.id;
+    await mutate({ type: "edit-begin", id: rowId });
+    const draft = await mutate({
+      type: "edit-patch",
+      patch: { text: "edited", artifactIds: ["new-file"] },
+    });
+    expect(draft.rows[0]!.attachments?.[0]?.artifactId).toBe("old-file");
+    expect(draft.editing?.rows[0]?.attachments?.[0]?.artifactId).toBe("new-file");
+    await mutate({ type: "edit-save" });
+    expect((await listPremoveQueue(prisma, actor, target)).rows[0]?.id).toBe(rowId);
+    expect(await prisma.message.count({ where: { threadId: target.threadId } })).toBe(0);
+    await mutate({ type: "resume" });
+    const send = vi.fn(async (row) => {
+      expect(row.text).toBe("edited");
+      expect(row.blocks).toMatchObject([{ kind: "file", artifactId: "new-file" }]);
+      expect(await prisma.message.count({ where: { threadId: target.threadId } })).toBe(0);
+      return { outcome: "accepted" as const };
+    });
+    await dispatchPremoveQueue(prisma, runtime, "turn-end", { send });
+    await dispatchPremoveQueue(prisma, runtime, "turn-end", { send });
+    expect(send).toHaveBeenCalledOnce();
+    const messages = await prisma.message.findMany({ where: { threadId: target.threadId } });
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.blocks).toMatchObject([
+      { kind: "text", text: "edited" },
+      { kind: "file", artifactId: "new-file" },
+    ]);
+    expect((await listPremoveQueue(prisma, actor, target)).rows).toHaveLength(0);
   });
 
   afterAll(async () => {

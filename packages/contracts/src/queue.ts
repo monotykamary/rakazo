@@ -58,6 +58,7 @@ export const QueueRowSchema = z.object({
 export const QueuePatchSchema = z.object({
   text: text.optional(),
   images: images.optional(),
+  artifactIds: z.array(Id).max(ATTACHMENT_MAX_COUNT).optional(),
   lane: QueueLaneSchema.optional(),
   paused: z.boolean().optional(),
   removed: z.boolean().optional(),
@@ -69,6 +70,7 @@ export const QueueOperationSchema = z.discriminatedUnion("type", [
     target: QueueTargetSchema.optional(),
     text,
     images: images.optional(),
+    artifactIds: z.array(Id).max(ATTACHMENT_MAX_COUNT).optional(),
     paused: z.boolean().optional(),
   }),
   z.object({ type: z.literal("edit-begin"), id: Id }),
@@ -109,7 +111,10 @@ export const QueueSnapshotSchema = z.object({
     followUp: z.enum(["all", "one-at-a-time"]),
   }),
   editing: z
-    .object({ selectedId: Id, rows: z.array(QueueRowSchema.extend({ removed: z.boolean() })) })
+    .object({
+      selectedId: Id,
+      rows: z.array(QueueRowSchema.extend({ removed: z.boolean() })),
+    })
     .optional(),
   inFlight: z.object({ attemptId: Id, rowIds: z.array(Id) }).optional(),
   compaction: z.enum(["manual", "threshold", "overflow"]).optional(),

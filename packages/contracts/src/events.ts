@@ -92,6 +92,31 @@ const ChartBlock = z
 export const SecretAskPurpose = z.enum(["otp", "password", "api_key"]);
 export type SecretAskPurpose = z.infer<typeof SecretAskPurpose>;
 
+export const OutgoingDraftFieldsSchema = z.object({
+  to: z.array(z.string()).max(50),
+  cc: z.array(z.string()).max(50).optional(),
+  bcc: z.array(z.string()).max(50).optional(),
+  subject: z.string().max(2_000).optional(),
+  body: z.string().max(100_000),
+});
+export type OutgoingDraftFields = z.infer<typeof OutgoingDraftFieldsSchema>;
+
+export const OutgoingMessageDraftSchema = z.object({
+  kind: z.literal("outgoing_message"),
+  revision: z.number().int().positive(),
+  hash: z.string().length(64),
+  status: z.enum(["pending", "sending", "sent", "discarded", "failed", "uncertain", "unavailable"]),
+  channel: z.literal("email"),
+  ownerUserId: Id,
+  canApprove: z.boolean(),
+  account: z.object({ connector: z.string(), label: z.string() }).optional(),
+  fields: OutgoingDraftFieldsSchema,
+  editable: z.array(z.enum(["to", "cc", "bcc", "subject", "body"])),
+  metadata: z.array(z.object({ label: z.string(), value: z.string() })).optional(),
+  error: z.string().optional(),
+});
+export type OutgoingMessageDraft = z.infer<typeof OutgoingMessageDraftSchema>;
+
 export const MessageBlock = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("text"), text: z.string() }),
   z.object({
@@ -113,6 +138,7 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     /** Why the secret is needed; drives field label on the masked card. */
     purpose: SecretAskPurpose.optional(),
     credential: BotSecretDestination.optional(),
+    draft: OutgoingMessageDraftSchema.optional(),
     status: z.enum(["pending", "answered"]).optional(),
     answer: z.string().optional(),
     actions: z

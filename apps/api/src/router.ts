@@ -125,6 +125,7 @@ import {
   stagePremoveSteeringInTransaction,
   type ThreadEvents,
   touchGroupUpdatedAt,
+  updateOutgoingDraft,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { deleteAgentSecret, listAgentSecrets, putAgentSecret } from "./agent-secrets.js";
@@ -1563,6 +1564,7 @@ export function createRouter(deps: RouterDeps) {
           messageId: input.messageId,
           answeredByUserId: context.actor.userId,
           answer: input.answer,
+          expectedDraft: input.expectedDraft,
         });
         if (!answered) {
           throw new ORPCError("CONFLICT", {
@@ -1574,6 +1576,32 @@ export function createRouter(deps: RouterDeps) {
           getLogger().error("thread answer enqueue", error);
         });
         return { ok: true as const };
+      }),
+      updateDraft: authed.threads.updateDraft.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        const result = await updateOutgoingDraft(deps.prisma, {
+          spaceId: context.actor.spaceId,
+          threadId: target.threadId,
+          runId: input.runId,
+          messageId: input.messageId,
+          approvalEffectId: input.approvalEffectId,
+          answeredByUserId: context.actor.userId,
+          expectedRevision: input.expectedRevision,
+          expectedHash: input.expectedHash,
+          fields: input.fields,
+        });
+        if (result.kind === "forbidden") {
+          throw new ORPCError("FORBIDDEN", { message: "Only the draft owner can edit it" });
+        }
+        if (result.kind === "conflict") {
+          throw new ORPCError("CONFLICT", {
+            message: "This draft has changed or is no longer pending",
+          });
+        }
+        await deps.events.notify(target.threadId, result.eventSeq).catch((error) => {
+          getLogger().error("draft update realtime notification", error);
+        });
+        return { draft: result.draft };
       }),
       markRead: authed.threads.markRead.handler(async ({ context, input }) => {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);

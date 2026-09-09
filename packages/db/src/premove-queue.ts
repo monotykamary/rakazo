@@ -20,6 +20,7 @@ import {
 } from "@rakazo/core";
 import type { Prisma, PrismaClient } from "./client.js";
 import { appendEventInTransaction } from "./events.js";
+import { createThreadMessageInTransaction } from "./messages.js";
 import { authorizeQueueTarget } from "./queue-target.js";
 import { assertQueuePlacementComputer, captureQueuePlacement } from "./runtime-placement.js";
 import type { RuntimeSessionScope } from "./runtime-sessions.js";
@@ -35,9 +36,49 @@ const key = (scope: PremoveQueueScope) => ({
   threadId: scope.threadId,
   botId: scope.botId,
 });
-const where = (scope: PremoveQueueScope) => ({ spaceId_threadId_botId: key(scope) });
+const where = (scope: PremoveQueueScope) => ({
+  spaceId_threadId_botId: key(scope),
+});
 const json = (state: DurableQueueState) =>
   JSON.parse(JSON.stringify(state)) as Prisma.InputJsonValue;
+
+export interface PremoveQueueMutationOptions {
+  /** Marks API composer enqueues so they become transcript messages only after delivery. */
+  stageComposerMessage?: boolean;
+  resolveAttachments?: (
+    tx: Prisma.TransactionClient,
+    artifactIds: string[],
+  ) => Promise<MessageBlock[]>;
+}
+
+function engineQueueOperation(operation: QueueMutation["operation"]) {
+  if (operation.type === "enqueue") {
+    const { artifactIds: _artifactIds, ...engineOperation } = operation;
+    return engineOperation;
+  }
+  if (operation.type === "edit-patch") {
+    const { artifactIds: _artifactIds, ...patch } = operation.patch;
+    return { ...operation, patch };
+  }
+  return operation;
+}
+
+function attachmentMetadata(blocks: MessageBlock[] | undefined) {
+  return (
+    blocks?.flatMap((block) =>
+      block.kind === "image" || block.kind === "file"
+        ? [
+            {
+              artifactId: block.artifactId,
+              name: block.name,
+              mimeType: block.mimeType,
+              ...(block.kind === "file" ? { size: block.size } : {}),
+            },
+          ]
+        : [],
+    ) ?? []
+  );
+}
 
 export async function assertPremoveQueueAccess(
   tx: Prisma.TransactionClient,
@@ -52,13 +93,23 @@ export async function assertPremoveQueueAccess(
       userId: actor.userId,
       OR: [
         { botId: scope.botId },
-        { group: { archivedAt: null, members: { some: { botId: scope.botId } } } },
+        {
+          group: {
+            archivedAt: null,
+            members: { some: { botId: scope.botId } },
+          },
+        },
       ],
     },
     select: { id: true },
   });
   const bot = await tx.bot.findFirst({
-    where: { id: scope.botId, spaceId: actor.spaceId, userId: actor.userId, archivedAt: null },
+    where: {
+      id: scope.botId,
+      spaceId: actor.spaceId,
+      userId: actor.userId,
+      archivedAt: null,
+    },
     select: { id: true },
   });
   if (!thread || !bot) throw new IsolationError();
@@ -75,19 +126,12 @@ async function load(
 }
 
 function publicQueueSnapshot(state: DurableQueueState): QueueReply["snapshot"] {
-  const attachments = (id: string) =>
-    state.stagedMessages?.[id]?.blocks.flatMap((block) =>
-      block.kind === "image" || block.kind === "file"
-        ? [
-            {
-              artifactId: block.artifactId,
-              name: block.name,
-              mimeType: block.mimeType,
-              ...(block.kind === "file" ? { size: block.size } : {}),
-            },
-          ]
-        : [],
-    ) ?? [];
+  const attachments = (id: string, editing = false) =>
+    attachmentMetadata(
+      editing
+        ? (state.stagedMessageEdits?.[id]?.blocks ?? state.stagedMessages?.[id]?.blocks)
+        : state.stagedMessages?.[id]?.blocks,
+    );
   const rows = state.view.rows.map((row) => ({
     ...row,
     attachments: attachments(row.id),
@@ -106,7 +150,7 @@ function publicQueueSnapshot(state: DurableQueueState): QueueReply["snapshot"] {
             ...state.view.editing,
             rows: state.view.editing.rows.map((row) => ({
               ...row,
-              attachments: attachments(row.id),
+              attachments: attachments(row.id, true),
               placement: state.placements?.[row.id],
               target: state.targets?.[row.id]
                 ? { participantId: state.targets[row.id]!.participantId }
@@ -125,7 +169,11 @@ async function store(
 ) {
   await tx.premoveQueue.upsert({
     where: where(scope),
-    create: { ...key(scope), revision: state.view.revision, state: json(state) },
+    create: {
+      ...key(scope),
+      revision: state.view.revision,
+      state: json(state),
+    },
     update: { revision: state.view.revision, state: json(state) },
   });
 }
@@ -202,8 +250,13 @@ export async function mutatePremoveQueue(
   prisma: PrismaClient,
   actor: Actor,
   input: QueueMutation,
+  options: PremoveQueueMutationOptions = {},
 ): Promise<QueueReply> {
-  const scope = { spaceId: actor.spaceId, threadId: input.threadId, botId: input.botId };
+  const scope = {
+    spaceId: actor.spaceId,
+    threadId: input.threadId,
+    botId: input.botId,
+  };
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM threads WHERE id = ${scope.threadId} AND "spaceId" = ${scope.spaceId} FOR UPDATE`;
     await assertPremoveQueueAccess(tx, actor, scope);
@@ -292,7 +345,26 @@ export async function mutatePremoveQueue(
         return reply(false, "Participant is unavailable in this conversation");
       }
     }
-    const existingQueue = await tx.premoveQueue.findUnique({ where: where(scope) });
+    const artifactIds =
+      input.operation.type === "enqueue"
+        ? input.operation.artifactIds
+        : input.operation.type === "edit-patch"
+          ? input.operation.patch.artifactIds
+          : undefined;
+    let resolvedAttachmentBlocks: MessageBlock[] | undefined;
+    if (
+      artifactIds !== undefined ||
+      (options.stageComposerMessage && input.operation.type === "enqueue")
+    ) {
+      if (artifactIds?.length && !options.resolveAttachments)
+        return reply(false, "Attachment resolution is unavailable");
+      resolvedAttachmentBlocks = options.resolveAttachments
+        ? await options.resolveAttachments(tx, artifactIds ?? [])
+        : [];
+    }
+    const existingQueue = await tx.premoveQueue.findUnique({
+      where: where(scope),
+    });
     const beforeAdoption = state;
     const adopted = existingQueue
       ? { state, ids: [] as string[] }
@@ -302,8 +374,12 @@ export async function mutatePremoveQueue(
       input.operation.type === "graceful-pause" || input.operation.type === "drain"
         ? { type: "pause" as const }
         : input.operation.type === "bind-placement"
-          ? { type: "hold" as const, id: input.operation.id, paused: bindingPaused }
-          : input.operation;
+          ? {
+              type: "hold" as const,
+              id: input.operation.id,
+              paused: bindingPaused,
+            }
+          : engineQueueOperation(input.operation);
     const controller = await hydratePremoveQueue(state, {
       send: async () => ({ outcome: "rejected" }),
     });
@@ -321,7 +397,7 @@ export async function mutatePremoveQueue(
       ...state,
       checkpoint: controller.checkpoint(),
       view: controller.snapshot(),
-      editOperations: updateQueueEditLog(state, input.operation, controller.snapshot()),
+      editOperations: updateQueueEditLog(state, operation, controller.snapshot()),
       receipts: [
         ...state.receipts.filter(
           (receipt, index) => receipt.drain || index >= state.receipts.length - 199,
@@ -337,8 +413,34 @@ export async function mutatePremoveQueue(
       next.view.errorHold = state.view.errorHold;
       next.view.compaction = state.view.compaction;
     }
+    if (input.operation.type === "edit-begin") next.stagedMessageEdits = {};
+    if (input.operation.type === "edit-patch" && resolvedAttachmentBlocks) {
+      const selectedId = state.view.editing?.selectedId;
+      if (!selectedId) throw new Error("Queue attachment edit has no selected row");
+      next.stagedMessageEdits = {
+        ...state.stagedMessageEdits,
+        [selectedId]: { blocks: resolvedAttachmentBlocks },
+      };
+    }
+    if (input.operation.type === "edit-save") {
+      const stagedMessages = { ...state.stagedMessages };
+      for (const [rowId, draft] of Object.entries(state.stagedMessageEdits ?? {}))
+        stagedMessages[rowId] = {
+          ...(state.stagedMessages?.[rowId]?.messageId
+            ? { messageId: state.stagedMessages[rowId]!.messageId }
+            : {}),
+          blocks: draft.blocks,
+        };
+      next.stagedMessages = stagedMessages;
+      next.stagedMessageEdits = undefined;
+    } else if (input.operation.type === "edit-cancel") {
+      next.stagedMessageEdits = undefined;
+    }
     if (input.operation.type === "drain")
-      next.drainIntent = { requestId: input.requestId, rowIds: premoveDrainRows(state) };
+      next.drainIntent = {
+        requestId: input.requestId,
+        rowIds: premoveDrainRows(state),
+      };
     else if (input.operation.type === "pause" || input.operation.type === "graceful-pause")
       next.drainIntent = undefined;
     if (input.operation.type === "bind-placement" && binding)
@@ -347,6 +449,11 @@ export async function mutatePremoveQueue(
       const oldIds = new Set(state.view.rows.map((row) => row.id));
       const added = next.view.rows.find((row) => !oldIds.has(row.id));
       if (added && target) next.targets = { ...state.targets, [added.id]: target };
+      if (added && resolvedAttachmentBlocks)
+        next.stagedMessages = {
+          ...state.stagedMessages,
+          [added.id]: { blocks: resolvedAttachmentBlocks },
+        };
       if (added) {
         const placement = await captureQueuePlacement(tx, scope);
         next.placements = {
@@ -368,7 +475,10 @@ export async function mutatePremoveQueue(
     }
     if (input.operation.type === "graceful-pause") {
       const active = await tx.run.findFirst({
-        where: { ...key(scope), status: { in: ["queued", "leased", "running"] } },
+        where: {
+          ...key(scope),
+          status: { in: ["queued", "leased", "running"] },
+        },
         select: { id: true },
       });
       next.view.gracefulPausePending = Boolean(active);
@@ -385,9 +495,18 @@ export async function mutatePremoveQueue(
         userId: actor.userId,
         acceptedAt: new Date().toISOString(),
       };
+    if (input.operation.type === "remove" || input.operation.type === "edit-save") {
+      const retainedIds = new Set(next.view.rows.map((row) => row.id));
+      removeDeliveredQueueState(
+        next,
+        state.view.rows.filter((row) => !retainedIds.has(row.id)).map((row) => row.id),
+      );
+    }
     await store(tx, scope, next);
     if (adopted.ids.length)
-      await tx.steeringMessage.deleteMany({ where: { id: { in: adopted.ids }, claimedAt: null } });
+      await tx.steeringMessage.deleteMany({
+        where: { id: { in: adopted.ids }, claimedAt: null },
+      });
     await appendEventInTransaction(tx, {
       ...scope,
       type: "queue.updated",
@@ -423,7 +542,9 @@ export async function pendingPremoveMessageIds(
   if (!row) return [];
   const state = row.state as unknown as DurableQueueState;
   // These inputs are imported through acknowledged queue delivery, never through legacy history.
-  return Object.values(state.stagedMessages ?? {}).map((item) => item.messageId);
+  return Object.values(state.stagedMessages ?? {}).flatMap((item) =>
+    item.messageId ? [item.messageId] : [],
+  );
 }
 
 /** Fixed prompt for the single continuation run of an explicitly resumed parked turn. */
@@ -445,7 +566,10 @@ async function consumeResumeIntent(
   scope: PremoveQueueScope,
   state: DurableQueueState,
 ) {
-  const checkpoint = { ...state.checkpoint, revision: state.checkpoint.revision + 1 };
+  const checkpoint = {
+    ...state.checkpoint,
+    revision: state.checkpoint.revision + 1,
+  };
   const next: DurableQueueState = {
     ...state,
     resumeIntent: undefined,
@@ -514,7 +638,9 @@ export async function wakePremoveQueue(
     const active = await tx.run.findFirst({
       where: {
         ...key(scope),
-        status: { in: ["queued", "leased", "running", "waiting_input", "waiting_takeover"] },
+        status: {
+          in: ["queued", "leased", "running", "waiting_input", "waiting_takeover"],
+        },
       },
       select: { id: true, status: true, taskId: true },
     });
@@ -577,6 +703,7 @@ export async function wakePremoveQueue(
 }
 
 export type PremoveDispatchPorts = Omit<QueuePorts, "persist" | "send" | "command"> & {
+  notifyDeliveredMessage?(threadId: string, eventSeq: number): Promise<void>;
   sendBatch?(
     rows: Parameters<PremoveDispatchPorts["send"]>[0][],
     context: Parameters<QueuePorts["send"]>[1],
@@ -631,7 +758,10 @@ export async function stagePremoveSteeringInTransaction(
     ...state,
     checkpoint: controller.checkpoint(),
     view: controller.snapshot(),
-    placements: { ...state.placements, [row.id]: await captureQueuePlacement(tx, input) },
+    placements: {
+      ...state.placements,
+      [row.id]: await captureQueuePlacement(tx, input),
+    },
     stagedMessages: {
       ...state.stagedMessages,
       [row.id]: { messageId: input.messageId, blocks: input.blocks },
@@ -647,6 +777,51 @@ export async function stagePremoveSteeringInTransaction(
   next.view.gracefulPausePending = state.view.gracefulPausePending;
   await store(tx, input, next);
   return true;
+}
+
+async function publishDeliveredComposerRows(
+  tx: Prisma.TransactionClient,
+  scope: RuntimeSessionScope,
+  state: DurableQueueState,
+  rowIds: string[],
+) {
+  let latestEventSeq: number | undefined;
+  for (const rowId of rowIds) {
+    const staged = state.stagedMessages?.[rowId];
+    if (!staged || staged.messageId) continue;
+    const row = state.view.rows.find((candidate) => candidate.id === rowId);
+    if (!row) throw new Error("Delivered queue row is unavailable");
+    const blocks: MessageBlock[] = [];
+    const text = row.text.trim();
+    if (text) blocks.push({ kind: "text", text });
+    blocks.push(
+      ...staged.blocks.filter((block) => block.kind === "image" || block.kind === "file"),
+    );
+    const message = await createThreadMessageInTransaction(tx, {
+      threadId: scope.threadId,
+      role: "user",
+      blocks,
+      runId: scope.runId,
+      clientNonce: `queue-delivery:${state.view.sessionId}:${rowId}`,
+    });
+    const event = await appendEventInTransaction(tx, {
+      ...scope,
+      runId: scope.runId,
+      type: "thread.message.created",
+      payload: { messageId: message.id, role: "user", blocks },
+    });
+    latestEventSeq = event.seq;
+  }
+  return latestEventSeq;
+}
+
+function removeDeliveredQueueState(state: DurableQueueState, rowIds: string[]) {
+  for (const rowId of rowIds) {
+    delete state.placements?.[rowId];
+    delete state.targets?.[rowId];
+    delete state.stagedMessages?.[rowId];
+    delete state.stagedMessageEdits?.[rowId];
+  }
 }
 
 async function assertLease(tx: Prisma.TransactionClient, scope: RuntimeSessionScope) {
@@ -777,7 +952,11 @@ export async function dispatchPremoveQueue(
     return dispatchPremoveDrain(prisma, scope, boundary, ports);
   if (boundary === "paused" || state.view.paused || state.view.errorHold || state.view.compaction)
     return false;
-  const owner = { runId: scope.runId, leaseOwner: scope.leaseOwner, leaseFence: scope.leaseFence };
+  const owner = {
+    runId: scope.runId,
+    leaseOwner: scope.leaseOwner,
+    leaseFence: scope.leaseFence,
+  };
   const dispatchToken = randomUUID();
   let revision = state.view.revision;
   let writes: Promise<void> = Promise.resolve();
@@ -866,15 +1045,29 @@ export async function dispatchPremoveQueue(
         checkpoint,
         view: controller.snapshot(),
       };
+      const remainingIds = new Set(next.view.rows.map((row) => row.id));
+      const deliveredRowIds = state.view.rows
+        .filter((row) => !remainingIds.has(row.id))
+        .map((row) => row.id);
       writes = writes.then(async () => {
-        await prisma.$transaction(async (tx) => {
+        const eventSeq = await prisma.$transaction(async (tx) => {
           await tx.$queryRaw`SELECT id FROM threads WHERE id = ${scope.threadId} FOR UPDATE`;
           await assertLease(tx, scope);
           const current = await load(tx, scope);
           if (current.view.revision !== revision)
             throw new Error("Queue changed during dispatch; reconcile reserved rows");
+          const deliveredEventSeq = await publishDeliveredComposerRows(
+            tx,
+            scope,
+            state,
+            deliveredRowIds,
+          );
+          removeDeliveredQueueState(next, deliveredRowIds);
           await store(tx, scope, next);
+          return deliveredEventSeq;
         });
+        if (eventSeq !== undefined)
+          await ports.notifyDeliveredMessage?.(scope.threadId, eventSeq).catch(() => undefined);
         revision = next.view.revision;
         state = next;
       });
@@ -1007,14 +1200,23 @@ async function dispatchPremoveDrain(
       result =
         acknowledgment?.outcome === "accepted" || acknowledgment?.outcome === "rejected"
           ? acknowledgment
-          : { outcome: "uncertain", error: "Combined prompt acceptance is uncertain" };
+          : {
+              outcome: "uncertain",
+              error: "Combined prompt acceptance is uncertain",
+            };
     } catch {
-      result = { outcome: "uncertain", error: "Combined prompt acceptance is uncertain" };
+      result = {
+        outcome: "uncertain",
+        error: "Combined prompt acceptance is uncertain",
+      };
     }
   } catch {
-    result = { outcome: "rejected", error: "Queued placement or participant is unavailable" };
+    result = {
+      outcome: "rejected",
+      error: "Queued placement or participant is unavailable",
+    };
   }
-  await prisma.$transaction(async (tx) => {
+  const deliveredEventSeq = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM threads WHERE id = ${scope.threadId} FOR UPDATE`;
     await assertLease(tx, scope);
     const state = await load(tx, scope);
@@ -1022,14 +1224,13 @@ async function dispatchPremoveDrain(
       throw new Error("Drain ownership changed; reserved rows require reconciliation");
     const accepted = result.outcome === "accepted";
     const uncertain = !accepted && result.outcome !== "rejected";
+    const messageEventSeq = accepted
+      ? await publishDeliveredComposerRows(tx, scope, state, rowIds)
+      : undefined;
     if (accepted) {
       state.checkpoint.rows = state.checkpoint.rows.filter((row) => !rowIds.includes(row.id));
       state.view.rows = state.view.rows.filter((row) => !rowIds.includes(row.id));
-      for (const id of rowIds) {
-        delete state.placements?.[id];
-        delete state.targets?.[id];
-        delete state.stagedMessages?.[id];
-      }
+      removeDeliveredQueueState(state, rowIds);
     }
     state.drainIntent = undefined;
     state.view.inFlight = undefined;
@@ -1052,6 +1253,9 @@ async function dispatchPremoveDrain(
           revision: state.view.revision,
         },
       });
+    return messageEventSeq;
   });
+  if (deliveredEventSeq !== undefined)
+    await ports.notifyDeliveredMessage?.(scope.threadId, deliveredEventSeq).catch(() => undefined);
   return true;
 }

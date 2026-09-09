@@ -3,7 +3,12 @@ import base from "./playwright.config";
 
 // Real UI and typed RPC transport; deterministic responses, no Docker or provider.
 export default defineConfig(base, {
-  testMatch: ["queue-inspection.spec.ts", "queue-recovery.spec.ts", "model-routing.spec.ts"],
+  testMatch: [
+    "composer-queue.spec.ts",
+    "queue-inspection.spec.ts",
+    "queue-recovery.spec.ts",
+    "model-routing.spec.ts",
+  ],
   use: { baseURL: "http://127.0.0.1:5179" },
   webServer: {
     command: "./node_modules/.bin/vite --host 127.0.0.1 --port 5179",
