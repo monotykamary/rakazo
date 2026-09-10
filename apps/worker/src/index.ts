@@ -121,6 +121,7 @@ async function main() {
   });
   const sandbox = machineRouting.sandbox;
   const piModels = localPi ? new LocalPiModelRuntimeService(localPi) : undefined;
+  void piModels?.read?.().catch(() => undefined);
   const resolveOfficeModelRuntime = createLocalOfficeModelResolver(prisma, piModels);
   const mcpOAuth = new McpOAuthBroker(prisma, secrets);
   const mcp = new McpConnector(
@@ -255,6 +256,7 @@ async function main() {
         await realtime.close();
         await connector.stop();
         await mcp.close();
+        await piModels?.close?.().catch(() => undefined);
         await prisma.$disconnect().catch(() => undefined);
         await pool.end().catch(() => undefined);
       } finally {

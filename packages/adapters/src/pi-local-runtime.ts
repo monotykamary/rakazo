@@ -978,6 +978,7 @@ export class LocalPiRuntime implements AgentRuntime {
   private readonly command: string;
   private readonly cwd: string;
   private readonly sessionDir: string;
+  private piVersionVerified = false;
 
   constructor(options: LocalPiRuntimeOptions) {
     if (!options.cwd || !isAbsolute(options.cwd)) throw new Error("Local Pi cwd must be absolute");
@@ -1086,7 +1087,10 @@ export class LocalPiRuntime implements AgentRuntime {
     }
     signal.throwIfAborted();
     const env = sanitizedLocalPiEnvironment();
-    await verifyPiVersion(this.command, cwd, env);
+    if (!this.piVersionVerified) {
+      await verifyPiVersion(this.command, cwd, env);
+      this.piVersionVerified = true;
+    }
     signal.throwIfAborted();
 
     const session = await prepareSession(sessionDir, cwd, request, root);

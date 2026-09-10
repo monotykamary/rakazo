@@ -457,6 +457,9 @@ describe("LocalPiRuntime", () => {
     ).rejects.toThrow("checkpoint ownership");
     starts = (await readLocalPiEmulatorLog(cwd)).filter((entry) => entry.type === "start");
     expect(starts).toHaveLength(2);
+    expect(
+      (await readLocalPiEmulatorLog(cwd)).filter((entry) => entry.type === "version"),
+    ).toHaveLength(1);
   });
 
   it("fences concurrent owners of the same bot/thread session", async () => {
@@ -1016,7 +1019,8 @@ describe("LocalPiRuntime", () => {
       (entry) => entry.type === "start",
     ).length;
     await writeLocalPiScenario(cwd, { version: "0.84.9" });
-    await expect(collect(runtime, request({ runId: "old-version" }))).rejects.toThrow(
+    const versionRuntime = new LocalPiRuntime({ command, cwd, sessionDir });
+    await expect(collect(versionRuntime, request({ runId: "old-version" }))).rejects.toThrow(
       "0.85.1 or newer",
     );
     expect(

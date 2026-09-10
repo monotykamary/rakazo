@@ -329,6 +329,7 @@ export async function createApp(
     (env.agentRuntime === "pi-local" && env.localPi
       ? new LocalPiModelRuntimeService(env.localPi)
       : undefined);
+  void piModels?.read?.().catch(() => undefined);
   const resolveOfficeModelRuntime =
     officeModelsOverride ??
     createLocalOfficeModelResolver(prisma, env.agentRuntime === "pi-local" ? piModels : undefined);
@@ -889,6 +890,7 @@ export async function createApp(
       await realtime.close();
       await connector.stop();
       await mcp.close();
+      await piModels?.close?.().catch(() => undefined);
       await prisma.$disconnect().catch(() => undefined);
       await created.pool?.end().catch(() => undefined);
       await logger.flush({ timeoutMs: 2_000 });

@@ -13,6 +13,7 @@ const scenario = JSON.parse(await readFile(scenarioPath, "utf8").catch(() => "{}
 const log = (value) => appendFile(logPath, JSON.stringify(value) + "\\n");
 
 if (process.argv.includes("--version")) {
+  await log({ type: "version" });
   process.stdout.write((scenario.version ?? "0.85.1") + "\\n");
   process.exit(0);
 }
