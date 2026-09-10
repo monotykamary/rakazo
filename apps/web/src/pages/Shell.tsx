@@ -120,14 +120,15 @@ import {
   Reply,
   Search,
   Settings,
-  Smile,
   Square,
+  ThumbsUp,
   Trash2,
   Volume2,
   X,
 } from "lucide-react";
 import {
   type ClipboardEvent,
+  type CSSProperties,
   type DragEvent,
   lazy,
   type MutableRefObject,
@@ -153,7 +154,11 @@ import {
   ComputersUnavailableHint,
   computersAreUnavailable,
 } from "../components/ComputersUnavailableHint";
-import { MessageActivityLinks } from "../components/MessageActivityLinks";
+import {
+  lastMessageExecution,
+  MessageActivityLinks,
+  MessageExecutionButton,
+} from "../components/MessageActivityLinks";
 import { MessageHoverMetadata } from "../components/MessageHoverMetadata";
 import { OutgoingDraftCard } from "../components/OutgoingDraftCard";
 import { ThreadInspector, type ThreadInspectorTarget } from "../components/ThreadInspector";
@@ -1899,17 +1904,26 @@ export function ShellPage() {
     }
   }, []);
   const reactToMessage = useCallback(
-    async (message: ThreadMessage, reaction: MessageReaction) => {
+    async (message: ThreadMessage, reaction: MessageReaction | null) => {
       const botId = activeBotId.current;
       const groupId = activeGroupId.current;
       if (!botId && !groupId) return;
+      if (message.role === "user") return;
       try {
-        await rpc.threads.react({
-          ...(groupId ? { groupId } : { botId: botId! }),
-          messageId: message.id,
-          reaction,
-          clientNonce: newClientNonce(),
-        });
+        await rpc.threads.react(
+          reaction
+            ? {
+                ...(groupId ? { groupId } : { botId: botId! }),
+                messageId: message.id,
+                reaction,
+                clientNonce: newClientNonce(),
+              }
+            : {
+                ...(groupId ? { groupId } : { botId: botId! }),
+                messageId: message.id,
+                clear: true,
+              },
+        );
       } catch (error) {
         const stillHere = groupId
           ? activeGroupId.current === groupId
@@ -2918,7 +2932,7 @@ export function ShellPage() {
                                 <span
                                   dir="auto"
                                   data-roster-bot-name={item.kind === "bot" ? "" : undefined}
-                                  className={`truncate text-[15px] text-foreground ${
+                                  className={`truncate text-[14px] text-foreground ${
                                     item.chat.unread ? "font-semibold" : "font-medium"
                                   }`}
                                 >
@@ -3089,9 +3103,9 @@ export function ShellPage() {
           <Popover open={menuOpen} onOpenChange={setMenuOpen}>
             <PopoverTrigger
               data-testid="user-menu-trigger"
-              className="flex items-center gap-[11px] px-[18px] py-3.5"
+              className="mx-3 mb-3 flex items-center gap-3 rounded-[11px] px-2.5 py-2 hover:bg-background"
             >
-              <span className="grid h-8 w-8 place-items-center rounded-full bg-accent text-[12px] text-foreground/75">
+              <span className="grid h-[30px] w-[30px] place-items-center rounded-full bg-accent text-[12px] text-foreground/75">
                 {initials}
               </span>
               <span className="text-[14.5px] text-foreground/90">{userName}</span>
@@ -4323,7 +4337,7 @@ export function ShellPage() {
                   variant="overlay"
                 />
               ) : (
-                <span className="truncate text-[15.5px] font-medium text-foreground" dir="auto">
+                <span className="truncate text-[14.5px] font-medium text-foreground" dir="auto">
                   {computerLabel(computer?.mode, active.name)}
                 </span>
               )}
@@ -4483,7 +4497,7 @@ export const Transcript = memo(function Transcript({
   onOpenBot: (botId: string) => void;
   onAnswer: (message: ThreadMessage, text: string) => Promise<void>;
   onReply: (message: ThreadMessage) => void;
-  onReact: (message: ThreadMessage, reaction: MessageReaction) => Promise<void>;
+  onReact: (message: ThreadMessage, reaction: MessageReaction | null) => Promise<void>;
   onJumpToMessage: (messageId: string) => void;
   onOpenPeerMessages: (peer: { botId?: string; peerBotId: string; peerBotName: string }) => void;
   onOpenExecution: (runId: string, botId?: string) => void;
@@ -4684,13 +4698,23 @@ export const Transcript = memo(function Transcript({
                   }
                 >
                   {peerReceipt ? null : (
-                    <MessageHoverActions
-                      below={hasOutgoingDraft}
-                      message={message}
-                      side={message.role === "user" ? "start" : "end"}
-                      onReply={onReply}
-                      onReact={onReact}
-                    />
+                    <>
+                      <MessageHoverActions
+                        below={hasOutgoingDraft}
+                        message={message}
+                        side={message.role === "user" ? "start" : "end"}
+                        execution={lastMessageExecution(activities)}
+                        onReply={onReply}
+                        onExecution={onOpenExecution}
+                      />
+                      {canReactToThreadMessage(message) && message.role !== "user" ? (
+                        <MessageBubbleReaction
+                          message={message}
+                          reactions={messageReactions}
+                          onReact={onReact}
+                        />
+                      ) : null}
+                    </>
                   )}
                   <MessageView
                     artifactTarget={artifactTarget}
@@ -4726,30 +4750,10 @@ export const Transcript = memo(function Transcript({
                     activities={activities}
                     peerBot={peerBot}
                     onPeer={onOpenPeerMessages}
-                    onExecution={onOpenExecution}
                     onRoutine={onOpenRoutine}
                   />
                 </div>
               </div>
-              {!peerReceipt && messageReactions ? (
-                <div
-                  data-testid="message-reactions"
-                  className={cn(
-                    "mt-1 flex flex-wrap gap-1",
-                    message.role === "user" && "justify-end",
-                  )}
-                >
-                  {[...messageReactions].map(([emoji, count]) => (
-                    <span
-                      key={emoji}
-                      className="rounded-full border border-border bg-muted px-2 py-0.5 text-xs"
-                    >
-                      {emoji}
-                      {count > 1 ? ` ${count}` : ""}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
             </div>
           );
         })}
@@ -5581,7 +5585,7 @@ export const Composer = memo(function Composer({
             autoComplete="off"
             dir="auto"
             rows={1}
-            className="max-h-32 min-h-[24px] min-w-[8rem] flex-1 resize-none overflow-y-auto bg-transparent py-0.5 text-[15.5px] leading-6 text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-40"
+            className="max-h-32 min-h-[24px] min-w-[8rem] flex-1 resize-none overflow-y-auto bg-transparent py-0.5 text-[14.5px] leading-6 text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-40"
           />
         </div>
         {onVoice ? (
@@ -5788,22 +5792,108 @@ function previewMessageText(message: ThreadMessage): string {
   return t`Message`;
 }
 
+function MessageBubbleReaction({
+  message,
+  reactions,
+  onReact,
+}: {
+  message: ThreadMessage;
+  reactions?: ReadonlyMap<string, number>;
+  onReact: (message: ThreadMessage, reaction: MessageReaction | null) => Promise<void>;
+}) {
+  const { t } = useLingui();
+  const entries = reactions ? [...reactions] : [];
+  return (
+    <div
+      data-testid="message-reactions"
+      className="group/edge absolute bottom-0 end-0 z-10 h-1/4 w-1/4"
+      onContextMenu={(event) => {
+        if (!entries.length) return;
+        event.preventDefault();
+        void onReact(message, null);
+      }}
+    >
+      <div
+        className={cn(
+          "group/thumb absolute bottom-0 end-1 translate-y-1/2",
+          entries.length
+            ? "opacity-100"
+            : "pointer-events-none opacity-0 transition-opacity duration-150 group-hover/edge:pointer-events-auto group-hover/edge:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100",
+        )}
+      >
+        <div
+          role="toolbar"
+          aria-label={t`Reactions`}
+          className="pointer-events-none absolute bottom-full left-1/2 flex -translate-x-1/2 flex-col items-center pb-0.5 opacity-0 transition-opacity duration-150 group-hover/thumb:pointer-events-auto group-hover/thumb:opacity-100 group-focus-within/thumb:pointer-events-auto group-focus-within/thumb:opacity-100"
+        >
+          <div className="flex items-center gap-0.5 rounded-full border border-border bg-card px-1.5 py-1 shadow-md">
+            {MESSAGE_REACTIONS.map((emoji, index) => (
+              <button
+                key={emoji}
+                type="button"
+                aria-label={emoji}
+                className="grid size-8 place-items-center rounded-full text-[18px] hover:bg-accent"
+                onClick={() => void onReact(message, emoji)}
+              >
+                <span
+                  className="inline-block origin-center scale-0 transition-transform duration-200 ease-out group-hover/thumb:scale-100 group-hover/thumb:[transition-delay:var(--reaction-delay)] group-focus-within/thumb:scale-100 group-focus-within/thumb:[transition-delay:var(--reaction-delay)] motion-reduce:scale-100 motion-reduce:transition-none"
+                  style={{ ["--reaction-delay"]: `${index * 40}ms` } as CSSProperties}
+                >
+                  {emoji}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <button
+          type="button"
+          aria-label={t`React`}
+          className={cn(
+            "grid min-h-7 min-w-7 place-items-center rounded-full bg-card leading-none shadow-sm",
+            entries.length
+              ? "border border-border px-1.5 py-0.5"
+              : "size-7 border border-dotted border-muted-foreground/55 text-muted-foreground",
+          )}
+        >
+          {entries.length ? (
+            <span className="flex items-center gap-1">
+              {entries.map(([emoji, count]) => (
+                <span key={emoji} className="flex items-center gap-0.5 text-[13px]">
+                  <span>{emoji}</span>
+                  {count > 1 ? (
+                    <span className="text-[10px] font-medium tabular-nums text-muted-foreground">
+                      {count}
+                    </span>
+                  ) : null}
+                </span>
+              ))}
+            </span>
+          ) : (
+            <ThumbsUp size={13} strokeWidth={1.6} />
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function MessageHoverActions({
   below = false,
   message,
   side,
+  execution,
   onReply,
-  onReact,
+  onExecution,
 }: {
   message: ThreadMessage;
   side: "start" | "end";
   below?: boolean;
+  execution?: { runId: string; botId?: string };
   onReply: (message: ThreadMessage) => void;
-  onReact: (message: ThreadMessage, reaction: MessageReaction) => Promise<void>;
+  onExecution: (runId: string, botId?: string) => void;
 }) {
   const { t } = useLingui();
   const [moreOpen, setMoreOpen] = useState(false);
-  const [reactionsOpen, setReactionsOpen] = useState(false);
 
   // Streaming progress bubbles keep hover free for selection / stop clicks.
   if (message.id.startsWith("progress:")) return null;
@@ -5818,41 +5908,8 @@ function MessageHoverActions({
     "grid h-7 w-7 place-items-center text-muted-foreground transition-colors hover:text-foreground";
 
   return (
-    <MessageHoverMetadata pinned={moreOpen || reactionsOpen} side={side} below={below}>
+    <MessageHoverMetadata pinned={moreOpen} side={side} below={below}>
       <div data-testid="message-hover-actions" className="flex items-center gap-0.5">
-        {canReactToThreadMessage(message) ? (
-          <Popover open={reactionsOpen} onOpenChange={setReactionsOpen}>
-            <PopoverTrigger
-              aria-label={t`React`}
-              className={cn(
-                iconButtonClass,
-                "h-11 w-11 [@media(hover:hover)_and_(pointer:fine)]:h-7 [@media(hover:hover)_and_(pointer:fine)]:w-7",
-              )}
-            >
-              <Smile size={15} strokeWidth={1.7} />
-            </PopoverTrigger>
-            <PopoverContent
-              align={side === "end" ? "start" : "end"}
-              className="w-auto flex-row gap-0 rounded-2xl p-1.5"
-              aria-label={t`Reactions`}
-            >
-              {MESSAGE_REACTIONS.map((emoji) => (
-                <button
-                  key={emoji}
-                  type="button"
-                  aria-label={emoji}
-                  className="grid h-11 w-11 place-items-center rounded-xl text-2xl hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
-                  onClick={() => {
-                    setReactionsOpen(false);
-                    void onReact(message, emoji);
-                  }}
-                >
-                  {emoji}
-                </button>
-              ))}
-            </PopoverContent>
-          </Popover>
-        ) : null}
         <button
           type="button"
           aria-label={t`Reply`}
@@ -5861,6 +5918,17 @@ function MessageHoverActions({
         >
           <Reply size={15} strokeWidth={1.7} />
         </button>
+        {execution ? (
+          <MessageExecutionButton
+            runId={execution.runId}
+            botId={execution.botId}
+            onExecution={onExecution}
+            className={cn(
+              iconButtonClass,
+              "h-11 w-11 [@media(hover:hover)_and_(pointer:fine)]:h-7 [@media(hover:hover)_and_(pointer:fine)]:w-7",
+            )}
+          />
+        ) : null}
         <DropdownMenu open={moreOpen} onOpenChange={setMoreOpen}>
           <DropdownMenuTrigger
             aria-label={t`More`}
@@ -5879,6 +5947,14 @@ function MessageHoverActions({
               <Reply size={15} />
               <Trans>Reply</Trans>
             </DropdownMenuItem>
+            {execution ? (
+              <DropdownMenuItem
+                className="[@media(hover:hover)_and_(pointer:fine)]:hidden"
+                onClick={() => onExecution(execution.runId, execution.botId)}
+              >
+                <Trans>Execution</Trans>
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem onClick={copyMessage}>
               <Copy size={14} strokeWidth={1.7} />
               <Trans>Copy</Trans>
@@ -6030,7 +6106,7 @@ const MessageView = memo(function MessageView({
         <div className="flex w-fit max-w-full justify-start">
           <div
             data-testid="message-bot-bubble"
-            className="max-w-full space-y-2.5 rounded-[20px] bg-muted px-[18px] py-3 text-[15.5px] leading-[1.5] text-foreground/90"
+            className="max-w-full space-y-2.5 rounded-[20px] bg-muted px-[18px] py-3 text-[14.5px] leading-[1.5] text-foreground/90"
             dir="auto"
           >
             {visibleNarrationBlocks.map((block, i) => {
@@ -6123,7 +6199,7 @@ const MessageView = memo(function MessageView({
             <div key={i} className="flex w-fit max-w-full justify-start">
               <div
                 data-testid="message-bot-bubble"
-                className="max-w-full rounded-[20px] bg-muted px-[18px] py-3 text-[15.5px] leading-[1.5] text-foreground/90"
+                className="max-w-full rounded-[20px] bg-muted px-[18px] py-3 text-[14.5px] leading-[1.5] text-foreground/90"
                 dir="auto"
               >
                 <ChatMarkdown streaming>{block.text}</ChatMarkdown>
@@ -6140,7 +6216,7 @@ const MessageView = memo(function MessageView({
               className="w-[min(420px,90%)] rounded-[18px] border border-border bg-muted px-[18px] py-4"
             >
               <div className="flex items-center justify-between gap-3">
-                <span className="text-[15px] font-medium text-foreground" dir="auto">
+                <span className="text-[14px] font-medium text-foreground" dir="auto">
                   {block.name}
                 </span>
                 <span
@@ -6180,7 +6256,7 @@ const MessageView = memo(function MessageView({
               className="w-[min(340px,90%)] rounded-[18px] border border-border bg-muted px-[18px] py-4 text-start disabled:opacity-60"
             >
               <div className="flex items-center justify-between">
-                <span className="text-[15px] font-medium text-foreground" dir="auto">
+                <span className="text-[14px] font-medium text-foreground" dir="auto">
                   {block.name}
                 </span>
                 <span
@@ -6277,7 +6353,7 @@ const MessageView = memo(function MessageView({
             <div key={i} className="flex w-fit max-w-full justify-end">
               <div
                 data-testid="message-user-bubble"
-                className="max-w-full whitespace-pre-wrap wrap-anywhere rounded-[20px] bg-secondary px-[18px] py-3 text-[15.5px] leading-[1.45] text-secondary-foreground"
+                className="max-w-full whitespace-pre-wrap wrap-anywhere rounded-[20px] bg-secondary px-[18px] py-3 text-[14.5px] leading-[1.45] text-secondary-foreground"
                 dir="auto"
               >
                 {block.text}
@@ -6290,7 +6366,7 @@ const MessageView = memo(function MessageView({
             <div key={i} className="flex w-fit max-w-full justify-start">
               <div
                 data-testid="message-bot-bubble"
-                className="max-w-full rounded-[20px] bg-muted px-[18px] py-3 text-[15.5px] leading-[1.5] text-foreground/90"
+                className="max-w-full rounded-[20px] bg-muted px-[18px] py-3 text-[14.5px] leading-[1.5] text-foreground/90"
                 dir="auto"
               >
                 <ChatMarkdown>{block.text}</ChatMarkdown>
@@ -6313,7 +6389,7 @@ const MessageView = memo(function MessageView({
             <div key={i} className="flex justify-start">
               <div className="flex flex-col gap-2 rounded-[20px] bg-muted px-5 py-4">
                 {block.lines.map((line) => (
-                  <div key={line.k} className="flex items-baseline gap-2.5 text-[15px]">
+                  <div key={line.k} className="flex items-baseline gap-2.5 text-[14px]">
                     <span className="text-success">✓</span>
                     <span className="font-semibold text-white">{line.k}</span>
                     <span className="text-muted-foreground">→</span>
@@ -6362,7 +6438,7 @@ const MessageView = memo(function MessageView({
               className="w-[340px] rounded-[18px] border border-border bg-muted px-[18px] py-4"
             >
               <div className="flex items-center justify-between">
-                <span className="text-[15px] font-medium text-foreground">
+                <span className="text-[14px] font-medium text-foreground">
                   <Trans>Computer</Trans>
                 </span>
                 <span

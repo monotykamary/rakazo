@@ -44,25 +44,36 @@ export function formatExecutionTime(iso: string, now = Date.now()): string {
 export function ExecutionTraceList({
   events,
   now,
+  selectedId,
+  onSelect,
 }: {
   events: ProductEvent[];
   now?: number;
+  selectedId?: string;
+  onSelect?: (id: string | undefined) => void;
 }) {
   const groups = groupExecutionTrace(events);
   const [openId, setOpenId] = useState<string>();
   return (
-    <ol className="ms-1 border-s border-border" aria-label={t`Retained events`} data-testid="execution-trace">
+    <ol className="min-w-0" aria-label={t`Retained events`} data-testid="execution-trace">
       {groups.map((group) => {
         const event = group.events[group.events.length - 1]!;
-        const expanded = openId === event.id;
+        const expanded = (selectedId ?? openId) === event.id;
         const preview = executionTracePreview(event.payload);
         return (
           <li key={event.id} className="min-w-0">
             <button
               type="button"
               aria-expanded={expanded}
-              onClick={() => setOpenId(expanded ? undefined : event.id)}
-              className="flex w-full min-w-0 items-center gap-2 py-1.5 ps-3 pe-1 text-start"
+              aria-pressed={expanded}
+              onClick={() => {
+                const next = expanded ? undefined : event.id;
+                if (onSelect) onSelect(next);
+                else setOpenId(next);
+              }}
+              className={`flex w-full min-w-0 items-center gap-2 py-1.5 ps-3 pe-1 text-start transition-colors duration-200 ease-[cubic-bezier(.22,1,.36,1)] motion-reduce:transition-none ${
+                expanded ? "bg-muted/60" : "hover:bg-muted/40"
+              }`}
             >
               <span className="w-[4.75rem] shrink-0 text-[10px] font-medium tracking-[0.08em] text-muted-foreground uppercase">
                 {executionTraceKindLabel(group.kind, event.type)}
@@ -83,7 +94,7 @@ export function ExecutionTraceList({
                 }`}
               />
             </button>
-            {expanded ? (
+            {!onSelect && expanded ? (
               <pre className="mb-2 ms-[5.5rem] overflow-auto whitespace-pre-wrap break-words pe-2 text-[11px] leading-5 text-muted-foreground">
                 {JSON.stringify(event.payload, null, 2)}
               </pre>

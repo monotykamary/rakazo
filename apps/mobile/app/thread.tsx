@@ -22,6 +22,7 @@ import {
   isRunTerminalEvent,
   isSecretAskBlock,
   latestAnswerableAskMessageId,
+  liveWorkingLabel,
   mentionChipKey,
   projectMessageActivity,
   projectMessageReactions,
@@ -433,7 +434,7 @@ function Thread() {
   const notificationThreadId = snap?.threadId ?? currentBot?.threadId;
   activeThreadId.current = notificationThreadId;
   const currentBotStatus = snap ? snap.run?.status : currentBot?.status;
-  const hasLiveProgress = visibleMessages.some((message) => message.id.startsWith("progress:"));
+  const workingLabel = liveWorkingLabel(visibleMessages) ?? t("Working");
   const workingGroupBots = useMemo(() => {
     if (!inGroup) return [];
     const seen = new Set<string>();
@@ -1519,17 +1520,33 @@ function Thread() {
     );
   }
 
-  async function reactToMessage(message: MobileMessage, reaction: MessageReaction) {
+  async function reactToMessage(
+    message: MobileMessage,
+    reaction: MessageReaction,
+    action: "add" | "remove" | "clear" = "add",
+  ) {
     const targetBotId = botId;
     const targetGroupId = groupId;
     if (!targetBotId && !targetGroupId) return;
+    const scope = targetGroupId ? { groupId: targetGroupId } : { botId: targetBotId! };
     try {
-      await rpc("threads/react", {
-        ...(targetGroupId ? { groupId: targetGroupId } : { botId: targetBotId! }),
-        messageId: message.id,
-        reaction,
-        clientNonce: newClientNonce(),
-      });
+      if (action === "clear") {
+        await rpc("threads/react", { ...scope, messageId: message.id, clear: true });
+      } else if (action === "remove") {
+        await rpc("threads/react", {
+          ...scope,
+          messageId: message.id,
+          reaction,
+          remove: true,
+        });
+      } else {
+        await rpc("threads/react", {
+          ...scope,
+          messageId: message.id,
+          reaction,
+          clientNonce: newClientNonce(),
+        });
+      }
     } catch (err) {
       if (!isCurrentTarget(targetBotId, targetGroupId)) return;
       setError(err instanceof Error ? err.message : t("Could not update reaction"));
@@ -1699,22 +1716,28 @@ function Thread() {
               }}
             >
               {[...messageReactions].map(([emoji, count]) => (
-                <Text
+                <Pressable
                   key={emoji}
-                  style={{
-                    color: tokens.foreground,
-                    backgroundColor: tokens.muted,
-                    borderColor: tokens.border,
-                    borderWidth: 1,
-                    borderRadius: 16,
-                    paddingHorizontal: 8,
-                    paddingVertical: 2,
-                    fontSize: 13,
-                  }}
+                  accessibilityLabel={t("Remove {emoji}", { emoji })}
+                  onPress={() => void reactToMessage(message, emoji, "remove")}
+                  onLongPress={() => void reactToMessage(message, emoji, "clear")}
                 >
-                  {emoji}
-                  {count > 1 ? ` ${count}` : ""}
-                </Text>
+                  <Text
+                    style={{
+                      color: tokens.foreground,
+                      backgroundColor: tokens.muted,
+                      borderColor: tokens.border,
+                      borderWidth: 1,
+                      borderRadius: 16,
+                      paddingHorizontal: 8,
+                      paddingVertical: 2,
+                      fontSize: 13,
+                    }}
+                  >
+                    {emoji}
+                    {count > 1 ? ` ${count}` : ""}
+                  </Text>
+                </Pressable>
               ))}
             </View>
           ) : null}
@@ -1724,9 +1747,9 @@ function Thread() {
   }
 
   const workingFooter =
-    !inGroup && currentBot && isWorkingStatus(currentBotStatus) && !hasLiveProgress ? (
+    !inGroup && currentBot && isWorkingStatus(currentBotStatus) ? (
       <View
-        accessibilityLabel={t("{name} is working", { name: currentBot.name })}
+        accessibilityLabel={workingLabel}
         accessibilityRole="text"
         style={{
           flexDirection: "row",
@@ -1744,11 +1767,7 @@ function Thread() {
       </View>
     ) : inGroup && workingGroupBots.length > 0 ? (
       <View
-        accessibilityLabel={
-          workingGroupBots.length === 1
-            ? t("{name} is working", { name: workingGroupBots[0]?.name ?? t("Agent") })
-            : t("{count} agents working", { count: workingGroupBots.length })
-        }
+        accessibilityLabel={workingLabel}
         accessibilityRole="text"
         style={{
           flexDirection: "row",
@@ -2361,7 +2380,7 @@ function Thread() {
             <NativeSymbol
               ios={actionIsStop ? "stop.fill" : "arrow.up"}
               android={actionIsStop ? "stop" : "arrow-up"}
-              size={actionIsStop ? 15 : 18}
+              size={18}
               color={tokens.primaryForeground}
             />
           </Pressable>

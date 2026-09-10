@@ -10,7 +10,7 @@ const shapes = {
     "M11 12 C11 12 16 12 16 12 C16 12 21 12 21 12",
   ],
   edit: ["M9 16 C9 16 14 11 14 11 C14 11 20 5 20 5", "M4 11 C4 11 9 16 9 16 C9 16 20 5 20 5"],
-  stop: ["M8 8 C8 8 16 8 16 8 C16 8 16 16 16 16", "M16 16 C16 16 8 16 8 16 C8 16 8 8 8 8"],
+  stop: ["M5 5 C5 5 19 5 19 5 C19 5 19 19 19 19", "M19 19 C19 19 5 19 5 19 C5 19 5 5 5 5"],
 } as const;
 
 export function ComposerActionIcon({ mode }: { mode: keyof typeof shapes }) {

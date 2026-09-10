@@ -35,7 +35,7 @@ export function CollaborationMarker({
 
 export function ActiveBotGlyph({ bots, label }: { bots: GroupAvatarMember[]; label: string }) {
   return (
-    <div className="flex min-h-10 items-center px-1">
+    <div className="-mb-1 flex w-full items-center px-1">
       <LoadingState indicator={<GroupAvatar members={bots} size={28} />} label={label} />
     </div>
   );

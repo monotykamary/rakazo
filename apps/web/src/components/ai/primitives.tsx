@@ -11,7 +11,7 @@ import "./beautiful-ui.css";
 /** A light sweep travelling across a text label. */
 export function Shimmer({ children }: { children: React.ReactNode }) {
   return (
-    <span className="animate-[bui-shimmer-text_1.4s_linear_infinite] bg-linear-to-r from-muted-foreground from-35% via-foreground via-50% to-muted-foreground to-65% bg-size-[200%_100%] bg-clip-text text-transparent">
+    <span className="animate-[bui-shimmer-text_1.4s_linear_infinite] bg-linear-to-r from-muted-foreground from-35% via-foreground via-50% to-muted-foreground to-65% bg-size-[200%_100%] bg-clip-text text-transparent motion-reduce:animate-none motion-reduce:bg-none motion-reduce:bg-clip-border motion-reduce:text-muted-foreground">
       {children}
     </span>
   );
@@ -77,9 +77,18 @@ export function LoadingState({
 }) {
   if (indicator) {
     return (
-      <span role="status" className="flex w-fit items-center gap-2.5">
-        <span className="sr-only">{label}</span>
+      <span
+        role="status"
+        aria-label={label}
+        className="group/working relative flex w-full min-h-7 cursor-default items-center"
+      >
         {indicator}
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute start-full top-1/2 z-10 ms-1.5 -translate-y-1/2 text-[13.5px] font-medium whitespace-nowrap opacity-0 transition-opacity duration-200 ease-[cubic-bezier(.22,1,.36,1)] group-hover/working:opacity-100 group-focus-within/working:opacity-100 motion-reduce:transition-none"
+        >
+          <Shimmer>{label}</Shimmer>
+        </span>
       </span>
     );
   }

@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import { expectAlignedControls } from "../../../packages/testkit/src/playwright-layout";
 import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
 
 // Normal CI stack: exercise the mounted app screens, not fixture-only chrome.
@@ -69,17 +68,13 @@ test("thread queue, retained Flow, and Pi inventory screens", async ({ page }, t
   await page.getByRole("button", { name: "Inspect failed run", exact: true }).click();
   await expect(page.getByRole("dialog").getByText("run.failed", { exact: false })).toBeVisible();
   const inspector = page.getByRole("dialog", { name: "Execution", exact: true });
-  const runSelect = inspector.getByRole("combobox", { name: "Run", exact: true });
-  const flowButton = inspector.getByRole("button", { name: "Flow", exact: true });
-  await expectAlignedControls(runSelect, flowButton);
-  await flowButton.click();
+  await expect(inspector.getByRole("navigation", { name: "Run", exact: true })).toBeVisible();
   const outline = inspector.getByTestId("execution-flow");
   await expect(outline.locator("[data-flow-node]").first()).toBeVisible();
   await expect(outline.getByRole("region", { name: "Evidence", exact: true })).toHaveCount(0);
   await expect(outline).not.toContainText("run:");
   await captureScreenshot(page, testInfo, "app-execution-flow");
   await page.setViewportSize({ width: 390, height: 844 });
-  await expectAlignedControls(runSelect, flowButton);
   await expect
     .poll(() =>
       outline.evaluate((element) =>

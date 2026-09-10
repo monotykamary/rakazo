@@ -7,7 +7,7 @@
       import { i18n } from "@lingui/core";
       import { createElement as h, useState } from "react";
       import { createRoot } from "react-dom/client";
-      import { MessageActivityLinks } from "../../src/components/MessageActivityLinks.tsx";
+      import { MessageExecutionButton } from "../../src/components/MessageActivityLinks.tsx";
       import { ThreadInspector } from "../../src/components/ThreadInspector.tsx";
       import "../../src/styles.css";
 
@@ -17,7 +17,7 @@
         const [target, setTarget] = useState(null);
         return h("main", { className: "mx-auto max-w-3xl bg-background p-8 text-foreground" },
           h("p", {}, "Reviewed the patch."),
-          h(MessageActivityLinks, { activities: [{kind: "execution", runId: "run", botId: "bot"}], peerBot: () => undefined, onPeer: () => {}, onRoutine: () => {}, onExecution: (runId, botId) => setTarget({view: "execution", runId, botId}) }),
+          h(MessageExecutionButton, { runId: "run", botId: "bot", onExecution: (runId, botId) => setTarget({view: "execution", runId, botId}) }),
           h("details", {}, h("summary", {}, "Advanced"), h("button", {type: "button", onClick: () => setTarget({view: "queue", botId: "bot"})}, "Queue")),
           target && h(ThreadInspector, {threadId: "thread", members: [{botId: "bot", name: "Chief"}], runIds: ["run"], target, onClose: () => setTarget(null)})
         );

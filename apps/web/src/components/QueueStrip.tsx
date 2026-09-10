@@ -82,7 +82,8 @@ export const QueueStrip = forwardRef<
   const resuming = !snapshot?.drain && Boolean(snapshot?.paused || snapshot?.errorHold);
   const open = controlledOpen ?? localOpen ?? rows.length > 0;
 
-  useEffect(() => onPopulatedChange?.(rows.length > 0), [onPopulatedChange, rows.length]);
+  const visible = rows.length > 0 || Boolean(error) || Boolean(snapshot?.errorHold);
+  useEffect(() => onPopulatedChange?.(visible), [onPopulatedChange, visible]);
 
   useImperativeHandle(
     ref,

@@ -92,18 +92,8 @@ test("message hover shows beside-bubble actions; reply links to parent", async (
   const toolbar = parentRow.getByTestId("message-hover-actions");
   await expect(toolbar.getByRole("button", { name: "Reply" })).toBeVisible();
   await expect(toolbar.getByRole("button", { name: "More" })).toBeVisible();
-  const react = toolbar.getByRole("button", { name: "React", exact: true });
-  await expect(react).toBeVisible();
-  // Default reaction matches Reply/More: muted control color, not yellow.
-  await expect
-    .poll(async () => {
-      const mutedColor = await toolbar
-        .getByRole("button", { name: "More" })
-        .evaluate((el) => getComputedStyle(el).color);
-      const reactionColor = await react.evaluate((el) => getComputedStyle(el).color);
-      return reactionColor === mutedColor;
-    })
-    .toBe(true);
+  await expect(toolbar.getByRole("button", { name: "React", exact: true })).toHaveCount(0);
+  await expect(parentRow.getByTestId("message-reactions")).toHaveCount(0);
 
   // User bubble (right): icons sit to the left, vertically centered — not under the bubble.
   const frame = parentRow.getByTestId("message-bubble-frame");
@@ -190,15 +180,27 @@ test("message hover shows beside-bubble actions; reply links to parent", async (
   });
   await testInfo.attach("message-hover-toolbar", { contentType: "image/png", path: hoverPath });
 
-  await react.click();
-  await expect(page.getByRole("button", { name: "❤️", exact: true })).toBeVisible();
+  const edge = botRow.getByTestId("message-reactions");
+  await edge.hover();
+  const react = edge.getByRole("button", { name: "React" });
+  await expect(react).toBeVisible();
+  await expect(botRow.getByRole("toolbar", { name: "Reactions" })).toHaveCSS("opacity", "0");
+  await react.hover();
+  const picker = botRow.getByRole("toolbar", { name: "Reactions" });
+  await expect(picker.getByRole("button", { name: "❤️", exact: true })).toBeVisible();
   await captureScreenshot(page, testInfo, "message-reaction-picker");
-  await page.getByRole("button", { name: "❤️", exact: true }).click();
-  const reactionChip = parentRow.getByTestId("message-reactions");
+  await picker.getByRole("button", { name: "❤️", exact: true }).click();
+  const reactionChip = botRow.getByTestId("message-reactions");
   await expect(reactionChip).toContainText("❤️");
   await captureScreenshot(page, testInfo, "message-emoji-reaction");
-  await page.reload();
+  await reactionChip.click({ button: "right" });
+  await expect(reactionChip).not.toContainText("❤️");
+  await edge.hover();
+  await react.hover();
+  await picker.getByRole("button", { name: "❤️", exact: true }).click();
   await expect(reactionChip).toContainText("❤️");
+  await page.reload();
+  await expect(botRow.getByTestId("message-reactions")).toContainText("❤️");
 
   await parentRow.hover();
   await toolbar.getByRole("button", { name: "More" }).click();

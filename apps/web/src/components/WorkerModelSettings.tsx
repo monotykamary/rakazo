@@ -140,24 +140,6 @@ export function PiRuntimeModelSettings({ botId, threadId, participantId }: Model
           void save(next);
         }}
       />
-      <div className="flex gap-2">
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={busy || loading || !available}
-          onClick={() => void save(null)}
-        >
-          {participantId ? t`Use bot model` : t`Use Pi selection`}
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={busy || loading}
-          onClick={() => void refresh(true)}
-        >
-          {loading ? t`Refreshing…` : t`Refresh`}
-        </Button>
-      </div>
     </div>
   );
 }

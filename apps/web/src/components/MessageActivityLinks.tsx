@@ -4,27 +4,56 @@ import { BotAvatar } from "@rakazo/ui-web";
 import { Activity, Clock } from "lucide-react";
 import { useState } from "react";
 
+export function MessageExecutionButton({
+  runId,
+  botId,
+  onExecution,
+  className,
+}: {
+  runId: string;
+  botId?: string;
+  onExecution: (runId: string, botId?: string) => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={t`Execution`}
+      onClick={() => onExecution(runId, botId)}
+      className={className}
+    >
+      <Activity size={15} strokeWidth={1.7} aria-hidden="true" />
+    </button>
+  );
+}
+
+export function lastMessageExecution(activities: readonly MessageActivity[]) {
+  for (let i = activities.length - 1; i >= 0; i--) {
+    const activity = activities[i];
+    if (activity?.kind === "execution") return activity;
+  }
+}
+
 export function MessageActivityLinks({
   activities,
   peerBot,
   onPeer,
-  onExecution,
   onRoutine,
 }: {
   activities: readonly MessageActivity[];
   peerBot: (botId: string) => { color: string } | undefined;
   onPeer: (peer: { botId?: string; peerBotId: string; peerBotName: string }) => void;
-  onExecution: (runId: string, botId?: string) => void;
   onRoutine: (routineId: string, botId?: string) => void | Promise<void>;
 }) {
   const [error, setError] = useState<string>();
-  if (!activities.length) return null;
+  const links = activities.filter((activity) => activity.kind !== "execution");
+  if (!links.length) return null;
   return (
     <div
       className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1"
       data-testid="message-activity"
     >
-      {activities.map((activity) =>
+      {links.map((activity) =>
         activity.kind === "peer" ? (
           <button
             key={`peer:${activity.botId}:${activity.peerBotId}`}
@@ -70,17 +99,7 @@ export function MessageActivityLinks({
               {activity.name}
             </span>
           </button>
-        ) : (
-          <button
-            key={`execution:${activity.runId}`}
-            type="button"
-            onClick={() => onExecution(activity.runId, activity.botId)}
-            className="inline-flex items-center gap-1.5 rounded px-1 py-1 text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground"
-          >
-            <Activity size={14} aria-hidden="true" />
-            {t`Execution`}
-          </button>
-        ),
+        ) : null,
       )}
       {error && (
         <span role="alert" className="text-xs text-destructive">

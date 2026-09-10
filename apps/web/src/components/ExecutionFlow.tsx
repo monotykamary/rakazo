@@ -5,17 +5,15 @@ import type {
   ExecutionFlow as Flow,
 } from "@rakazo/contracts";
 import { executionFlowRows } from "@rakazo/core";
-import { Button, Card } from "@rakazo/ui-web";
+import { SpringDisclosure } from "@rakazo/ui-web/components/ui/motion";
 import {
   Bot,
-  ChevronRight,
   Code2,
   CornerDownRight,
   Hourglass,
   MessageSquare,
   RotateCcw,
 } from "lucide-react";
-import { useId, useState } from "react";
 
 function nodeTitle(node: ExecutionFlowNode, ordinal: number, relationships: ExecutionFlowEdge[]) {
   if (node.name) {
@@ -105,22 +103,19 @@ export function ExecutionFlow({
   flow,
   rootRunId,
   runIds = [],
+  selectedId,
+  onSelect,
   onRun,
   onEvidence,
 }: {
   flow: Flow;
   rootRunId?: string;
   runIds?: string[];
+  selectedId?: string;
+  onSelect?: (id: string | undefined) => void;
   onRun: (runId: string) => void;
   onEvidence: (ids: string[]) => void;
 }) {
-  const runTitle = (id: string | undefined, ordinal: number) => {
-    const index = runIds.indexOf(id ?? "");
-    return index >= 0 ? t`Run ${index + 1}` : t`Related run ${ordinal}`;
-  };
-  const detailsId = useId();
-  const [selectedId, setSelectedId] = useState<string>();
-  const [edgeId, setEdgeId] = useState<string>();
   const rows = executionFlowRows(flow, rootRunId);
   const ordinals = new Map<ExecutionFlowNode["kind"], number>();
   const names = new Map(
@@ -130,163 +125,70 @@ export function ExecutionFlow({
       return [node.id, nodeTitle(node, ordinal, relationships)] as const;
     }),
   );
+  if (rows.length === 0) return null;
   return (
-    <div className="min-w-0 space-y-3" data-testid="execution-flow">
-      {rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t`No retained relationships`}</p>
-      ) : (
-        <Card className="gap-0 p-2">
-          <ol aria-label={t`Flow`} className="min-w-0 space-y-1">
-            {rows.map(({ node, depth, parent, relationships, runs }, index) => {
-              const expanded = selectedId === node.id;
-              const edge = expanded ? relationships.find((item) => item.id === edgeId) : undefined;
-              const evidence = edge?.evidence ?? node.evidence;
-              const eventIds = evidence
-                .filter((item) => item.kind === "event")
-                .map((item) => item.id);
-              const Icon = nodeIcons[node.kind];
-              const focusedRun = runs.find((run) => run.runId === rootRunId);
-              const focusedStatus = focusedRun?.status ?? node.status;
-              const code =
-                node.code ?? focusedRun?.code ?? (runs.length === 1 ? runs[0]?.code : undefined);
-              const status =
-                statusLabel(focusedStatus) ??
-                (runs.length > 1 ? t`${runs.length} runs` : undefined);
-              const failed = focusedStatus === "failed" || focusedStatus === "run.failed";
-              const id = `${detailsId}-${index}`;
-              return (
-                <li
-                  key={node.id}
-                  className="min-w-0"
-                  style={{ paddingInlineStart: Math.min(depth, 3) * 16 }}
+    <ol aria-label={t`Flow`} className="min-w-0 space-y-0.5" data-testid="execution-flow">
+      {rows.map(({ node, depth, parent, runs }) => {
+        const Icon = nodeIcons[node.kind];
+        const selected = selectedId === node.id;
+        const focusedRun = runs.find((run) => run.runId === rootRunId);
+        const focusedStatus = focusedRun?.status ?? node.status;
+        const status = statusLabel(focusedStatus);
+        const failed = focusedStatus === "failed" || focusedStatus === "run.failed";
+        const eventIds = node.evidence.filter((item) => item.kind === "event").map((item) => item.id);
+        return (
+          <li
+            key={node.id}
+            className="min-w-0"
+            style={{ paddingInlineStart: Math.min(depth, 3) * 12 }}
+          >
+            <button
+              type="button"
+              data-flow-node={node.id}
+              aria-pressed={selected}
+              onClick={() => {
+                onSelect?.(selected ? undefined : node.id);
+                if (node.runId && node.runId !== rootRunId) onRun(node.runId);
+                else if (eventIds.length) onEvidence(eventIds);
+              }}
+              className={`flex w-full min-w-0 items-start gap-2 rounded-lg px-2 py-1.5 text-start transition-colors duration-200 ease-[cubic-bezier(.22,1,.36,1)] motion-reduce:transition-none ${
+                selected ? "bg-muted" : "hover:bg-muted/60"
+              }`}
+            >
+              {parent ? (
+                <CornerDownRight
+                  aria-hidden="true"
+                  className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+                />
+              ) : (
+                <Icon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+              )}
+              <span className="min-w-0 flex-1">
+                {parent ? (
+                  <span className="block text-[11px] text-muted-foreground">
+                    {relationLabel(parent.kind)}
+                  </span>
+                ) : null}
+                <span className="block truncate text-[13px]">{names.get(node.id)}</span>
+              </span>
+              {status ? (
+                <span
+                  className={`shrink-0 text-[11px] ${
+                    failed ? "text-destructive" : "text-muted-foreground"
+                  }`}
                 >
-                  <div className="flex min-w-0 items-center gap-1">
-                    {parent && (
-                      <CornerDownRight
-                        aria-hidden="true"
-                        className="size-4 shrink-0 text-muted-foreground"
-                      />
-                    )}
-                    <Button
-                      variant="ghost"
-                      data-flow-node={node.id}
-                      aria-expanded={expanded}
-                      aria-controls={expanded ? id : undefined}
-                      onClick={() => {
-                        setSelectedId(expanded ? undefined : node.id);
-                        setEdgeId(undefined);
-                      }}
-                      className="h-auto min-h-12 min-w-0 flex-1 justify-start gap-3 whitespace-normal p-2 text-start aria-expanded:bg-muted"
-                    >
-                      <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1">
-                        {parent && (
-                          <span className="block text-xs font-normal text-muted-foreground">
-                            {relationLabel(parent.kind)}
-                          </span>
-                        )}
-                        <span className="line-clamp-2 break-words text-sm">
-                          {names.get(node.id)}
-                        </span>
-                      </span>
-                      {status && (
-                        <span
-                          className={`shrink-0 text-xs font-normal ${failed ? "text-destructive" : "text-muted-foreground"}`}
-                        >
-                          {status}
-                        </span>
-                      )}
-                      <ChevronRight
-                        aria-hidden="true"
-                        className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-90" : ""}`}
-                      />
-                    </Button>
-                  </div>
-                  {expanded && (
-                    <section
-                      id={id}
-                      aria-label={t`Evidence`}
-                      className="my-2 min-w-0 space-y-3 border-s border-border ps-4 pe-2 text-sm"
-                    >
-                      {relationships.length > 0 && (
-                        <ul aria-label={t`Relationships`} className="space-y-1">
-                          {relationships.map((item) => (
-                            <li key={item.id}>
-                              <Button
-                                data-flow-edge={item.id}
-                                variant="ghost"
-                                size="sm"
-                                aria-pressed={edgeId === item.id}
-                                className="h-auto max-w-full justify-start whitespace-normal text-start aria-pressed:bg-muted"
-                                onClick={() => setEdgeId(edgeId === item.id ? undefined : item.id)}
-                              >
-                                {relationLabel(item.kind)} {names.get(item.to)}
-                              </Button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                      {!edge && code && (
-                        <pre className="overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted p-3 text-xs">
-                          {code}
-                        </pre>
-                      )}
-                      <details key={edge?.id ?? node.id}>
-                        <summary className="cursor-pointer py-2 text-xs text-muted-foreground">{t`Evidence`}</summary>
-                        <ul className="space-y-1 text-xs text-muted-foreground">
-                          {evidence.map((item) => (
-                            <li className="break-all" key={`${item.kind}:${item.id}`}>
-                              <span>{item.kind} · </span>
-                              <code>{item.id}</code>
-                            </li>
-                          ))}
-                        </ul>
-                      </details>
-                      <div className="flex flex-wrap items-center gap-2">
-                        {!edge &&
-                          runs.length > 1 &&
-                          runs.map((run, runIndex) => (
-                            <Button
-                              key={run.id}
-                              size="sm"
-                              variant="outline"
-                              disabled={!run.runId}
-                              aria-pressed={run.runId === rootRunId}
-                              onClick={() => {
-                                if (run.runId) onRun(run.runId);
-                              }}
-                            >
-                              {runTitle(run.runId, runIndex + 1)}
-                            </Button>
-                          ))}
-                        {!edge && node.runId && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              if (node.runId) onRun(node.runId);
-                            }}
-                          >{t`Inspect run`}</Button>
-                        )}
-                        {eventIds.length > 0 && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => onEvidence(eventIds)}
-                          >{t`Show events`}</Button>
-                        )}
-                      </div>
-                    </section>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
-        </Card>
-      )}
-      {flow.hasMoreRelatedRuns && (
-        <p className="text-sm text-muted-foreground">{t`More related runs are available. Open a run to inspect it.`}</p>
-      )}
-    </div>
+                  {status}
+                </span>
+              ) : null}
+            </button>
+            <SpringDisclosure open={selected && Boolean(node.code)}>
+              <pre className="mb-1 ms-7 overflow-auto whitespace-pre-wrap break-words pe-2 text-[11px] leading-5 text-muted-foreground">
+                {node.code}
+              </pre>
+            </SpringDisclosure>
+          </li>
+        );
+      })}
+    </ol>
   );
 }

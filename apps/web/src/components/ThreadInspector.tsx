@@ -1,8 +1,14 @@
 import { t } from "@lingui/core/macro";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@rakazo/ui-web";
+import {
+  Button,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@rakazo/ui-web";
+import { X } from "lucide-react";
 import { useState } from "react";
-import { rpc } from "../lib/rpc";
-import { useQueue } from "../lib/use-queue";
 import { ExecutionInspector } from "./ExecutionInspector";
 import { QueueStrip } from "./QueueStrip";
 
@@ -31,16 +37,24 @@ export function ThreadInspector({
         if (!open) onClose();
       }}
     >
-      <DialogContent className="max-h-[85vh] overflow-auto sm:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>{target.view === "queue" ? t`Queue` : t`Execution`}</DialogTitle>
+      <DialogContent
+        showCloseButton={false}
+        className="flex h-[min(760px,calc(100%-2rem))] w-[1080px] max-w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden rounded-2xl bg-card p-0 sm:max-w-[1080px]"
+      >
+        <DialogHeader className="flex-row items-center justify-between border-b border-border px-6 py-5">
+          <DialogTitle className="text-xl text-foreground">
+            {target.view === "queue" ? t`Queue` : t`Execution`}
+          </DialogTitle>
+          <DialogClose render={<Button variant="ghost" size="icon-sm" aria-label={t`Close`} />}>
+            <X />
+          </DialogClose>
         </DialogHeader>
-        {members.length > 1 && (
+        {members.length > 1 ? (
           <select
             aria-label={t`Queue for bot`}
             value={botId}
             onChange={(event) => setSelected(event.target.value)}
-            className="rounded border border-border bg-background p-2 text-sm"
+            className="mx-6 mt-4 rounded-lg border border-border bg-background p-2 text-sm"
           >
             {members.map((member) => (
               <option key={member.botId} value={member.botId}>
@@ -48,26 +62,17 @@ export function ThreadInspector({
               </option>
             ))}
           </select>
-        )}
-        {botId &&
-          (target.view === "queue" ? (
-            <QueueStrip key={botId} threadId={threadId} botId={botId} runIds={runs} initialOpen />
+        ) : null}
+        {botId ? (
+          target.view === "queue" ? (
+            <div className="rk-scroll min-h-0 flex-1 overflow-y-auto p-6">
+              <QueueStrip key={botId} threadId={threadId} botId={botId} runIds={runs} initialOpen />
+            </div>
           ) : (
-            <ExecutionPanel key={botId} threadId={threadId} botId={botId} runIds={runs} />
-          ))}
+            <ExecutionInspector key={botId} threadId={threadId} botId={botId} runIds={runs} />
+          )
+        ) : null}
       </DialogContent>
     </Dialog>
   );
-}
-function ExecutionPanel({
-  threadId,
-  botId,
-  runIds,
-}: {
-  threadId: string;
-  botId: string;
-  runIds: string[];
-}) {
-  const queue = useQueue(rpc.queue, threadId, botId);
-  return <ExecutionInspector threadId={threadId} botId={botId} runIds={runIds} queue={queue} />;
 }

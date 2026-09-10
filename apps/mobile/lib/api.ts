@@ -1062,6 +1062,14 @@ export function applyMobileThreadEvent(
       messages: updateMessageReaction(prev.messages, event.payload ?? {}),
     };
   }
+  if (event.type === "thread.message.updated" && event.payload?.removed === true) {
+    const id = String(event.payload?.messageId ?? "");
+    return {
+      ...prev,
+      cursor: event.seq ?? prev.cursor,
+      messages: prev.messages.filter((message) => message.id !== id),
+    };
+  }
   if (event.type === "thread.message.created" || event.type === "thread.message.updated") {
     const { remaining } = takeLiveMessage(prev.messages, progressMessageId(event));
     const messageId = String(event.payload?.messageId ?? event.id ?? `msg:${event.seq ?? 0}`);

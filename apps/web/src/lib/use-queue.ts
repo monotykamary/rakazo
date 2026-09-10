@@ -5,7 +5,7 @@ import {
   type ExecutionClient,
   type QueueClient,
 } from "@rakazo/core";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 
 export type ComposerMode = "send" | "steer" | "followUp";
 export type ComposerModifierState = Pick<
@@ -66,7 +66,12 @@ export async function enqueueQueueMessage(
 }
 
 export function useExecution(client: ExecutionClient, runId: string) {
-  const store = useMemo(() => createExecutionStore(client, runId), [client, runId]);
+  const clientRef = useRef(client);
+  clientRef.current = client;
+  const store = useMemo(
+    () => createExecutionStore({ inspect: (input) => clientRef.current.inspect(input) }, runId),
+    [runId],
+  );
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   useEffect(() => {
     void store.loadMore();
@@ -76,17 +81,32 @@ export function useExecution(client: ExecutionClient, runId: string) {
 
 export { createQueueStore, type QueueClient, queueRows } from "@rakazo/core";
 
-export function useQueue(client: QueueClient, threadId: string, botId: string) {
+export function useQueue(
+  client: QueueClient,
+  threadId: string,
+  botId: string,
+  pollMs = 2000,
+) {
+  const clientRef = useRef(client);
+  clientRef.current = client;
   const store = useMemo(
-    () => createQueueStore(client, { threadId, botId }),
-    [client, threadId, botId],
+    () =>
+      createQueueStore(
+        {
+          list: (scope) => clientRef.current.list(scope),
+          mutate: (input) => clientRef.current.mutate(input),
+        },
+        { threadId, botId },
+      ),
+    [threadId, botId],
   );
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   useEffect(() => {
     void store.refresh();
-    const timer = setInterval(() => void store.refresh(), 2000);
+    if (pollMs <= 0) return;
+    const timer = setInterval(() => void store.refresh(), pollMs);
     return () => clearInterval(timer);
-  }, [store]);
+  }, [store, pollMs]);
   return {
     ...state,
     mutate: store.mutate,

@@ -201,22 +201,6 @@ function ScopedBotModelSwitcher({ botId, desired, onChanged }: BotModelSwitcherP
             }}
           />
         )}
-        <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={locked}
-            onClick={() => void save(null)}
-          >{t`Use Pi selection`}</Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={busy || loading}
-            onClick={() => void refresh(true)}
-          >
-            {loading ? t`Refreshing…` : t`Refresh`}
-          </Button>
-        </div>
       </PopoverContent>
     </Popover>
   );

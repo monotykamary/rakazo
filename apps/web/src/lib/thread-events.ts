@@ -484,6 +484,14 @@ export function reduceThreadSnapshot(
       messages: updateMessageReaction(prev.messages, event.payload ?? {}),
     };
   }
+  if (event.type === "thread.message.updated" && event.payload.removed === true) {
+    const id = String(event.payload.messageId ?? "");
+    return {
+      ...prev,
+      cursor: event.seq,
+      messages: prev.messages.filter((message) => message.id !== id),
+    };
+  }
   if (event.type === "thread.message.created" || event.type === "thread.message.updated") {
     const role = (event.payload.role as ThreadMessage["role"]) ?? "bot";
     const blocks = (event.payload.blocks as ThreadMessage["blocks"]) ?? [];

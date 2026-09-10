@@ -369,6 +369,15 @@ export const appContract = {
             reaction: MessageReactionSchema,
             clientNonce: z.string().min(1).max(200),
           }),
+          threadTarget.safeExtend({
+            messageId: Id,
+            reaction: MessageReactionSchema,
+            remove: z.literal(true),
+          }),
+          threadTarget.safeExtend({
+            messageId: Id,
+            clear: z.literal(true),
+          }),
           // Keep installed older clients and their persisted thumbs-up events compatible.
           threadTarget.safeExtend({ messageId: Id, thumbsUp: z.boolean() }),
         ]),

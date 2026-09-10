@@ -262,7 +262,6 @@ for (const width of [1280, 375]) {
     await expect(page.getByTestId("current-model")).toHaveText("Current: fixture/astra · low");
     await captureScreenshot(page, testInfo, `model-header-pending-${width}`);
     fixture.apply();
-    await page.getByRole("button", { name: "Refresh", exact: true }).click();
     await expect(page.getByTestId("current-model")).toHaveText("Current: fixture/astra · low");
     await expect(trigger).toHaveText("Astra");
     await page.keyboard.press("Escape");
@@ -276,7 +275,6 @@ test("first-run bot can choose desired model without claiming an effective model
 }) => {
   const fixture = await mount(page, { firstRun: true, delay: true });
   await page.getByTestId("bot-model-switcher").click();
-  await expect(page.getByRole("button", { name: "Refreshing…" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Use model", exact: true })).toHaveCount(0);
   await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(0);
   await expect.poll(fixture.ready).toBe(true);
@@ -295,7 +293,8 @@ test("header load and save failures are accessible and recoverable", async ({ pa
   await expect(page.getByRole("dialog").getByRole("alert")).toHaveText("Could not refresh models");
   await expect(page.getByRole("button", { name: "Use model", exact: true })).toHaveCount(0);
   fixture.options.fail = false;
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("bot-model-switcher").click();
   await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(2);
   await page.getByRole("combobox", { name: "Search models" }).fill("astra");
   fixture.options.fail = true;
@@ -303,7 +302,8 @@ test("header load and save failures are accessible and recoverable", async ({ pa
   await expect(page.getByRole("dialog").getByRole("alert")).toHaveText("Could not switch model");
   await expect(page.getByTestId("bot-model-switcher")).toHaveText("Sol");
   fixture.options.fail = false;
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("bot-model-switcher").click();
   await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(2);
 });
 

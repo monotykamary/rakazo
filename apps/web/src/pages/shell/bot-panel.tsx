@@ -421,26 +421,6 @@ export function BotSettings({
               setModelEdited(true);
             }}
           />
-          <div className="flex gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={saving || runtime?.availability.status !== "available"}
-              onClick={() => {
-                setModelKey("");
-                setThinkingLevel("");
-                setModelEdited(true);
-              }}
-            >{t`Use Pi selection`}</Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={saving || modelLoading}
-              onClick={() => void refreshModels(true)}
-            >
-              {modelLoading ? t`Refreshing…` : t`Refresh`}
-            </Button>
-          </div>
         </div>
         {memoryProviderConfigured ? (
           <div className="mt-4 text-[14px] text-muted-foreground">

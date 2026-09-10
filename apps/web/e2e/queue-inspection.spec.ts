@@ -1,6 +1,5 @@
 import { expect, test } from "@playwright/test";
 import type { QueueMutation, QueueSnapshot } from "@rakazo/contracts";
-import { expectAlignedControls } from "../../../packages/testkit/src/playwright-layout";
 import { captureScreenshot } from "./helpers";
 
 test("queue controls and retained execution inspection", async ({ page }, testInfo) => {
@@ -315,9 +314,13 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
   await captureScreenshot(page, testInfo, "queue-controls");
   await page.getByRole("button", { name: "Execution", exact: true }).click();
   const execution = page.getByRole("dialog", { name: "Execution", exact: true });
-  const runSelect = execution.getByRole("combobox", { name: "Run", exact: true });
-  const flowButton = execution.getByRole("button", { name: "Flow", exact: true });
-  await expectAlignedControls(runSelect, flowButton);
+  const runs = execution.getByRole("navigation", { name: "Run", exact: true });
+  await expect(runs.getByRole("button", { name: "Run 1", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(execution.getByRole("combobox", { name: "Run", exact: true })).toHaveCount(0);
+  await expect(execution.getByRole("button", { name: "Flow", exact: true })).toHaveCount(0);
   await expect(execution.getByRole("button", { name: "Model", exact: true })).toHaveCount(1);
   await execution.getByRole("button", { name: "Model", exact: true }).click();
   await execution.getByRole("option", { name: "Large local/large", exact: true }).click();
@@ -328,67 +331,19 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
   ).toBeVisible();
   expect(requestedModel).toEqual({ provider: "local", modelId: "large", thinkingLevel: "high" });
   await captureScreenshot(page, testInfo, "execution-worker-model");
-  await execution.getByRole("button", { name: "Use bot model", exact: true }).click();
-  await expect.poll(() => requestedModel).toBeNull();
-  await expect(execution.getByTestId("current-model")).toHaveText("Current: local/small");
-  await expect(
-    execution.getByText(`Pending · local/${requestedModel ? "large" : "small"}`, { exact: true }),
-  ).toBeVisible();
   await execution.getByRole("button", { name: "Model", exact: true }).click();
   await execution.getByRole("list", { name: "Retained events" }).getByText("bash").click();
   await expect(page.getByText("npm test", { exact: false })).toBeVisible();
   await expect(page.getByText("run.completed", { exact: false })).toHaveCount(0);
-  await page.getByRole("button", { name: "Flow", exact: true }).click();
-  await expect(page.getByRole("textbox", { name: "Message to participant" })).toHaveCount(0);
-  await expect(execution.getByRole("button", { name: "Steer", exact: true })).toHaveCount(1);
-  await execution.getByRole("button", { name: "Steer", exact: true }).click();
-  await page
-    .getByRole("textbox", { name: "Message to participant" })
-    .fill("Focus on the failing test");
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Queue message", exact: true })
-    .click();
-  await expect(page.getByRole("dialog").getByRole("alert")).toHaveText("Revision conflict");
-  await expect(page.getByRole("textbox", { name: "Message to participant" })).toHaveValue(
-    "Focus on the failing test",
-  );
-  expect(operations.at(-1)?.type).toBe("graceful-pause");
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Queue message", exact: true })
-    .click();
-  await expect(page.getByRole("textbox", { name: "Message to participant" })).toHaveCount(0);
-  expect(operations.at(-1)).toEqual({
-    type: "enqueue",
-    lane: "steer",
-    text: "Focus on the failing test",
-    target: { participantId: "worker" },
-  });
+  await expect(execution.getByRole("button", { name: "Steer", exact: true })).toHaveCount(0);
   await expect(page.locator("[data-flow-node]")).toHaveCount(5);
   const outline = execution.getByTestId("execution-flow");
   await expect(outline.getByRole("region", { name: "Evidence", exact: true })).toHaveCount(0);
   await expect(outline).not.toContainText("run:run");
   await expect(outline.getByText("Main", { exact: true })).toHaveCount(1);
-  await outline.locator('[data-flow-node="bot:bot"]').click();
-  await outline.locator('[data-flow-edge="delegate"]').click();
-  const evidencePanel = page.getByRole("region", { name: "Evidence", exact: true });
-  await evidencePanel.locator("summary").click();
-  await expect(evidencePanel.getByText("event", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Show events", exact: true }).click();
-  await expect(flowButton).toBeFocused();
-  await execution.getByRole("list", { name: "Retained events" }).getByText("bash").click();
-  await expect(page.getByText("npm test", { exact: false })).toBeVisible();
   await captureScreenshot(page, testInfo, "execution-evidence");
-  await flowButton.click();
-  await expect(outline).toBeVisible();
-  await expect(execution.getByRole("list", { name: "Retained events" })).toHaveCount(0);
-  await page.getByRole("dialog").evaluate((element) => {
-    element.scrollTop = 0;
-  });
   await captureScreenshot(page, testInfo, "execution-flow");
   await page.setViewportSize({ width: 390, height: 844 });
-  await expectAlignedControls(runSelect, flowButton);
   await expect
     .poll(() =>
       outline.evaluate((element) =>
@@ -400,24 +355,12 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
     .toBe(true);
   await captureScreenshot(page, testInfo, "execution-flow-narrow");
   await page.emulateMedia({ colorScheme: "dark" });
-  await expectAlignedControls(runSelect, flowButton);
   await captureScreenshot(page, testInfo, "execution-flow-narrow-dark");
-  await outline.locator('[data-flow-node="bot:bot"]').click();
-  await expect(outline.getByRole("button", { name: "Run 1", exact: true })).toHaveAttribute(
+  await runs.getByRole("button", { name: "Run 2", exact: true }).click();
+  await expect(runs.getByRole("button", { name: "Run 2", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
-  await outline.getByRole("button", { name: "Run 2", exact: true }).click();
-  await expect(runSelect).toHaveValue("related-run");
-  await expect(flowButton).toBeFocused();
-  await expect(outline).toHaveCount(0);
-  await flowButton.click();
-  await outline.locator('[data-flow-node="bot:bot"]').click();
-  await expect(outline.getByRole("button", { name: "Run 2", exact: true })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
-  await expect(outline.getByText("return 2;", { exact: true })).toBeVisible();
   expect(operations.map((operation) => operation.type)).toEqual([
     "bind-placement",
     "lane",
@@ -426,6 +369,5 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
     "resume",
     "pause",
     "graceful-pause",
-    "enqueue",
   ]);
 });

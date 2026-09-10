@@ -452,39 +452,3 @@ test("unsupported persisted thinking stays visible and switching does not claim 
     "private-extension/custom-research-2026",
   );
 });
-
-for (const participant of [true, false]) {
-  test(`clearing ${participant ? "worker" : "root"} intent labels its inheritance honestly`, async ({
-    page,
-  }) => {
-    let written: unknown;
-    await page.route("**/rpc/models/runtime", (route) =>
-      route.fulfill({ json: { json: snapshot() } }),
-    );
-    await page.route("**/rpc/models/setWorkerSelection", async (route) => {
-      written = route.request().postDataJSON().json;
-      await route.fulfill({
-        json: { json: { requested: null, effective: current, status: "pending", error: null } },
-      });
-    });
-    await page.goto(`/e2e/fixtures/pi-models.html?worker${participant ? "" : "&root"}`);
-    await page
-      .getByRole("button", {
-        name: participant ? "Use bot model" : "Use Pi selection",
-        exact: true,
-      })
-      .click();
-    await expect
-      .poll(() => written)
-      .toEqual({
-        botId: "bot-fixture",
-        threadId: "thread-fixture",
-        ...(participant ? { participantId: "worker-fixture" } : {}),
-        selection: null,
-      });
-    await expect(page.getByTestId("current-model")).toContainText(
-      "custom-extension/actual-running-v2",
-    );
-    await expect(page.getByRole("button", { name: "Use Pi default", exact: true })).toHaveCount(0);
-  });
-}

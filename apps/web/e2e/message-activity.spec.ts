@@ -106,13 +106,14 @@ test("quiet activity reveals retained Fabric, Fovea, compaction and worker contr
   await page.getByRole("button", { name: "Execution", exact: true }).click();
   const inspector = page.getByRole("dialog", { name: "Execution", exact: true });
   await expect(inspector).toBeVisible();
-  await inspector.locator("summary").filter({ hasText: "fabric_exec" }).click();
+  const events = inspector.getByRole("list", { name: "Retained events" });
+  await events.getByText("fabric_exec").click();
   await expect(
     inspector.getByText('"code": "return await tools.catalog()"', { exact: false }),
   ).toBeVisible();
-  await inspector.locator("summary").filter({ hasText: "fovea_focus" }).click();
+  await events.getByText("fovea_focus").click();
   await expect(inspector.getByText('"query": "ReviewPatch"', { exact: false })).toBeVisible();
-  await inspector.locator("summary").filter({ hasText: "compaction" }).click();
+  await events.getByText("compaction").click();
   await expect(inspector.getByText("Retained review context", { exact: false })).toBeVisible();
   await inspector.getByRole("button", { name: "Model", exact: true }).click();
   await expect(inspector.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(
@@ -129,14 +130,6 @@ test("quiet activity reveals retained Fabric, Fovea, compaction and worker contr
       selection: { provider: "local", modelId: "small", thinkingLevel: "high" },
     },
   ]);
-  await inspector.getByRole("button", { name: "Use bot model", exact: true }).click();
-  await expect(inspector.getByRole("combobox", { name: "Model", exact: true })).toHaveValue("");
-  expect(selections[1]).toEqual({
-    botId: "bot",
-    threadId: "thread",
-    participantId: "worker",
-    selection: null,
-  });
   await captureScreenshot(page, testInfo, "contextual-execution-details");
   await page.setViewportSize({ width: 390, height: 844 });
   await captureScreenshot(page, testInfo, "contextual-execution-mobile-web");

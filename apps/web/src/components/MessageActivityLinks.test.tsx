@@ -7,21 +7,29 @@ vi.mock("@lingui/core/macro", () => ({
     parts.reduce((text, part, index) => text + part + (values[index] ?? ""), ""),
 }));
 
-import { MessageActivityLinks } from "./MessageActivityLinks";
+import {
+  lastMessageExecution,
+  MessageActivityLinks,
+  MessageExecutionButton,
+} from "./MessageActivityLinks";
 
 i18n.load("en", {});
 i18n.activate("en");
 const props = {
   peerBot: () => undefined,
   onPeer: () => undefined,
-  onExecution: () => undefined,
   onRoutine: () => undefined,
 };
 describe("message activity links", () => {
   it("does not add chrome for ordinary chat", () => {
     expect(renderToString(<MessageActivityLinks {...props} activities={[]} />)).toBe("");
   });
-  it("renders a concise counted peer link and real execution target", () => {
+  it("hides execution from the under-bubble row", () => {
+    expect(
+      renderToString(
+        <MessageActivityLinks {...props} activities={[{ kind: "execution", runId: "run" }]} />,
+      ),
+    ).toBe("");
     const html = renderToString(
       <MessageActivityLinks
         {...props}
@@ -33,9 +41,16 @@ describe("message activity links", () => {
     );
     expect(html).toContain('aria-label="2 messages with Research"');
     expect(html).toContain("rakazo-organic-avatar");
-    expect(html).toContain("text-muted-foreground");
-    expect(html).toContain("Execution");
-    expect(html).not.toContain("Queue");
-    expect(html).not.toContain("Paused");
+    expect(html).not.toContain(">Execution<");
+    expect(lastMessageExecution([{ kind: "execution", runId: "run", botId: "bot" }])).toEqual({
+      kind: "execution",
+      runId: "run",
+      botId: "bot",
+    });
+    expect(
+      renderToString(
+        <MessageExecutionButton runId="run" botId="bot" onExecution={() => undefined} />,
+      ),
+    ).toContain('aria-label="Execution"');
   });
 });

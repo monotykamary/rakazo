@@ -191,7 +191,7 @@ import {
   loadPeerMessagePage,
   shouldForwardPeerThreadEvent,
 } from "./thread-message-pages.js";
-import { appendThreadReaction } from "./thread-reactions.js";
+import { appendThreadReaction, removeThreadReactions } from "./thread-reactions.js";
 import {
   reactToThreadMessage,
   resolveThreadTarget,
@@ -1366,15 +1366,24 @@ export function createRouter(deps: RouterDeps) {
       react: authed.threads.react.handler(async ({ context, input }) => {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
         const result =
-          "reaction" in input
-            ? await appendThreadReaction(deps, context.actor, target, input)
-            : await reactToThreadMessage(
-                deps,
-                context.actor,
-                target,
-                input.messageId,
-                input.thumbsUp,
-              );
+          "clear" in input
+            ? await removeThreadReactions(deps, context.actor, target, {
+                messageId: input.messageId,
+              })
+            : "remove" in input
+              ? await removeThreadReactions(deps, context.actor, target, {
+                  messageId: input.messageId,
+                  reaction: input.reaction,
+                })
+              : "reaction" in input
+                ? await appendThreadReaction(deps, context.actor, target, input)
+                : await reactToThreadMessage(
+                    deps,
+                    context.actor,
+                    target,
+                    input.messageId,
+                    input.thumbsUp,
+                  );
         if (result.eventSeq != null) {
           await deps.events.notify(target.threadId, result.eventSeq).catch((error) => {
             getLogger().error("thread reaction realtime notification", error);

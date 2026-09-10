@@ -7,7 +7,7 @@ vi.mock("@lingui/core/macro", () => ({
 }));
 vi.mock("../lib/use-queue", () => ({
   useExecution: () => ({
-    inspection: { events: [], participants: [], hasMore: false },
+    inspection: { events: [], participants: [], hasMore: false, flow: { nodes: [], edges: [] } },
     busy: false,
     loadMore: () => undefined,
   }),
@@ -18,7 +18,6 @@ import { ExecutionInspector } from "./ExecutionInspector";
 const props = {
   botId: "bot",
   threadId: "thread",
-  queue: {} as Parameters<typeof ExecutionInspector>[0]["queue"],
 };
 describe("execution disclosure", () => {
   it("does not offer inert controls when no run is retained", () => {
@@ -31,12 +30,16 @@ describe("execution disclosure", () => {
     const html = renderToString(<ExecutionInspector {...props} runIds={["internal-run-id"]} />);
     expect(html).not.toContain("internal-run-id");
     expect(html).not.toContain("<select");
+    expect(html).toContain("Run 1");
   });
   it("labels multiple run choices without rendering their internal IDs as copy", () => {
     const html = renderToString(
       <ExecutionInspector {...props} runIds={["first-id", "second-id"]} />,
     );
-    expect(html).toContain('value="first-id" selected="">Run 1</option>');
-    expect(html).toContain('value="second-id">Run 2</option>');
+    expect(html).toContain("Run 1");
+    expect(html).toContain("Run 2");
+    expect(html).not.toContain("first-id");
+    expect(html).not.toContain("second-id");
+    expect(html).not.toContain("<select");
   });
 });
