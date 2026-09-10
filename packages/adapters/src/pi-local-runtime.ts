@@ -24,7 +24,11 @@ import {
 } from "@rakazo/contracts";
 import { PI_RUNTIME_VERSION } from "@rakazo/pi-kit";
 import { isToolPauseResult } from "./approval-effect.js";
-import { boundedExecutionEvidence } from "./pi-execution-evidence.js";
+import {
+  boundedExecutionEvidence,
+  fabricNestedCallEvidence,
+  nestedFabricExecutionEvents,
+} from "./pi-execution-evidence.js";
 import { type JsonRecord, type PrivateDuplex, record } from "./pi-rpc-protocol.js";
 import { AsyncChannel, JsonPeer } from "./pi-rpc-transport.js";
 import {
@@ -1557,6 +1561,7 @@ export class LocalPiRuntime implements AgentRuntime {
             const evidence = boundedExecutionEvidence({
               input: args,
               ...(typeof args.code === "string" ? { code: args.code } : {}),
+              ...(args.display !== undefined ? { display: args.display } : {}),
             });
             yield {
               type: "execution",
@@ -1583,25 +1588,34 @@ export class LocalPiRuntime implements AgentRuntime {
               output: resultObject?.content,
               details: resultObject?.details,
               source: details?.source,
-              nestedCalls: details?.nestedCalls,
+              ...fabricNestedCallEvidence(details),
               ...(typeof tracked?.args.code === "string" ? { code: tracked.args.code } : {}),
             });
+            const status =
+              eventType === "tool_execution_update"
+                ? "started"
+                : bridge.pausedCalls.has(callId)
+                  ? "paused"
+                  : event.isError === true
+                    ? "failed"
+                    : "completed";
             yield {
               type: "execution",
               executionId: `${request.runId}:${callId}`,
               name,
               participantId: request.runId,
-              status:
-                eventType === "tool_execution_update"
-                  ? "started"
-                  : bridge.pausedCalls.has(callId)
-                    ? "paused"
-                    : event.isError === true
-                      ? "failed"
-                      : "completed",
+              status,
               ...evidence.value,
               ...(evidence.truncated ? { truncated: true } : {}),
             };
+            if (name === "fabric_exec") {
+              yield* nestedFabricExecutionEvents(
+                `${request.runId}:${callId}`,
+                request.runId,
+                evidence.value.nestedCalls,
+                status,
+              );
+            }
             if (eventType === "tool_execution_end") activeTools.delete(callId);
             continue;
           }

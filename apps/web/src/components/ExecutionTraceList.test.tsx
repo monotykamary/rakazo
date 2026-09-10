@@ -36,7 +36,7 @@ describe("execution trace list", () => {
           event("run.started", {}, 30),
           event("thread.progress", { text: "Reading files" }, 31),
           event("thread.progress", { text: "Planning the change" }, 32),
-          event("agent.tool.called", { name: "fabric_exec" }, 33),
+          event("agent.tool.called", { name: "fabric_exec", display: { name: "Inspect startup" } }, 33),
         ]}
       />,
     );
@@ -44,7 +44,8 @@ describe("execution trace list", () => {
     expect(html).toContain("Reasoning");
     expect(html).toContain("Tool");
     expect(html).toContain("Planning the change");
-    expect(html).toContain("fabric_exec");
+    expect(html).toContain("Inspect startup");
+    expect(html).not.toContain("fabric_exec");
     expect(html).not.toContain("thread.progress");
     expect(html).not.toContain("<details");
     expect(html).not.toContain("rounded border border-border p-3");

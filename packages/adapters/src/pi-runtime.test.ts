@@ -80,5 +80,9 @@ describe("describeToolActivity", () => {
 
   it("falls back to the tool name", () => {
     expect(describeToolActivity("destination_write", undefined)).toBe("Using destination_write");
+    expect(describeToolActivity("fabric_exec", { display: { name: "Inspect startup" } })).toBe(
+      "Inspect startup",
+    );
+    expect(describeToolActivity("fabric_exec", { code: "return 1" })).toBe("Running Fabric program");
   });
 });

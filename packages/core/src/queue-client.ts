@@ -6,6 +6,7 @@ import type {
   QueueReply,
   QueueSnapshot,
 } from "@rakazo/contracts";
+import { fabricExecutionLabel } from "./fabric-activity.js";
 
 export interface QueueClient {
   list(scope: { threadId: string; botId: string }): Promise<QueueSnapshot>;
@@ -236,6 +237,8 @@ export function executionTraceKind(type: ProductEvent["type"]): ExecutionTraceKi
 }
 
 export function executionTracePreview(payload: ProductEvent["payload"]): string | undefined {
+  const fabric = fabricExecutionLabel(payload);
+  if (fabric) return fabric;
   for (const key of ["text", "toolName", "name", "activity", "status", "summary"] as const) {
     const value = payload[key];
     if (typeof value === "string" && value.trim()) return value.trim();

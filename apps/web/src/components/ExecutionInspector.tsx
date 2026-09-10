@@ -1,19 +1,15 @@
 import { t } from "@lingui/core/macro";
 import type { ProductEvent } from "@rakazo/contracts";
-import { participantKey } from "@rakazo/core";
 import { useState } from "react";
 import { rpc } from "../lib/rpc";
 import { useExecution } from "../lib/use-queue";
 import { ExecutionFlow } from "./ExecutionFlow";
 import { ExecutionTraceList } from "./ExecutionTraceList";
-import { WorkerModelSettings } from "./WorkerModelSettings";
 
 const executionClient = rpc.execution;
 
 export function ExecutionInspector({
   runIds,
-  botId,
-  threadId,
 }: {
   runIds: string[];
   botId: string;
@@ -24,26 +20,14 @@ export function ExecutionInspector({
   if (!runs.length) {
     return <p className="px-6 py-8 text-sm text-muted-foreground">{t`No retained events`}</p>;
   }
-  return (
-    <RetainedEvents
-      runId={runId || runs[0]!}
-      runIds={runs}
-      onRun={setRunId}
-      botId={botId}
-      threadId={threadId}
-    />
-  );
+  return <RetainedEvents runId={runId || runs[0]!} runIds={runs} onRun={setRunId} />;
 }
 
 function RetainedEvents({
   runId,
   runIds,
   onRun,
-  botId,
-  threadId,
 }: {
-  botId: string;
-  threadId: string;
   runId: string;
   runIds: string[];
   onRun: (runId: string) => void;
@@ -51,8 +35,6 @@ function RetainedEvents({
   const [eventId, setEventId] = useState<string>();
   const [flowId, setFlowId] = useState<string>();
   const { inspection, busy, error } = useExecution(executionClient, runId);
-  const participants =
-    inspection?.participants.filter((participant) => participant.participantId) ?? [];
   const selectedEvent = inspection?.events.find((event) => event.id === eventId);
 
   return (
@@ -103,24 +85,6 @@ function RetainedEvents({
 
       <aside className="min-h-0 min-w-0 overflow-y-auto border-t border-border md:border-s md:border-t-0">
         <div className="flex flex-col gap-2 p-3">
-          {participants.length > 0 ? (
-            <ul aria-label={t`Participants`} className="space-y-2">
-              {participants.map((participant, index) => (
-                <li key={participantKey(participant)} className="min-w-0 space-y-1">
-                  <p className="truncate text-[13px]">
-                    {participant.name ?? t`Participant ${index + 1}`}
-                  </p>
-                  {participant.participantId && participant.botId === botId ? (
-                    <WorkerModelSettings
-                      botId={botId}
-                      threadId={threadId}
-                      participantId={participant.participantId}
-                    />
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          ) : null}
           {inspection ? (
             <ExecutionFlow
               flow={inspection.flow}

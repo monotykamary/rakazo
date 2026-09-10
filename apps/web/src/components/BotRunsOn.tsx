@@ -5,6 +5,7 @@ import {
   BOT_OFFICE_PROMPTS,
   BotDeploymentController,
   type BotPromptHandler,
+  currentMachine,
   isLocalManagedOrigin,
   type MachineGateway,
   type MachineSummary,
@@ -22,10 +23,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   Button,
-  Dialog,
-  DialogContent,
-  DialogTitle,
   Input,
+  Popover,
+  PopoverContent,
+  PopoverTitle,
+  PopoverTrigger,
 } from "@rakazo/ui-web";
 import { Copy, Ellipsis, Plus } from "lucide-react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
@@ -60,6 +62,7 @@ export function BotRunsOn({
   const controller = useMemo(() => new BotDeploymentController(gateway, bot.id), [bot.id]);
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const [open, setOpen] = useState(false);
+  const office = currentMachine(snapshot.botMachineId, snapshot.machines);
 
   useEffect(() => {
     controller.start();
@@ -77,50 +80,71 @@ export function BotRunsOn({
       <div className="text-[14px] text-muted-foreground">
         <Trans>Office</Trans>
       </div>
-      <Button
-        variant="outline"
-        size="sm"
-        className="mt-2"
-        data-testid="runs-on-trigger"
-        disabled={disabled || snapshot.phase !== "ready"}
-        onClick={() => {
-          setOpen(false);
-          void onPrompt(
-            bot.id,
-            snapshot.botMachineId ? BOT_OFFICE_PROMPTS.move : BOT_OFFICE_PROMPTS.link,
-          );
-        }}
-      >
-        {snapshot.botMachineId ? <Trans>Move office</Trans> : <Trans>Link office</Trans>}
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        className="mt-2 ms-1"
-        aria-label={t`Manage offices`}
-        onClick={() => setOpen(true)}
-      >
-        <Ellipsis size={16} aria-hidden="true" />
-      </Button>
+      <div className="mt-2 flex min-w-0 items-center">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="-ms-2 min-w-0 max-w-full font-normal"
+          data-testid="runs-on-trigger"
+          disabled={disabled || snapshot.phase !== "ready"}
+          aria-label={snapshot.botMachineId ? t`Move office` : t`Link office`}
+          onClick={() => {
+            setOpen(false);
+            void onPrompt(
+              bot.id,
+              snapshot.botMachineId ? BOT_OFFICE_PROMPTS.move : BOT_OFFICE_PROMPTS.link,
+            );
+          }}
+        >
+          {office ? (
+            <>
+              <span
+                aria-hidden="true"
+                className={`size-2 shrink-0 rounded-full ${
+                  office.status === "online" ? "bg-success" : "bg-muted-foreground/40"
+                }`}
+              />
+              <span className="truncate">{office.name}</span>
+            </>
+          ) : snapshot.botMachineId ? (
+            <Trans>Move office</Trans>
+          ) : (
+            <Trans>Link office</Trans>
+          )}
+        </Button>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger
+            aria-label={t`Manage offices`}
+            disabled={disabled || snapshot.phase !== "ready"}
+            onClick={() => setOpen(true)}
+            render={<Button variant="ghost" size="icon-sm" />}
+          >
+            <Ellipsis size={16} aria-hidden="true" />
+          </PopoverTrigger>
+          <PopoverContent
+            align="end"
+            sideOffset={6}
+            className="w-[min(18rem,calc(100vw-2rem))] gap-2 p-2"
+            data-testid="runs-on-dialog"
+          >
+            <PopoverTitle className="sr-only">
+              <Trans>Office</Trans>
+            </PopoverTitle>
+            {isLocalManagedOrigin(window.location.origin) ? (
+              <p className="px-1 text-[12px] text-muted-foreground" data-testid="runs-on-local-warning">
+                <Trans>Paired machines pause while this computer sleeps.</Trans>
+              </p>
+            ) : null}
+            {pairing ? <PairingPanel controller={controller} pairing={pairing} /> : null}
+            {pairing ? null : <MachineList controller={controller} snapshot={snapshot} />}
+          </PopoverContent>
+        </Popover>
+      </div>
       {snapshot.error ? (
         <p role="alert" className="mt-2 text-[13px] text-destructive">
           {snapshot.error}
         </p>
       ) : null}
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-sm" data-testid="runs-on-dialog">
-          <DialogTitle>
-            <Trans>Office</Trans>
-          </DialogTitle>
-          {isLocalManagedOrigin(window.location.origin) ? (
-            <p className="text-[13px] text-muted-foreground" data-testid="runs-on-local-warning">
-              <Trans>Paired machines pause while this computer sleeps.</Trans>
-            </p>
-          ) : null}
-          {pairing ? <PairingPanel controller={controller} pairing={pairing} /> : null}
-          {pairing ? null : <MachineList controller={controller} snapshot={snapshot} />}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -138,21 +162,24 @@ function MachineList({
   const [name, setName] = useState("");
   const [revoking, setRevoking] = useState<MachineSummary | null>(null);
   const choices = orderedMachineChoices(snapshot.machines);
+  const naming = adding || choices.length === 0;
   return (
-    <fieldset className="flex min-w-0 flex-col gap-1" aria-label={t`Machine`}>
+    <fieldset className="flex min-w-0 flex-col gap-0.5" aria-label={t`Machine`}>
       {choices.map((machine) => (
-        <div key={machine.id} className="flex items-center gap-2">
-          <div className="flex min-w-0 flex-1 items-center gap-2 text-[14px]">
+        <div key={machine.id} className="flex items-center gap-1">
+          <div className="flex min-w-0 flex-1 items-center gap-2 px-1 text-[14px]">
             <span
               aria-hidden="true"
-              className={`size-2 shrink-0 rounded-full ${machine.status === "online" ? "bg-success" : "bg-muted-foreground/40"}`}
+              className={`size-2 shrink-0 rounded-full ${
+                machine.status === "online" ? "bg-success" : "bg-muted-foreground/40"
+              }`}
             />
             <span className="truncate">{machine.name}</span>
           </div>
           <Button
             variant="ghost"
             size="sm"
-            className="-me-1 text-muted-foreground hover:text-destructive"
+            className="text-muted-foreground hover:text-destructive"
             disabled={snapshot.saving}
             aria-label={t`Revoke ${machine.name}`}
             onClick={() => setRevoking(machine)}
@@ -161,9 +188,9 @@ function MachineList({
           </Button>
         </div>
       ))}
-      {adding ? (
+      {naming ? (
         <form
-          className="mt-2 flex items-center gap-2"
+          className="flex items-center gap-1 px-1"
           onSubmit={(event) => {
             event.preventDefault();
             if (name.trim()) void controller.startPairing(name.trim());
@@ -172,6 +199,7 @@ function MachineList({
           <Input
             value={name}
             maxLength={60}
+            autoFocus={adding || choices.length === 0}
             data-testid="runs-on-machine-name"
             onChange={(event) => setName(event.target.value)}
             placeholder={t`Machine name`}
@@ -184,9 +212,9 @@ function MachineList({
         </form>
       ) : (
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
-          className="mt-2"
+          className="self-start font-normal text-muted-foreground"
           data-testid="runs-on-add-machine"
           onClick={() => setAdding(true)}
         >
@@ -245,9 +273,9 @@ function PairingPanel({
     );
   }
   return (
-    <div className="flex min-w-0 flex-col gap-3" data-testid="runs-on-pairing">
-      <div className="flex items-center gap-2 rounded-md bg-muted px-2 py-1.5">
-        <code className="min-w-0 flex-1 truncate text-[13px]" data-testid="runs-on-pairing-code">
+    <div className="flex min-w-0 flex-col gap-2" data-testid="runs-on-pairing">
+      <div className="flex items-center gap-1 rounded-md bg-muted px-2 py-1.5">
+        <code className="min-w-0 flex-1 truncate text-[12px]" data-testid="runs-on-pairing-code">
           {command}
         </code>
         <Button
@@ -260,18 +288,19 @@ function PairingPanel({
         </Button>
       </div>
       {pairing.phase === "waiting" ? (
-        <p className="text-[13px] text-muted-foreground">
+        <p className="px-1 text-[12px] text-muted-foreground">
           <Trans>Waiting for machine…</Trans>
         </p>
       ) : null}
       {pairing.phase === "expired" ? (
-        <p className="text-[13px] text-destructive">
+        <p className="px-1 text-[12px] text-destructive">
           <Trans>Pairing expired.</Trans>
         </p>
       ) : null}
       <Button
-        variant="outline"
+        variant="ghost"
         size="sm"
+        className="self-start font-normal"
         onClick={
           pairing.phase === "expired"
             ? () => controller.acknowledgePairing()

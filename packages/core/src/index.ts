@@ -19,6 +19,7 @@ export * from "./events.js";
 export * from "./execution-flow.js";
 export * from "./execution-flow-presentation.js";
 export * from "./execution-graph.js";
+export * from "./fabric-activity.js";
 export * from "./featured-connectors.js";
 export * from "./group-mentions.js";
 export * from "./http-response.js";

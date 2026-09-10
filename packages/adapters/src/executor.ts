@@ -4437,7 +4437,13 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 botId: bot.id,
                 type: "agent.tool.called",
                 runId,
-                payload: { name: event.name, executionId: event.executionId },
+                payload: {
+                  name: event.name,
+                  executionId: event.executionId,
+                  ...(event.args && typeof event.args === "object" && !Array.isArray(event.args) && "display" in event.args
+                    ? { display: (event.args as { display?: unknown }).display }
+                    : {}),
+                },
               });
               pendingToolNames.push(event.name);
               tryFlushPendingTools();

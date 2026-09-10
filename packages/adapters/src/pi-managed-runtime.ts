@@ -11,7 +11,11 @@ import {
 } from "@rakazo/contracts";
 import type { AgentExecutionRequest } from "pi-fabric/agents";
 import { workerSessionCheckpoint } from "./pi-agent-snapshot.js";
-import { boundedExecutionEvidence } from "./pi-execution-evidence.js";
+import {
+  boundedExecutionEvidence,
+  fabricNestedCallEvidence,
+  nestedFabricExecutionEvents,
+} from "./pi-execution-evidence.js";
 import { applyManagedModelSelection } from "./pi-model-handoff.js";
 import { NativeAgents } from "./pi-native-agents.js";
 import { AgentsBridge } from "./pi-rpc-agents-bridge.js";
@@ -577,7 +581,7 @@ export class ManagedPiRuntime implements AgentRuntime {
               input: state.input,
               output: state.content,
               details: state.details,
-              nestedCalls: state.nestedCalls ?? detail.nestedCalls,
+              ...fabricNestedCallEvidence(state.nestedCalls ?? detail.nestedCalls ?? detail),
             });
             const execution: AgentRuntimeEvent = {
               ...evidence.value,
@@ -593,6 +597,17 @@ export class ManagedPiRuntime implements AgentRuntime {
             };
             if (authority.paused) tools.pendingPauseEvents.push(execution);
             else emit(execution);
+            if (state.name === "fabric_exec") {
+              for (const child of nestedFabricExecutionEvents(
+                execution.executionId,
+                request.runId,
+                evidence.value.nestedCalls,
+                execution.status,
+              )) {
+                if (authority.paused) tools.pendingPauseEvents.push(child);
+                else emit(child);
+              }
+            }
           } else
             emit({
               type: "runtime_activity",

@@ -3,6 +3,7 @@ import {
   BOT_OFFICE_PROMPTS,
   BotDeploymentController,
   type BotPromptHandler,
+  currentMachine,
   isLocalManagedOrigin,
   type MachineGateway,
   type MachineSummary,
@@ -72,40 +73,60 @@ export function RunsOnPicker({
   }, [snapshot.phase, snapshot.botMachineId, onMachineChange]);
 
   const pairing = snapshot.pairing;
+  const office = currentMachine(snapshot.botMachineId, snapshot.machines);
 
   return (
     <View style={{ marginTop: 16 }}>
       <Text style={styles.label}>{t("Office")}</Text>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ selected: false }}
-        disabled={disabled || snapshot.phase !== "ready"}
-        accessibilityLabel={snapshot.botMachineId ? t("Move office") : t("Link office")}
-        onPress={() => {
-          setOpen(false);
-          void onPrompt(
-            botId,
-            snapshot.botMachineId ? BOT_OFFICE_PROMPTS.move : BOT_OFFICE_PROMPTS.link,
-          );
-        }}
-        style={({ pressed }) => [
-          styles.trigger,
-          pressed && styles.pressed,
-          disabled && styles.disabled,
-        ]}
-      >
-        <Text style={styles.triggerLabel} numberOfLines={1}>
-          {snapshot.botMachineId ? t("Move office") : t("Link office")}
-        </Text>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={t("Manage offices")}
-        onPress={() => setOpen(true)}
-        style={({ pressed }) => [styles.manage, pressed && styles.pressed]}
-      >
-        <NativeSymbol ios="ellipsis" android="ellipsis-horizontal" size={20} color={native.label} />
-      </Pressable>
+      <View style={styles.row}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ selected: false }}
+          disabled={disabled || snapshot.phase !== "ready"}
+          accessibilityLabel={snapshot.botMachineId ? t("Move office") : t("Link office")}
+          onPress={() => {
+            setOpen(false);
+            void onPrompt(
+              botId,
+              snapshot.botMachineId ? BOT_OFFICE_PROMPTS.move : BOT_OFFICE_PROMPTS.link,
+            );
+          }}
+          style={({ pressed }) => [
+            styles.trigger,
+            pressed && styles.pressed,
+            disabled && styles.disabled,
+          ]}
+        >
+          {office ? (
+            <View style={styles.officeValue}>
+              <View
+                style={[
+                  styles.dot,
+                  {
+                    backgroundColor:
+                      office.status === "online" ? tokens.success : tokens.mutedForeground,
+                  },
+                ]}
+              />
+              <Text style={styles.triggerLabel} numberOfLines={1}>
+                {office.name}
+              </Text>
+            </View>
+          ) : (
+            <Text style={styles.triggerLabel} numberOfLines={1}>
+              {snapshot.botMachineId ? t("Move office") : t("Link office")}
+            </Text>
+          )}
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t("Manage offices")}
+          onPress={() => setOpen(true)}
+          style={({ pressed }) => [styles.manage, pressed && styles.pressed]}
+        >
+          <NativeSymbol ios="ellipsis" android="ellipsis-horizontal" size={20} color={native.label} />
+        </Pressable>
+      </View>
       {snapshot.error ? <Text style={styles.error}>{snapshot.error}</Text> : null}
       <Modal
         presentationStyle="pageSheet"
@@ -114,9 +135,6 @@ export function RunsOnPicker({
         visible={open}
       >
         <ScrollView contentContainerStyle={styles.sheet} keyboardShouldPersistTaps="handled">
-          <Text style={styles.title} numberOfLines={1}>
-            {t("Office")}
-          </Text>
           {isLocalManagedOrigin(apiBase) ? (
             <Text style={styles.note} testID="runs-on-local-warning">
               {t("Paired machines pause while this computer sleeps.")}
@@ -197,7 +215,7 @@ function MachineList({
           </Pressable>
         </View>
       ))}
-      {adding ? (
+      {adding || choices.length === 0 ? (
         <View style={styles.addRow}>
           <TextInput
             autoFocus
@@ -304,26 +322,34 @@ function createRunsOnStyles(tokens: ReturnType<typeof useMobileTokens>) {
     label: {
       color: native.secondaryLabel,
       fontSize: 14,
-      marginBottom: 8,
+    },
+    row: {
+      marginTop: 8,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 2,
     },
     manage: {
       minHeight: 44,
       width: 44,
       alignItems: "center",
       justifyContent: "center",
-      alignSelf: "flex-end",
       borderRadius: 11,
     },
     trigger: {
-      minHeight: 48,
+      flex: 1,
+      minHeight: 44,
+      minWidth: 0,
       flexDirection: "row",
       alignItems: "center",
-      justifyContent: "space-between",
-      gap: 12,
-      borderWidth: 1,
-      borderColor: tokens.border,
-      borderRadius: 11,
-      paddingHorizontal: 14,
+      paddingHorizontal: 2,
+    },
+    officeValue: {
+      flex: 1,
+      minWidth: 0,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
     },
     triggerLabel: {
       color: native.label,

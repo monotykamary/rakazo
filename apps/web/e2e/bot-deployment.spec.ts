@@ -80,13 +80,18 @@ for (const firstOffice of [true, false]) {
     await expect(dialog.getByRole("radio")).toHaveCount(0);
     await expect(dialog.getByRole("button", { name: "workshop", exact: true })).toHaveCount(0);
     await expect(dialog.getByText("Default machine", { exact: true })).toHaveCount(0);
-    await expect(dialog.getByText("Add machine")).toBeVisible();
+    if (firstOffice) {
+      await expect(dialog.getByTestId("runs-on-machine-name")).toBeVisible();
+      await expect(dialog.getByTestId("runs-on-add-machine")).toHaveCount(0);
+    } else {
+      await expect(dialog.getByText("Add machine")).toBeVisible();
+      await dialog.getByText("Add machine").click();
+    }
     // Locally managed setup: say so plainly, once.
     await expect(dialog.getByTestId("runs-on-local-warning")).toBeVisible();
     // No repository selection anywhere in the flow.
     await expect(dialog.getByText("Repository")).toHaveCount(0);
 
-    await dialog.getByText("Add machine").click();
     await page.getByTestId("runs-on-machine-name").fill("workshop-2");
     await page.route("**/rpc/machines/startPairing", (route) =>
       fulfillJson(route, {
@@ -118,7 +123,11 @@ for (const firstOffice of [true, false]) {
     await captureScreenshot(page, testInfo, "33-bot-deployment-pairing");
 
     await dialog.getByRole("button", { name: "Cancel pairing" }).click();
-    await expect(dialog.getByTestId("runs-on-add-machine")).toBeVisible();
+    if (firstOffice) {
+      await expect(dialog.getByTestId("runs-on-machine-name")).toBeVisible();
+    } else {
+      await expect(dialog.getByTestId("runs-on-add-machine")).toBeVisible();
+    }
     expect(mutations.filter((path) => path.endsWith("/cancelPairing"))).toHaveLength(1);
     if (!firstOffice) {
       await expect(dialog.getByText("workshop", { exact: true })).toBeVisible();

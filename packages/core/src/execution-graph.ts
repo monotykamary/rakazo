@@ -5,6 +5,11 @@ import {
   MessageBlock,
   type ProductEvent,
 } from "@rakazo/contracts";
+import {
+  fabricExecutionLabel,
+  fabricNestedCalls,
+  fabricNestedHeadline,
+} from "./fabric-activity.js";
 
 export interface ExecutionRunEvidence {
   runId: string;
@@ -133,7 +138,7 @@ export function projectExecutionGraph(
         kind: "execution",
         runId: event.runId,
         executionId,
-        name: string(data.name),
+        name: fabricExecutionLabel(data) ?? string(data.name),
         status: string(data.status),
         code: string(data.code) ?? string(record(data.args).code),
         evidence,
@@ -149,6 +154,27 @@ export function projectExecutionGraph(
         });
         link(parent, execution, "calls", evidence);
       } else link(run, execution, "contains", evidence);
+      const nested = fabricNestedCalls(
+        Array.isArray(data.nestedCalls) ? { nestedCalls: data.nestedCalls } : data.details,
+      );
+      const hasRetainedChildren = events.some(
+        (other) => string(other.payload.parentExecutionId) === executionId,
+      );
+      if (!hasRetainedChildren) {
+        for (const [index, call] of nested.entries()) {
+          const nestedId = `${executionId}:${call.ref}:${index}`;
+          const child = put({
+            id: `execution:${event.runId}:${nestedId}`,
+            kind: "execution",
+            runId: event.runId,
+            executionId: nestedId,
+            name: fabricNestedHeadline(call),
+            status: call.success === false ? "failed" : string(data.status),
+            evidence,
+          });
+          link(execution, child, "calls", evidence);
+        }
+      }
       const participantId = string(data.participantId);
       if (participantId) {
         const participant = put({

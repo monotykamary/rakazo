@@ -1,3 +1,33 @@
+import type { AgentRuntimeEvent } from "@rakazo/adapter-kit";
+import { fabricNestedCalls, fabricNestedHeadline } from "@rakazo/core";
+
+export function fabricNestedCallEvidence(details: unknown): {
+  nestedCalls?: ReturnType<typeof fabricNestedCalls>;
+} {
+  const nestedCalls = fabricNestedCalls(details);
+  return nestedCalls.length ? { nestedCalls } : {};
+}
+
+type ExecutionEvent = Extract<AgentRuntimeEvent, { type: "execution" }>;
+
+export function nestedFabricExecutionEvents(
+  parentExecutionId: string,
+  participantId: string,
+  nestedCalls: unknown,
+  status: ExecutionEvent["status"],
+): ExecutionEvent[] {
+  const calls = fabricNestedCalls({ nestedCalls });
+  if (!calls.length || status === "paused") return [];
+  return calls.map((call, index) => ({
+    type: "execution",
+    executionId: `${parentExecutionId}:${call.ref}:${index}`,
+    parentExecutionId,
+    name: fabricNestedHeadline(call),
+    participantId,
+    status: call.success === false ? "failed" : status,
+  }));
+}
+
 /** Keep whole strings or omit them: partial truncation could defeat later exact secret redaction. */
 export function boundedExecutionEvidence(
   value: Record<string, unknown>,

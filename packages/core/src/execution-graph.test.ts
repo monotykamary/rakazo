@@ -126,6 +126,41 @@ describe("evidence-backed execution graph", () => {
     expect(graph.nodes.find((node) => node.executionId === "outer")?.code).toBe("return 1");
     expect(graph.nodes.find((node) => node.executionId === "inner")).not.toHaveProperty("code");
   });
+  it("pulls nested fabric tools from TypeScript audits and Python trace.calls", () => {
+    const typescript = projectExecutionGraph([
+      event("outer", "agent.execution.updated", {
+        executionId: "fabric",
+        name: "fabric_exec",
+        display: { name: "Inspect startup" },
+        details: {
+          audits: [
+            { ref: "pi.read", tool: "read", provider: "pi", args: { path: "src/main.ts" }, success: true },
+          ],
+        },
+      }),
+    ]);
+    expect(typescript.nodes.find((node) => node.executionId === "fabric")?.name).toBe("Inspect startup");
+    expect(typescript.nodes.find((node) => node.name === "pi.read src/main.ts")).toMatchObject({
+      kind: "execution",
+    });
+    expect(typescript.edges).toContainEqual(
+      expect.objectContaining({
+        from: "execution:run:fabric",
+        kind: "calls",
+      }),
+    );
+    const python = projectExecutionGraph([
+      event("outer", "agent.execution.updated", {
+        executionId: "py",
+        name: "fabric_exec",
+        details: {
+          trace: { calls: [{ ref: "pi.bash", tool: "bash", provider: "pi", args: { command: "bun test" } }] },
+        },
+      }),
+    ]);
+    expect(python.nodes.find((node) => node.executionId === "py")?.name).toBe("Fabric program");
+    expect(python.nodes.some((node) => node.name === "pi.bash bun test")).toBe(true);
+  });
   it("links actual bot messages, waits, continuations and returned results", () => {
     const graph = projectExecutionGraph(
       [

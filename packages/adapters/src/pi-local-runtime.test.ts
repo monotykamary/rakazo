@@ -289,7 +289,10 @@ describe("LocalPiRuntime", () => {
         args: { code: "return await tools.call({ ref: 'pi.read', args: { path: 'x' } })" },
         result: {
           content: [{ type: "text", text: "fabric output" }],
-          details: { nestedCalls: [{ ref: "pi.read" }], source: "fabric" },
+          details: {
+            audits: [{ ref: "pi.read", tool: "read", provider: "pi", args: { path: "x" } }],
+            source: "fabric",
+          },
         },
       },
     });
@@ -304,7 +307,18 @@ describe("LocalPiRuntime", () => {
         status: "completed",
         code: expect.stringContaining("tools.call"),
         output: [{ type: "text", text: "fabric output" }],
-        details: expect.objectContaining({ nestedCalls: [{ ref: "pi.read" }] }),
+        nestedCalls: [expect.objectContaining({ ref: "pi.read", name: "pi.read" })],
+        details: expect.objectContaining({
+          audits: [expect.objectContaining({ ref: "pi.read" })],
+        }),
+      }),
+    );
+    expect(fabricEvents).toContainEqual(
+      expect.objectContaining({
+        type: "execution",
+        name: "pi.read x",
+        parentExecutionId: expect.stringMatching(/fabric-run:/),
+        status: "completed",
       }),
     );
   });

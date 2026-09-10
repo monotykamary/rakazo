@@ -11,6 +11,7 @@ import {
   createExecutionStore,
   createQueueStore,
   executionTraceKind,
+  executionTracePreview,
   groupExecutionTrace,
   mergeInspection,
   queueRows,
@@ -314,5 +315,9 @@ describe("execution trace grouping", () => {
       ["tool", 1],
     ]);
     expect(executionTraceKind("agent.execution.updated")).toBe("execution");
+    expect(executionTracePreview({ name: "fabric_exec", display: { name: "Inspect startup" } })).toBe(
+      "Inspect startup",
+    );
+    expect(executionTracePreview({ name: "fabric_exec" })).toBe("Fabric program");
   });
 });

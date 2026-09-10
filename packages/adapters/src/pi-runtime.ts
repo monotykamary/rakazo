@@ -157,6 +157,17 @@ export function describeToolActivity(toolName: string, args: unknown): string {
     return `Updating skill: ${detail(record.name ?? record.skillId)}`;
   if (toolName === "skill_delete")
     return `Deleting skill: ${detail(record.name ?? record.skillId)}`;
+  if (toolName === "fabric_exec") {
+    const display =
+      record.display && typeof record.display === "object" && !Array.isArray(record.display)
+        ? (record.display as Record<string, unknown>)
+        : {};
+    const label =
+      detail(display.name) ||
+      detail(display.description) ||
+      (typeof record.display === "string" ? detail(record.display) : "");
+    return label || "Running Fabric program";
+  }
   const mcp = toolName.match(/^mcp__(.+?)__(.+)$/);
   if (mcp) return `Using ${mcp[1]}: ${mcp[2]}`;
   return `Using ${toolName}`;
