@@ -200,3 +200,62 @@ export function executionLabel(event: ProductEvent) {
     ),
   ].join(" · ");
 }
+
+export type ExecutionTraceKind =
+  | "reasoning"
+  | "tool"
+  | "message"
+  | "run"
+  | "execution"
+  | "activity"
+  | "other";
+
+export function executionTraceKind(type: ProductEvent["type"]): ExecutionTraceKind {
+  switch (type) {
+    case "thread.progress":
+      return "reasoning";
+    case "agent.tool.called":
+      return "tool";
+    case "thread.message.created":
+    case "thread.message.updated":
+      return "message";
+    case "run.started":
+    case "run.checkpointed":
+    case "run.waiting_input":
+    case "run.completed":
+    case "run.failed":
+    case "run.cancelled":
+      return "run";
+    case "agent.execution.updated":
+      return "execution";
+    case "runtime.activity":
+      return "activity";
+    default:
+      return "other";
+  }
+}
+
+export function executionTracePreview(payload: ProductEvent["payload"]): string | undefined {
+  for (const key of ["text", "toolName", "name", "activity", "status", "summary"] as const) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+export function groupExecutionTrace(events: ProductEvent[]): Array<{
+  kind: ExecutionTraceKind;
+  events: ProductEvent[];
+}> {
+  const groups: Array<{ kind: ExecutionTraceKind; events: ProductEvent[] }> = [];
+  for (const event of events) {
+    const kind = executionTraceKind(event.type);
+    const last = groups[groups.length - 1];
+    if (last && last.kind === kind && kind === "reasoning") {
+      last.events.push(event);
+      continue;
+    }
+    groups.push({ kind, events: [event] });
+  }
+  return groups;
+}

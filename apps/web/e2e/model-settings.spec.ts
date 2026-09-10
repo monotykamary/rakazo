@@ -293,12 +293,11 @@ test("worker preserves unavailable intent, shows actual current, and handles pen
   await expect(page.getByTestId("current-model")).toHaveText(
     "Current: custom-extension/actual-running-v2 · low",
   );
-  await expect(page.getByRole("button", { name: "Use model", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Use model", exact: true })).toHaveCount(0);
   await captureScreenshot(page, testInfo, "pi-model-unavailable-selection");
   await page.getByRole("combobox", { name: "Search models" }).fill("research");
   await page.getByRole("option").click();
   await page.getByRole("combobox", { name: "Thinking", exact: true }).selectOption("high");
-  await page.getByRole("button", { name: "Use model", exact: true }).click();
   await expect(
     page.getByText("Pending · private-extension/custom-research-2026", { exact: true }),
   ).toBeVisible();
@@ -310,11 +309,9 @@ test("worker preserves unavailable intent, shows actual current, and handles pen
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.getByRole("alert")).toHaveText("Model unavailable");
   failWrite = true;
-  await page.getByRole("button", { name: "Use model", exact: true }).click();
+  await page.getByRole("combobox", { name: "Search models" }).fill("research");
+  await page.getByRole("option").click();
   await expect(page.getByText("Could not switch model", { exact: true })).toBeVisible();
-  await expect(page.getByTestId("selected-model")).toContainText(
-    "private-extension/custom-research-2026",
-  );
 });
 
 test("failed and delayed refresh preserve draft; reasoning follows Pi capabilities", async ({
@@ -341,12 +338,12 @@ test("failed and delayed refresh preserve draft; reasoning follows Pi capabiliti
   await expect.poll(() => Boolean(release)).toBe(true);
   release!();
   await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
-  await expect(page.getByTestId("selected-model")).toHaveText("Selected: plain-provider/basic");
+  await expect(page.getByRole("option", { name: /Basic/i })).toHaveAttribute("data-checked", "true");
   delay = false;
   fail = true;
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.getByRole("alert")).toHaveText("Could not refresh models");
-  await expect(page.getByTestId("selected-model")).toHaveText("Selected: plain-provider/basic");
+  await expect(page.getByRole("option", { name: /Basic/i })).toHaveAttribute("data-checked", "true");
 });
 
 for (const available of [false, true]) {
@@ -368,7 +365,7 @@ for (const available of [false, true]) {
     await expect(
       page.getByText(available ? "No models available" : "Pi unavailable", { exact: true }),
     ).toBeVisible();
-    await expect(page.getByRole("button", { name: "Use model", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Use model", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
   });
 }
@@ -442,15 +439,13 @@ test("unsupported persisted thinking stays visible and switching does not claim 
   });
   await page.goto("/e2e/fixtures/pi-models.html?worker");
   await expect(page.getByText("Thinking: high · Unavailable", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Use model", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Use model", exact: true })).toHaveCount(0);
   await page.getByRole("combobox", { name: "Search models" }).fill("research");
   await page.getByRole("option").click();
-  await page.getByRole("button", { name: "Use model", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Switching…", exact: true })).toBeDisabled();
+  await expect.poll(() => Boolean(release)).toBe(true);
   await expect(page.getByTestId("current-model")).toContainText(
     "custom-extension/actual-running-v2",
   );
-  await expect.poll(() => Boolean(release)).toBe(true);
   release!();
   await expect(page.getByText("Could not switch model", { exact: true })).toBeVisible();
   await expect(page.getByTestId("selected-model")).toContainText(

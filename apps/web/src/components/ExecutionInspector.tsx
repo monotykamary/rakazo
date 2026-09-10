@@ -1,11 +1,12 @@
 import { t } from "@lingui/core/macro";
 import type { ProductEvent } from "@rakazo/contracts";
-import { executionLabel, participantKey } from "@rakazo/core";
+import { participantKey } from "@rakazo/core";
 import { Button, NativeSelect, NativeSelectOption, Textarea } from "@rakazo/ui-web";
 import { useRef, useState } from "react";
 import { rpc } from "../lib/rpc";
 import { useExecution, type useQueue } from "../lib/use-queue";
 import { ExecutionFlow } from "./ExecutionFlow";
+import { ExecutionTraceList } from "./ExecutionTraceList";
 import { WorkerModelSettings } from "./WorkerModelSettings";
 
 const executionClient = rpc.execution;
@@ -78,26 +79,7 @@ export function ExecutionInspector({
 }
 
 function EventList({ events }: { events: ProductEvent[] }) {
-  return (
-    <ol className="space-y-2" aria-label={t`Retained events`}>
-      {events.map((event) => (
-        <li key={event.id} className="min-w-0 rounded border border-border p-3">
-          <details>
-            <summary className="cursor-pointer break-words text-sm">
-              <span className="text-muted-foreground">{event.seq} · </span>
-              {executionLabel(event)}
-              <time className="block text-xs text-muted-foreground" dateTime={event.createdAt}>
-                {event.createdAt}
-              </time>
-            </summary>
-            <pre className="mt-2 overflow-auto whitespace-pre-wrap break-words rounded bg-muted p-3 text-xs">
-              {JSON.stringify(event.payload, null, 2)}
-            </pre>
-          </details>
-        </li>
-      ))}
-    </ol>
-  );
+  return <ExecutionTraceList events={events} />;
 }
 
 function RetainedEvents({
@@ -133,10 +115,12 @@ function RetainedEvents({
         </p>
       )}
       {inspection && participants.length > 0 && (
-        <fieldset className="flex flex-wrap gap-2" aria-label={t`Participants`}>
+        <fieldset className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" aria-label={t`Participants`}>
           {participants.map((participant, index) => (
-            <div className="rounded bg-muted px-2 py-1 text-xs" key={participantKey(participant)}>
-              {participant.name ?? t`Participant ${index + 1}`}
+            <div className="flex min-w-0 items-center gap-1" key={participantKey(participant)}>
+              <span className="text-muted-foreground">
+                {participant.name ?? t`Participant ${index + 1}`}
+              </span>
               {participant.participantId && participant.botId === botId && (
                 <WorkerModelSettings
                   botId={botId}
@@ -150,11 +134,12 @@ function RetainedEvents({
                 <Button
                   size="sm"
                   variant="ghost"
+                  className="h-7 px-2"
                   onClick={() => {
                     setTarget(participant.participantId);
                     setMessage("");
                   }}
-                >{t`Steer participant`}</Button>
+                >{t`Steer`}</Button>
               )}
             </div>
           ))}

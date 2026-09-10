@@ -1,11 +1,17 @@
 import {
   ExecutionInspectionSchema,
+  type ProductEvent,
   QueueImageSchema,
   QueueReplySchema,
   type QueueSnapshot,
   QueueSnapshotSchema,
 } from "@rakazo/contracts";
-import { type ExecutionClient, executionLabel } from "@rakazo/core";
+import {
+  type ExecutionClient,
+  type ExecutionTraceKind,
+  executionTracePreview,
+  groupExecutionTrace,
+} from "@rakazo/core";
 import { useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -20,7 +26,7 @@ import {
   View,
 } from "react-native";
 import { rpc } from "../lib/api";
-import { useI18n } from "../lib/i18n";
+import { t, useI18n } from "../lib/i18n";
 import { useMobileTokens } from "../lib/native";
 import { pickFromLibrary } from "../lib/pick-attachments";
 import { type QueueClient, queueRows, useExecution, useQueue } from "../lib/use-queue";
@@ -36,6 +42,39 @@ const client: QueueClient = {
   mutate: async (input) => QueueReplySchema.parse(await rpc("queue/mutate", input)),
 };
 type Images = QueueSnapshot["rows"][number]["images"];
+
+function traceKindLabel(kind: ExecutionTraceKind, type: ProductEvent["type"]) {
+  switch (kind) {
+    case "reasoning":
+      return t("Reasoning");
+    case "tool":
+      return t("Tool");
+    case "message":
+      return t("Message");
+    case "run":
+      return t("Run");
+    case "execution":
+      return t("Call");
+    case "activity":
+      return t("Activity");
+    default:
+      return type.split(".").pop()?.replace(/_/g, " ") ?? t("Event");
+  }
+}
+
+function formatExecutionTime(iso: string, now = Date.now()) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const seconds = Math.floor((now - date.getTime()) / 1000);
+  if (seconds < 45) return t("just now");
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return t("{minutes}m ago", { minutes });
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return t("{hours}h ago", { hours });
+  const days = Math.floor(hours / 24);
+  if (days < 7) return t("{days}d ago", { days });
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
 export function GroupQueueStrip({
   threadId,
   members,
@@ -604,7 +643,7 @@ function ExecutionEvents({
             }}
           >
             <Text style={{ color: tokens.foreground }}>
-              {t("Steer participant")} ·{" "}
+              {t("Steer")} ·{" "}
               {participant.name ?? t("Participant {number}", { number: index + 1 })}
             </Text>
           </Pressable>
@@ -702,34 +741,44 @@ function ExecutionEvents({
               </Pressable>
             ) : null
           }
-          data={(data?.events ?? []).filter((event) => !evidence || evidence.includes(event.id))}
-          keyExtractor={(event) => event.id}
+          data={groupExecutionTrace(
+            (data?.events ?? []).filter((event) => !evidence || evidence.includes(event.id)),
+          )}
+          keyExtractor={(group) => group.events[group.events.length - 1]!.id}
           ListEmptyComponent={
             !busy && !error ? (
               <Text style={{ color: tokens.mutedForeground }}>{t("No retained events")}</Text>
             ) : null
           }
-          renderItem={({ item }) => (
-            <View style={[styles.row, { borderColor: tokens.border }]}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ expanded: expanded === item.id }}
-                onPress={() => setExpanded(expanded === item.id ? undefined : item.id)}
-              >
-                <Text style={{ color: tokens.foreground }}>
-                  {item.seq} · {executionLabel(item)}
-                </Text>
-                <Text style={{ color: tokens.mutedForeground }}>
-                  {item.botId} · {item.createdAt}
-                </Text>
-              </Pressable>
-              {expanded === item.id && (
-                <Text selectable style={{ color: tokens.foreground, fontFamily: "monospace" }}>
-                  {JSON.stringify(item.payload, null, 2)}
-                </Text>
-              )}
-            </View>
-          )}
+          renderItem={({ item: group }) => {
+            const item = group.events[group.events.length - 1]!;
+            const preview = executionTracePreview(item.payload);
+            return (
+              <View style={[styles.traceRow, { borderLeftColor: tokens.border }]}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: expanded === item.id }}
+                  onPress={() => setExpanded(expanded === item.id ? undefined : item.id)}
+                  style={styles.traceHeader}
+                >
+                  <Text style={[styles.traceKind, { color: tokens.mutedForeground }]}>
+                    {traceKindLabel(group.kind, item.type)}
+                  </Text>
+                  <Text numberOfLines={1} style={{ flex: 1, color: tokens.foreground, fontSize: 13 }}>
+                    {preview ?? ""}
+                  </Text>
+                  <Text style={{ color: tokens.mutedForeground, fontSize: 11 }}>
+                    {formatExecutionTime(item.createdAt)}
+                  </Text>
+                </Pressable>
+                {expanded === item.id && (
+                  <Text selectable style={{ color: tokens.mutedForeground, fontFamily: "monospace", fontSize: 11 }}>
+                    {JSON.stringify(item.payload, null, 2)}
+                  </Text>
+                )}
+              </View>
+            );
+          }}
         />
       )}
       <Pressable
@@ -750,6 +799,9 @@ const styles = StyleSheet.create({
   controls: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 4 },
   button: { paddingHorizontal: 10, paddingVertical: 12, minHeight: 44 },
   row: { borderWidth: 1, borderRadius: 12, padding: 10, marginVertical: 4 },
+  traceRow: { paddingVertical: 4, marginStart: 4, borderLeftWidth: 1, paddingStart: 12 },
+  traceHeader: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 28 },
+  traceKind: { width: 76, fontSize: 10, fontWeight: "600", letterSpacing: 0.6, textTransform: "uppercase" },
   input: { borderWidth: 1, borderRadius: 8, padding: 12, minHeight: 60 },
   image: { width: 56, height: 56, borderRadius: 8 },
 });

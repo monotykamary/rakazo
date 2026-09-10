@@ -176,13 +176,13 @@ describe("Android mobile platform contract", () => {
     );
   });
 
-  it("keeps send and stop separate while steering active work", () => {
+  it("combines send and stop while keeping queue actions", () => {
     const thread = readFileSync(resolve(mobileRoot, "app/thread.tsx"), "utf8");
     const stopStart = thread.indexOf("async function stop()");
     const stopSource = thread.slice(stopStart, thread.indexOf("const answerMessage", stopStart));
     expect(stopStart).toBeGreaterThan(-1);
-    expect(thread).toContain('accessibilityLabel={t("Send")}');
-    expect(thread).toContain('accessibilityLabel={t("Stop")}');
+    expect(thread).toContain("const actionIsStop = working && !canSend");
+    expect(thread).toContain('accessibilityLabel={actionIsStop ? t("Stop") : t("Send")}');
     expect(thread).not.toContain("Messages sent now guide the next turn.");
     expect(thread).not.toContain("Steer ");
     expect(thread).not.toContain("steering message");

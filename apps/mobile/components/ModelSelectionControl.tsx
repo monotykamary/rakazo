@@ -136,23 +136,26 @@ export function ModelSelectionControl({
       if (timer) clearInterval(timer);
     };
   }, [open, compact, botId, worker?.threadId, worker?.participantId, revision, status?.status]);
-  async function save(reset = false) {
+  async function save(reset = false, next?: { key?: string; thinking?: ThinkingLevel | "" }) {
+    const nextKey = reset ? "" : (next?.key ?? key);
+    const nextThinking = reset ? "" : (next?.thinking ?? thinking);
+    const nextSelected = options.find((option) => option.key === nextKey);
     if (
       busy ||
       saving.current ||
       !open ||
       !ready ||
       (!reset &&
-        ((!selected && Boolean(worker || key)) ||
-          (thinking && !selected?.thinkingLevels?.includes(thinking))))
+        ((!nextSelected && Boolean(worker || nextKey)) ||
+          (nextThinking && !nextSelected?.thinkingLevels?.includes(nextThinking))))
     )
       return;
     const selection: ModelSelection | null =
-      !reset && selected
+      !reset && nextSelected
         ? {
-            provider: selected.provider,
-            modelId: selected.modelId,
-            thinkingLevel: thinking || null,
+            provider: nextSelected.provider,
+            modelId: nextSelected.modelId,
+            thinkingLevel: nextThinking || null,
           }
         : null;
     const request = ++generation.current;
@@ -184,7 +187,6 @@ export function ModelSelectionControl({
         if (request !== generation.current) return;
         dirtyRevision.current = 0;
         onSaved?.(selection);
-        close();
       }
     } catch (cause) {
       if (request === generation.current) setError(String(cause));
@@ -302,15 +304,20 @@ export function ModelSelectionControl({
                 accessibilityState={{
                   checked: item.key === key,
                   disabled:
-                    busy || Boolean(item.key && !options.some((option) => option.key === item.key)),
+                    busy ||
+                    !ready ||
+                    Boolean(item.key && !options.some((option) => option.key === item.key)),
                 }}
                 disabled={
-                  busy || Boolean(item.key && !options.some((option) => option.key === item.key))
+                  busy ||
+                  !ready ||
+                  Boolean(item.key && !options.some((option) => option.key === item.key))
                 }
                 onPress={() => {
                   dirtyRevision.current++;
                   setKey(item.key);
                   setThinking("");
+                  void save(false, { key: item.key, thinking: "" });
                 }}
                 style={[
                   styles.option,
@@ -334,6 +341,7 @@ export function ModelSelectionControl({
                     onPress={() => {
                       dirtyRevision.current++;
                       setThinking(level as ThinkingLevel | "");
+                      void save(false, { thinking: level as ThinkingLevel | "" });
                     }}
                     style={[
                       styles.button,
@@ -346,19 +354,6 @@ export function ModelSelectionControl({
               </ScrollView>
             </View>
           ) : null}
-          <Pressable
-            accessibilityRole="button"
-            disabled={
-              busy ||
-              !ready ||
-              (!selected && Boolean(worker || key)) ||
-              Boolean(thinking && !selected?.thinkingLevels?.includes(thinking))
-            }
-            onPress={() => void save()}
-            style={styles.button}
-          >
-            <Text style={{ color: tokens.foreground }}>{t("Save")}</Text>
-          </Pressable>
           {worker && (
             <Pressable
               accessibilityRole="button"

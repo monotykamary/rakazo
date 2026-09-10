@@ -248,25 +248,33 @@ export function BotSettings({
   const [modelError, setModelError] = useState(false);
   const [modelEdited, setModelEdited] = useState(false);
   const modelRevision = useRef(0);
+  const modelsLoaded = useRef(false);
   const modelScope = useRef<string | undefined>(bot.id);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function refreshModels(force = false) {
     if (modelScope.current !== bot.id) return;
     const revision = ++modelRevision.current;
-    setModelLoading(true);
-    setModelError(false);
+    const showLoading = force || !modelsLoaded.current;
+    if (showLoading) {
+      setModelLoading(true);
+      setModelError(false);
+    }
     try {
       const next = await rpc.models.runtime({ botId: bot.id, ...(force ? { refresh: true } : {}) });
-      if (revision === modelRevision.current) setRuntime(next);
+      if (revision === modelRevision.current) {
+        modelsLoaded.current = true;
+        setRuntime(next);
+      }
     } catch {
-      if (revision === modelRevision.current) setModelError(true);
+      if (revision === modelRevision.current && showLoading) setModelError(true);
     } finally {
-      if (revision === modelRevision.current) setModelLoading(false);
+      if (revision === modelRevision.current && showLoading) setModelLoading(false);
     }
   }
   useEffect(() => {
     modelScope.current = bot.id;
+    modelsLoaded.current = false;
     setRuntime(undefined);
     setModelEdited(false);
     setModelKey(

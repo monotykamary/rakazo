@@ -174,7 +174,13 @@ async function mount(
         : null;
       runtime = {
         ...runtime,
-        selection: { requested, effective: runtime.current, status: "pending", error: null },
+        current: requested ?? runtime.profileDefault,
+        selection: {
+          requested,
+          effective: requested ?? runtime.profileDefault,
+          status: "applied",
+          error: null,
+        },
       };
       Object.assign(bot, {
         modelProvider: input.modelProvider,
@@ -240,16 +246,20 @@ for (const width of [1280, 375]) {
     expect(first!.y - (input!.y + input!.height)).toBeGreaterThanOrEqual(12);
     await page.getByRole("combobox", { name: "Search models" }).fill("astra");
     await page.getByRole("listbox").getByRole("option").click();
-    await page.getByRole("combobox", { name: "Thinking", exact: true }).selectOption("low");
-    await expect(trigger).toContainText("Sol");
-    await page.getByRole("button", { name: "Use model", exact: true }).click();
     await expect
       .poll(() => fixture.writes)
       .toEqual([
+        { botId: "bot-fixture", modelProvider: "fixture", modelId: "astra", thinkingLevel: null },
+      ]);
+    await page.getByRole("combobox", { name: "Thinking", exact: true }).selectOption("low");
+    await expect
+      .poll(() => fixture.writes)
+      .toEqual([
+        { botId: "bot-fixture", modelProvider: "fixture", modelId: "astra", thinkingLevel: null },
         { botId: "bot-fixture", modelProvider: "fixture", modelId: "astra", thinkingLevel: "low" },
       ]);
-    await expect(trigger).toContainText("Astra · Pending");
-    await expect(page.getByTestId("current-model")).toHaveText("Current: fixture/sol · high");
+    await expect(trigger).toHaveText("Astra");
+    await expect(page.getByTestId("current-model")).toHaveText("Current: fixture/astra · low");
     await captureScreenshot(page, testInfo, `model-header-pending-${width}`);
     fixture.apply();
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
@@ -267,14 +277,14 @@ test("first-run bot can choose desired model without claiming an effective model
   const fixture = await mount(page, { firstRun: true, delay: true });
   await page.getByTestId("bot-model-switcher").click();
   await expect(page.getByRole("button", { name: "Refreshing…" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Use model", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Use model", exact: true })).toHaveCount(0);
   await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(0);
   await expect.poll(fixture.ready).toBe(true);
   fixture.options.delay = false;
   fixture.release();
   await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(2);
   await expect(page.getByTestId("current-model")).toHaveText("Current: Unavailable");
-  await page.getByRole("button", { name: "Use model", exact: true }).click();
+  await page.getByRole("listbox").getByRole("option").nth(1).click();
   await expect.poll(() => fixture.writes.length).toBe(1);
   await expect(page.getByTestId("current-model")).toHaveText("Current: Unavailable");
 });
@@ -283,21 +293,18 @@ test("header load and save failures are accessible and recoverable", async ({ pa
   const fixture = await mount(page, { fail: true });
   await page.getByTestId("bot-model-switcher").click();
   await expect(page.getByRole("dialog").getByRole("alert")).toHaveText("Could not refresh models");
-  await expect(page.getByRole("button", { name: "Use model", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Use model", exact: true })).toHaveCount(0);
   fixture.options.fail = false;
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(2);
   await page.getByRole("combobox", { name: "Search models" }).fill("astra");
-  await page.getByRole("listbox").getByRole("option").click();
   fixture.options.fail = true;
-  await page.getByRole("button", { name: "Use model", exact: true }).click();
+  await page.getByRole("listbox").getByRole("option").click();
   await expect(page.getByRole("dialog").getByRole("alert")).toHaveText("Could not switch model");
   await expect(page.getByTestId("bot-model-switcher")).toHaveText("Sol");
-  await expect(page.getByTestId("selected-model")).toHaveText("Selected: fixture/astra");
   fixture.options.fail = false;
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Use model", exact: true })).toBeEnabled();
-  await expect(page.getByTestId("selected-model")).toHaveText("Selected: fixture/astra");
+  await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(2);
 });
 
 test("a new bot shows its inherited model without an unsolicited pending label", async ({

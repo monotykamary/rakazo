@@ -7,12 +7,12 @@ const AvatarStyleContext = createContext<{
   avatarStyle: AvatarStyle;
   updateAvatarStyle: (avatarStyle: AvatarStyle) => Promise<void>;
 }>({
-  avatarStyle: "robot",
+  avatarStyle: "organic",
   updateAvatarStyle: async () => undefined,
 });
 
 export function AvatarStyleProvider({ children }: { children: ReactNode }) {
-  const [avatarStyle, setAvatarStyle] = useState<AvatarStyle>("robot");
+  const [avatarStyle, setAvatarStyle] = useState<AvatarStyle>("organic");
   const pathname = usePathname();
   const requestIdRef = useRef(0);
   const updatePromiseRef = useRef<Promise<void> | null>(null);

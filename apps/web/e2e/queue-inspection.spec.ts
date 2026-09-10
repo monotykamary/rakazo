@@ -322,7 +322,6 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
   await execution.getByRole("button", { name: "Model", exact: true }).click();
   await execution.getByRole("option", { name: "Large local/large", exact: true }).click();
   await execution.getByRole("combobox", { name: "Thinking", exact: true }).selectOption("high");
-  await execution.getByRole("button", { name: "Use model", exact: true }).click();
   await expect(execution.getByTestId("current-model")).toHaveText("Current: local/small");
   await expect(
     execution.getByText(`Pending · local/${requestedModel ? "large" : "small"}`, { exact: true }),
@@ -331,19 +330,18 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
   await captureScreenshot(page, testInfo, "execution-worker-model");
   await execution.getByRole("button", { name: "Use bot model", exact: true }).click();
   await expect.poll(() => requestedModel).toBeNull();
-  await expect(execution.getByTestId("selected-model")).toHaveText("Selected: local/small");
   await expect(execution.getByTestId("current-model")).toHaveText("Current: local/small");
   await expect(
     execution.getByText(`Pending · local/${requestedModel ? "large" : "small"}`, { exact: true }),
   ).toBeVisible();
   await execution.getByRole("button", { name: "Model", exact: true }).click();
-  await page.getByText("agent.tool.called", { exact: false }).click();
+  await execution.getByRole("list", { name: "Retained events" }).getByText("bash").click();
   await expect(page.getByText("npm test", { exact: false })).toBeVisible();
   await expect(page.getByText("run.completed", { exact: false })).toHaveCount(0);
   await page.getByRole("button", { name: "Flow", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Message to participant" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Steer participant", exact: true })).toHaveCount(1);
-  await page.getByRole("button", { name: "Steer participant", exact: true }).click();
+  await expect(execution.getByRole("button", { name: "Steer", exact: true })).toHaveCount(1);
+  await execution.getByRole("button", { name: "Steer", exact: true }).click();
   await page
     .getByRole("textbox", { name: "Message to participant" })
     .fill("Focus on the failing test");
@@ -379,7 +377,7 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
   await expect(evidencePanel.getByText("event", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Show events", exact: true }).click();
   await expect(flowButton).toBeFocused();
-  await page.getByText("agent.tool.called", { exact: false }).click();
+  await execution.getByRole("list", { name: "Retained events" }).getByText("bash").click();
   await expect(page.getByText("npm test", { exact: false })).toBeVisible();
   await captureScreenshot(page, testInfo, "execution-evidence");
   await flowButton.click();

@@ -15,7 +15,7 @@ model User {
   image                       String?
   createdAt                   DateTime                     @default(now())
   updatedAt                   DateTime                     @updatedAt
-  avatarStyle                 String                       @default("robot")
+  avatarStyle                 String                       @default("organic")
   onboardedAt                 DateTime?
   modelVisibility             Json                         @default("{\"hide\":[]}")
   sessions                    Session[]

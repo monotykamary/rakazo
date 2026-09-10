@@ -145,6 +145,7 @@ async function finishPrompt(command) {
 }
 
 async function handle(command) {
+  Object.assign(scenario, JSON.parse(await readFile(scenarioPath, "utf8").catch(() => "{}")));
   await log({ type: "command", command });
   if (scenario.exitOnCommand === command.type && (!scenario.faultModel || scenario.model === scenario.faultModel)) process.exit(9);
   if (scenario.hangOnCommand === command.type && (!scenario.faultModel || scenario.model === scenario.faultModel)) return;

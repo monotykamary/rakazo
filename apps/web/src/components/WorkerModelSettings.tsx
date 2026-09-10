@@ -16,12 +16,16 @@ export function PiRuntimeModelSettings({ botId, threadId, participantId }: Model
   const revision = useRef(0);
   const edited = useRef(false);
   const saving = useRef(false);
+  const loaded = useRef(false);
   const refresh = useCallback(
     async (force = false) => {
       if (saving.current) return;
       const request = ++revision.current;
-      setLoading(true);
-      setError(undefined);
+      const showLoading = force || !loaded.current;
+      if (showLoading) {
+        setLoading(true);
+        setError(undefined);
+      }
       try {
         const next = await rpc.models.runtime({
           botId,
@@ -30,12 +34,25 @@ export function PiRuntimeModelSettings({ botId, threadId, participantId }: Model
           ...(force ? { refresh: true } : {}),
         });
         if (request !== revision.current) return;
-        setRuntime(next);
+        loaded.current = true;
+        setRuntime((previous) =>
+          previous &&
+          previous.selection?.status === next.selection?.status &&
+          previous.current?.provider === next.current?.provider &&
+          previous.current?.modelId === next.current?.modelId &&
+          previous.current?.thinkingLevel === next.current?.thinkingLevel &&
+          previous.selection?.requested?.provider === next.selection?.requested?.provider &&
+          previous.selection?.requested?.modelId === next.selection?.requested?.modelId &&
+          previous.selection?.requested?.thinkingLevel === next.selection?.requested?.thinkingLevel &&
+          previous.catalog.length === next.catalog.length
+            ? previous
+            : next,
+        );
         if (!edited.current) setSelection(next.selection?.requested ?? next.current);
       } catch {
-        if (request === revision.current) setError(t`Could not refresh models`);
+        if (request === revision.current && showLoading) setError(t`Could not refresh models`);
       } finally {
-        if (request === revision.current) setLoading(false);
+        if (request === revision.current && showLoading) setLoading(false);
       }
     },
     [botId, threadId, participantId],
@@ -43,6 +60,7 @@ export function PiRuntimeModelSettings({ botId, threadId, participantId }: Model
   useEffect(() => {
     edited.current = false;
     saving.current = false;
+    loaded.current = false;
     setBusy(false);
     setRuntime(undefined);
     setSelection(null);
@@ -57,7 +75,19 @@ export function PiRuntimeModelSettings({ botId, threadId, participantId }: Model
     return () => clearTimeout(timer);
   }, [runtime, busy, refresh]);
   async function save(nextSelection: ModelSelection | null) {
-    if (saving.current || loading || runtime?.availability.status !== "available") return;
+    if (saving.current || loading || !runtime || runtime.availability.status !== "available") return;
+    if (nextSelection) {
+      const entry = runtime.catalog.find(
+        (item) => item.provider === nextSelection.provider && item.id === nextSelection.modelId,
+      );
+      if (!entry) return;
+      if (
+        nextSelection.thinkingLevel &&
+        !entry.thinkingLevels?.includes(nextSelection.thinkingLevel)
+      ) {
+        return;
+      }
+    }
     saving.current = true;
     const request = ++revision.current;
     setBusy(true);
@@ -84,12 +114,7 @@ export function PiRuntimeModelSettings({ botId, threadId, participantId }: Model
       }
     }
   }
-  const selected = runtime?.catalog.find(
-    (entry) => entry.provider === selection?.provider && entry.id === selection?.modelId,
-  );
   const available = runtime?.availability.status === "available";
-  const supportedThinking =
-    !selection?.thinkingLevel || selected?.thinkingLevels?.includes(selection.thinkingLevel);
   return (
     <div className="space-y-3">
       <PiModelStatus current={runtime?.current ?? null} status={runtime?.selection} />
@@ -108,19 +133,14 @@ export function PiRuntimeModelSettings({ botId, threadId, participantId }: Model
         catalog={runtime?.catalog ?? []}
         selection={selection}
         disabled={busy || !available}
+        showSelectionSummary={false}
         onChange={(next) => {
           edited.current = true;
           setSelection(next);
+          void save(next);
         }}
       />
       <div className="flex gap-2">
-        <Button
-          size="sm"
-          disabled={busy || loading || !available || !selected || !supportedThinking}
-          onClick={() => void save(selection)}
-        >
-          {busy ? t`Switching…` : t`Use model`}
-        </Button>
         <Button
           size="sm"
           variant="ghost"

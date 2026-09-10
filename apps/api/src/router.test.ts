@@ -79,7 +79,7 @@ describe("account preferences", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("coerces unknown stored avatar styles to robot on me", async () => {
+  it("coerces unknown stored avatar styles to organic on me", async () => {
     const { actor, handler } = preferencesDeps("custom-cdn");
 
     const { response } = await handler.handle(
@@ -93,7 +93,7 @@ describe("account preferences", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      json: expect.objectContaining({ avatarStyle: "robot" }),
+      json: expect.objectContaining({ avatarStyle: "organic" }),
     });
   });
 });

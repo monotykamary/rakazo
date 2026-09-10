@@ -4233,7 +4233,7 @@ export function ShellPage() {
             email={session.data?.user.email}
             usage={usage}
             focusUsage={accountSettingsFocusUsage}
-            avatarStyle={bootstrapMe?.avatarStyle ?? "robot"}
+            avatarStyle={bootstrapMe?.avatarStyle ?? "organic"}
             isDeploymentOwner={bootstrapMe?.isDeploymentOwner === true}
             sandboxProvider={bootstrapMe?.sandboxProvider}
             messagingEnabled={messagingSurfaceEnabled}
@@ -4438,7 +4438,7 @@ export function ShellPage() {
   );
 
   return (
-    <AvatarStyleProvider value={bootstrapMe?.avatarStyle ?? "robot"}>{shell}</AvatarStyleProvider>
+    <AvatarStyleProvider value={bootstrapMe?.avatarStyle ?? "organic"}>{shell}</AvatarStyleProvider>
   );
 }
 
@@ -5201,16 +5201,19 @@ export const Composer = memo(function Composer({
   const showComposerPlaceholder =
     draft.length === 0 && selectedSkill === null && selectedMentions.length === 0;
   const replyName = replyTarget ? (replyTargetName ?? previewMessageText(replyTarget)) : "";
-  const displayedMode = queueEdit ? "send" : heldMode;
+  const displayedMode = queueEdit ? "send" : running && !canSend ? "stop" : heldMode;
   const actionLabel = queueEdit
     ? t`Save queue edit`
-    : displayedMode === "steer"
-      ? t`Steer`
-      : displayedMode === "followUp"
-        ? t`Queue`
-        : t`Send`;
+    : displayedMode === "stop"
+      ? t`Stop`
+      : displayedMode === "steer"
+        ? t`Steer`
+        : displayedMode === "followUp"
+          ? t`Queue`
+          : t`Send`;
   const defaultQueueBotId = queueMembers.length === 1 ? queueMembers[0]?.botId : queueBotId;
   const actionIcon = <ComposerActionIcon mode={queueEdit ? "edit" : displayedMode} />;
+  const stopping = displayedMode === "stop";
 
   return (
     <fieldset
@@ -5600,11 +5603,11 @@ export const Composer = memo(function Composer({
               render={
                 <Button
                   size="icon"
-                  className={`${running ? "size-10" : "size-9"} rounded-e-md rounded-s-full`}
+                  className="size-9 rounded-e-md rounded-s-full"
                 />
               }
               aria-label={actionLabel}
-              disabled={sending || !canSend || disabled}
+              disabled={sending || disabled || (!stopping && !canSend)}
               onPointerDown={(event) => {
                 if (event.pointerType !== "touch" || queueEdit) return;
                 touchLongPressRef.current = false;
@@ -5627,6 +5630,10 @@ export const Composer = memo(function Composer({
                   event.preventDefault();
                   return;
                 }
+                if (stopping) {
+                  void onStop();
+                  return;
+                }
                 const mode = queueEdit ? "send" : composerModeFromModifiers(event, macPlatform);
                 void submit(mode, mode === "send" ? undefined : defaultQueueBotId);
               }}
@@ -5642,13 +5649,18 @@ export const Composer = memo(function Composer({
                 render={
                   <Button
                     size="icon-sm"
-                    className={`${running ? "h-10" : "h-9"} w-5 rounded-e-full rounded-s-none border-s border-primary-foreground/20 px-0`}
+                    className="h-9 w-5 rounded-e-full rounded-s-none border-s border-primary-foreground/20 px-0"
                   />
                 }
               >
                 <ChevronDown aria-hidden className="size-3" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {running && canSend ? (
+                  <DropdownMenuItem onClick={() => void onStop()}>
+                    <Square /> {t`Stop`}
+                  </DropdownMenuItem>
+                ) : null}
                 <DropdownMenuItem onClick={() => void submit("send")}>
                   <ArrowUp /> {t`Send`}
                 </DropdownMenuItem>
@@ -5706,18 +5718,6 @@ export const Composer = memo(function Composer({
             </DropdownMenu>
           ) : null}
         </div>
-        {running ? (
-          <Button
-            variant="outline"
-            size="icon"
-            aria-label={t`Stop`}
-            disabled={sending}
-            onClick={() => void onStop()}
-            className="size-10 rounded-full text-foreground/75"
-          >
-            <Square size={12} strokeWidth={0} fill="currentColor" />
-          </Button>
-        ) : null}
       </div>
     </fieldset>
   );

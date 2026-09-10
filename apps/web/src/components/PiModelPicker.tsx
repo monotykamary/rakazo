@@ -22,19 +22,21 @@ export function PiModelPicker({
   onChange,
   disabled = false,
   readOnly = false,
+  showSelectionSummary = true,
 }: {
   catalog: ModelCatalogEntry[];
   selection: ModelSelection | null;
   onChange?: (selection: ModelSelection) => void;
   disabled?: boolean;
   readOnly?: boolean;
+  showSelectionSummary?: boolean;
 }) {
   const selected = catalog.find(
     (entry) => entry.provider === selection?.provider && entry.id === selection?.modelId,
   );
   return (
     <div className="space-y-3">
-      {!readOnly && selection && (
+      {!readOnly && selection && (showSelectionSummary || !selected) && (
         <p className="text-sm" data-testid="selected-model">
           {t`Selected`}: {selection.provider}/{selection.modelId}
           {!selected ? ` · ${t`Unavailable`}` : ""}
@@ -65,7 +67,7 @@ export function PiModelPicker({
               data-checked={entry === selected}
               title={readOnly ? `${entry.provider}/${entry.id}` : undefined}
               onSelect={
-                readOnly
+                readOnly || entry === selected
                   ? undefined
                   : () =>
                       onChange?.({

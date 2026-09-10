@@ -57,6 +57,19 @@ test("reduced motion switches composer glyphs immediately", async ({ page }) => 
   await page.keyboard.up("Meta");
 });
 
+test("running work morphs the send control into stop", async ({ page }) => {
+  await mockQueue(page, 0);
+  await page.goto("/e2e/fixtures/composer-queue.html?running");
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toHaveCount(0);
+  await expect(page.locator('[data-composer-icon="stop"]')).toBeVisible();
+  await page.getByRole("combobox", { name: "Message Fixture Bot" }).fill("steer later");
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
+  await expect(page.locator('[data-composer-icon="send"]')).toBeVisible();
+  await page.getByRole("button", { name: "Choose message action" }).click();
+  await expect(page.getByRole("menuitem", { name: "Stop", exact: true })).toBeVisible();
+});
+
 const pixel =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 

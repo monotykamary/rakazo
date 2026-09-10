@@ -32,7 +32,7 @@ describe("message activity links", () => {
       />,
     );
     expect(html).toContain('aria-label="2 messages with Research"');
-    expect(html).toContain("rakazo-bot-avatar");
+    expect(html).toContain("rakazo-organic-avatar");
     expect(html).toContain("text-muted-foreground");
     expect(html).toContain("Execution");
     expect(html).not.toContain("Queue");

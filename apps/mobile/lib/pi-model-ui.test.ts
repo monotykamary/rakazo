@@ -111,6 +111,17 @@ function text(tree: ReactNode): string {
 function button(tree: ReactNode, label: string) {
   return nodes(tree).find((node) => node.onPress && text(node.children) === label)!;
 }
+function choose(tree: ReactNode, key = modelKey(requested.provider, requested.modelId)) {
+  const list = nodes(tree).find((node) => node.renderItem && node.data)!;
+  const item = list.data!.find((entry) => entry.key === key) ?? { key, label: key };
+  return nodes(list.renderItem!({ item })).find((node) => node.onPress)!;
+}
+function radiosBusy(tree: ReactNode) {
+  const list = nodes(tree).find((node) => node.renderItem && node.data);
+  const item = list?.data?.[0];
+  if (!list?.renderItem || !item) return false;
+  return Boolean(nodes(list.renderItem({ item })).find((node) => node.onPress)?.disabled);
+}
 function render(factory: () => ReactNode) {
   hooks.cursor = 0;
   const tree = factory();
@@ -194,7 +205,7 @@ describe("native Pi model UI", () => {
     render(factory);
     await flush();
     hooks.rpc.mockResolvedValueOnce({ ...snapshot().selection!, status: "applied" });
-    button(render(factory), "Save").onPress!();
+    choose(render(factory)).onPress!();
     await flush();
     expect(hooks.rpc).toHaveBeenCalledWith("models/setWorkerSelection", {
       botId: "bot",
@@ -221,7 +232,7 @@ describe("native Pi model UI", () => {
     await flush();
     const oldSave = deferred<unknown>();
     hooks.rpc.mockReturnValueOnce(oldSave.promise);
-    button(render(factory), "Save").onPress!();
+    choose(render(factory)).onPress!();
     participantId = "second";
     render(factory);
     await flush();
@@ -229,13 +240,13 @@ describe("native Pi model UI", () => {
     await flush();
     const newSave = deferred<unknown>();
     hooks.rpc.mockReturnValueOnce(newSave.promise);
-    button(render(factory), "Save").onPress!();
+    choose(render(factory)).onPress!();
     oldSave.resolve(snapshot().selection);
     await flush();
-    expect(button(render(factory), "Save").disabled).toBe(true);
+    expect(radiosBusy(render(factory))).toBe(true);
     newSave.reject(new Error("retry"));
     await flush();
-    expect(button(render(factory), "Save").disabled).toBe(false);
+    expect(radiosBusy(render(factory))).toBe(false);
   });
   it("uses shared identity encoding", () => {
     expect(modelKey("provider", "model::id")).toBe("provider::model::id");
@@ -252,8 +263,8 @@ describe("native Pi model UI", () => {
     load.resolve(next);
     await flush();
     expect(button(render(factory), "low").accessibilityState?.checked).toBe(true);
-    button(render(factory), "Save").onPress!();
-    expect(hooks.rpc).toHaveBeenLastCalledWith("models/setWorkerSelection", {
+    button(render(factory), "low").onPress!();
+    expect(hooks.rpc).toHaveBeenCalledWith("models/setWorkerSelection", {
       botId: "bot",
       threadId: "thread",
       selection: { ...requested, thinkingLevel: "low" },
@@ -268,7 +279,7 @@ describe("native Pi model UI", () => {
       const save = deferred<NonNullable<PiModelSnapshot["selection"]>>();
       hooks.rpc.mockReturnValueOnce(load.promise).mockReturnValueOnce(save.promise);
       vi.advanceTimersByTime(2000);
-      button(render(factory), "Save").onPress!();
+      choose(render(factory)).onPress!();
       const count = hooks.rpc.mock.calls.length;
       vi.advanceTimersByTime(4000);
       expect(hooks.rpc).toHaveBeenCalledTimes(count);
@@ -305,7 +316,7 @@ describe("native Pi model UI", () => {
     await flush();
     const save = deferred<unknown>();
     hooks.rpc.mockReturnValueOnce(save.promise);
-    button(render(factory), "Save").onPress!();
+    choose(render(factory)).onPress!();
     if (transition === "scope") {
       botId = "new-bot";
       render(factory);
@@ -325,7 +336,7 @@ describe("native Pi model UI", () => {
     if (transition === "scope") {
       const tree = render(factory);
       expect(nodes(tree).find((node) => node.visible !== undefined)?.visible).toBe(true);
-      expect(button(tree, "Save").disabled).toBe(false);
+      expect(radiosBusy(tree)).toBe(false);
     }
   });
   it.each(
@@ -374,9 +385,8 @@ describe("native Pi model UI", () => {
   it("Pi-listed thinking choices save exactly and failed validation keeps the draft", async () => {
     const { tree, factory } = await openControl();
     expect(button(tree, "high")).toBeUndefined();
-    button(tree, "low").onPress!();
     hooks.rpc.mockRejectedValue(new Error("Pi validation failed"));
-    button(render(factory), "Save").onPress!();
+    button(tree, "low").onPress!();
     await flush();
     const next = render(factory);
     expect(text(next)).toContain("Pi validation failed");
@@ -386,7 +396,7 @@ describe("native Pi model UI", () => {
       modelId: requested.modelId,
       thinkingLevel: "low",
     });
-    expect(button(next, "Save").disabled).toBe(false);
+    expect(radiosBusy(next)).toBe(false);
   });
   it("unavailable scoped refresh preserves the stale request and disables writes", async () => {
     const { tree, factory } = await openControl({ threadId: "thread" });
@@ -409,7 +419,7 @@ describe("native Pi model UI", () => {
       threadId: "thread",
       refresh: true,
     });
-    expect(button(next, "Save").disabled).toBe(true);
+    expect(radiosBusy(next)).toBe(true);
   });
   it("global inventory reads only {}, labels the profile default, and searches real identities", async () => {
     render(Models);
@@ -431,8 +441,8 @@ describe("native Pi model UI", () => {
     expect(hooks.rpc).toHaveBeenCalledWith("models/runtime", { botId: "bot" });
     expect(text(tree)).toContain(`Current: ${modelIdentity(current)}`);
     expect(text(tree)).toContain(`Requested: ${modelIdentity(requested)} · Pending`);
-    expect(button(tree, "Save").disabled).toBe(false);
-    await button(tree, "Save").onPress!();
+    expect(radiosBusy(tree)).toBe(false);
+    await choose(tree).onPress!();
     await flush();
     expect(hooks.rpc).toHaveBeenCalledWith("bots/update", {
       botId: "bot",
@@ -448,7 +458,7 @@ describe("native Pi model UI", () => {
       hooks.rpc.mockImplementation((route) =>
         Promise.resolve(route === "models/setWorkerSelection" ? snapshot().selection : snapshot()),
       );
-      await button(tree, "Save").onPress!();
+      await choose(tree).onPress!();
       await flush();
       expect(hooks.rpc).toHaveBeenCalledWith("models/setWorkerSelection", {
         botId: "bot",
@@ -470,7 +480,7 @@ describe("native Pi model UI", () => {
   it("preserves stale selected identities and unsupported thinking without substituting a model", async () => {
     const stale = { ...requested, modelId: "removed-id", thinkingLevel: "high" as const };
     const { tree } = await openControl(undefined, stale);
-    expect(button(tree, "Save").disabled).toBe(true);
+    expect(choose(tree, modelKey(stale.provider, stale.modelId)).disabled).toBe(true);
     const list = nodes(tree).find((node) => node.data)!;
     expect(
       list.data!.find((entry) => entry.key === modelKey(stale.provider, stale.modelId))?.label,
@@ -488,13 +498,13 @@ describe("native Pi model UI", () => {
     expect(text(next)).toContain("Offline");
     expect(text(next)).toContain(modelIdentity(current));
     expect(nodes(next).find((node) => node.data)!.data).toHaveLength(2);
-    expect(button(next, "Save").disabled).toBe(true);
+    expect(radiosBusy(next)).toBe(true);
     hooks.rpc.mockResolvedValue(snapshot());
     button(next, "Refresh").onPress!();
     render(factory);
     await flush();
     next = render(factory);
-    expect(button(next, "Save").disabled).toBe(false);
+    expect(radiosBusy(next)).toBe(false);
   });
   it("failed worker status remains separate from current and displays its error", async () => {
     const failed = snapshot();

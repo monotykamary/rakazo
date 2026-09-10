@@ -55,6 +55,7 @@ function fixture() {
       }),
     },
     runtimeSession: { findUnique: vi.fn(async () => ({ state })), update: vi.fn() },
+    run: { findFirst: vi.fn(async () => null) },
     runtimeModelPreference: {
       findUnique: vi.fn(async () => preference),
       upsert: vi.fn(async (args: any) => {
@@ -131,6 +132,7 @@ describe("model selection routes", () => {
   });
   it("records busy worker intent separately and preserves effective state/checkpoint", async () => {
     const f = fixture();
+    f.db.run.findFirst.mockResolvedValue({ id: "run" });
     const validate = vi.fn(async () => {});
     const result = await setWorkerModelSelection(
       f.prisma,
@@ -160,7 +162,7 @@ describe("model selection routes", () => {
       { botId: "bot", threadId: "thread", selection },
       async () => {},
     );
-    expect(result).toMatchObject({ requested: selection, effective: old, status: "pending" });
+    expect(result).toMatchObject({ requested: selection, effective: selection, status: "applied" });
     expect(f.db.bot.updateMany).toHaveBeenCalledWith({
       where: {
         id: "bot",
@@ -225,6 +227,7 @@ describe("model selection routes", () => {
   });
   it("resets a busy worker to the current bot without resurrecting checkpoint intent", async () => {
     const f = fixture();
+    f.db.run.findFirst.mockResolvedValue({ id: "run" });
     await f.client().models.setWorkerSelection({ ...scope, selection });
     f.state.participants.worker.session.modelSelection = {
       requested: selection,

@@ -9,6 +9,7 @@ import {
   ModelSelectionStatusSchema,
   sameModelSelection,
 } from "@rakazo/contracts";
+import { ACTIVE_RUN_STATUSES } from "@rakazo/core";
 import {
   assertModelVisibleForOwner,
   assertPremoveQueueAccess,
@@ -24,6 +25,51 @@ const object = (value: unknown): Record<string, unknown> =>
     ? (value as Record<string, unknown>)
     : {};
 type Scope = { botId: string; threadId: string; participantId?: string };
+
+async function hasActiveRun(prisma: PrismaClient, actor: Actor, input: Scope) {
+  const run = await prisma.run.findFirst({
+    where: {
+      spaceId: actor.spaceId,
+      userId: actor.userId,
+      botId: input.botId,
+      threadId: input.threadId,
+      status: { in: [...ACTIVE_RUN_STATUSES] },
+    },
+    select: { id: true },
+  });
+  return Boolean(run);
+}
+
+function unresolvedSelection(
+  requested: ModelSelection | null,
+  saved: ModelSelectionStatus | null,
+): ModelSelectionStatus {
+  return {
+    requested,
+    effective: saved?.effective ?? null,
+    status: "pending",
+    error: null,
+  };
+}
+
+async function resolveSelection(
+  prisma: PrismaClient,
+  actor: Actor,
+  input: Scope,
+  requested: ModelSelection | null,
+  saved: ModelSelectionStatus | null,
+): Promise<ModelSelectionStatus> {
+  if (saved && sameModelSelection(saved.requested, requested)) return saved;
+  if (!(await hasActiveRun(prisma, actor, input))) {
+    return {
+      requested,
+      effective: requested ?? saved?.effective ?? null,
+      status: "applied",
+      error: null,
+    };
+  }
+  return unresolvedSelection(requested, saved);
+}
 
 export async function getAuthorizedModelState(prisma: PrismaClient, actor: Actor, input: Scope) {
   try {
@@ -86,13 +132,7 @@ export async function getPiModelSelection(
     const parsed = ModelSelectionSchema.safeParse(preference?.selection);
     if (parsed.success) requested = parsed.data;
   }
-  if (saved.success && sameModelSelection(saved.data.requested, requested)) return saved.data;
-  return {
-    requested,
-    effective: saved.success ? saved.data.effective : null,
-    status: "pending",
-    error: null,
-  };
+  return resolveSelection(prisma, actor, input, requested, saved.success ? saved.data : null);
 }
 
 export async function getModelSelection(
@@ -151,13 +191,7 @@ export async function getModelSelection(
       };
     }
   }
-  if (saved.success && sameModelSelection(saved.data.requested, requested)) return saved.data;
-  return {
-    requested,
-    effective: saved.success ? saved.data.effective : null,
-    status: "pending",
-    error: null,
-  };
+  return resolveSelection(prisma, actor, input, requested, saved.success ? saved.data : null);
 }
 
 export async function setWorkerModelSelection(

@@ -1134,6 +1134,7 @@ function Thread() {
     selectedSkill !== null ||
     selectedMentions.length > 0 ||
     activePendingAttachments.length > 0;
+  const actionIsStop = working && !canSend;
 
   const queueSending = useRef(false);
   async function queueDraft(lane: ComposerQueueLane, targetBotId: string) {
@@ -1207,6 +1208,7 @@ function Thread() {
         { text: t("Send"), onPress: () => void send() },
         { text: t("Steer"), onPress: () => chooseQueueBot("steer") },
         { text: t("Queue"), onPress: () => chooseQueueBot("followUp") },
+        ...(working ? [{ text: t("Stop"), onPress: () => void stop() }] : []),
       ],
       cancel: t("Cancel"),
       more: t("More"),
@@ -2340,9 +2342,9 @@ function Thread() {
             />
           </View>
           <Pressable
-            accessibilityLabel={t("Send")}
-            disabled={sending || !canSend}
-            onPress={() => void send()}
+            accessibilityLabel={actionIsStop ? t("Stop") : t("Send")}
+            disabled={sending || (!actionIsStop && !canSend)}
+            onPress={() => void (actionIsStop ? stop() : send())}
             onLongPress={showSendActions}
             accessibilityActions={[{ name: "longpress", label: t("Send options") }]}
             onAccessibilityAction={showSendActions}
@@ -2353,35 +2355,16 @@ function Thread() {
               height: 44,
               alignItems: "center",
               justifyContent: "center",
-              opacity: sending || !canSend ? 0.5 : 1,
+              opacity: sending || (!actionIsStop && !canSend) ? 0.5 : 1,
             }}
           >
             <NativeSymbol
-              ios="arrow.up"
-              android="arrow-up"
-              size={18}
+              ios={actionIsStop ? "stop.fill" : "arrow.up"}
+              android={actionIsStop ? "stop" : "arrow-up"}
+              size={actionIsStop ? 15 : 18}
               color={tokens.primaryForeground}
             />
           </Pressable>
-          {working ? (
-            <Pressable
-              accessibilityLabel={t("Stop")}
-              disabled={sending}
-              onPress={() => void stop()}
-              style={{
-                borderColor: tokens.border,
-                borderWidth: 1,
-                borderRadius: 22,
-                width: 44,
-                height: 44,
-                alignItems: "center",
-                justifyContent: "center",
-                opacity: sending ? 0.5 : 1,
-              }}
-            >
-              <NativeSymbol ios="stop.fill" android="stop" size={15} color={tokens.foreground} />
-            </Pressable>
-          ) : null}
         </View>
       </View>
       <Modal

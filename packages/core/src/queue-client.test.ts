@@ -1,5 +1,6 @@
 import type {
   ExecutionInspection,
+  ProductEvent,
   QueueMutation,
   QueueOperation,
   QueueReply,
@@ -9,6 +10,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createExecutionStore,
   createQueueStore,
+  executionTraceKind,
+  groupExecutionTrace,
   mergeInspection,
   queueRows,
 } from "./queue-client.js";
@@ -281,5 +284,35 @@ describe("queue controls", () => {
     await pending;
     await store.refresh();
     expect(store.getSnapshot().snapshot?.revision).toBe(5);
+  });
+});
+
+describe("execution trace grouping", () => {
+  function event(type: ProductEvent["type"], seq: number): ProductEvent {
+    return {
+      id: String(seq),
+      spaceId: "space",
+      threadId: "thread",
+      botId: "bot",
+      seq,
+      type,
+      createdAt: "2026-01-01T00:00:00Z",
+      payload: {},
+    };
+  }
+
+  it("collapses consecutive reasoning events and keeps other steps distinct", () => {
+    const groups = groupExecutionTrace([
+      event("thread.message.created", 1),
+      event("thread.progress", 2),
+      event("thread.progress", 3),
+      event("agent.tool.called", 4),
+    ]);
+    expect(groups.map((group) => [group.kind, group.events.length])).toEqual([
+      ["message", 1],
+      ["reasoning", 2],
+      ["tool", 1],
+    ]);
+    expect(executionTraceKind("agent.execution.updated")).toBe("execution");
   });
 });

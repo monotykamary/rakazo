@@ -10,26 +10,26 @@ import {
 import { LocalPiModelRuntimeService } from "./pi-model-runtime.js";
 
 const roots: string[] = [];
+const services: LocalPiModelRuntimeService[] = [];
 
 async function fixture(scenario: Record<string, unknown> = {}) {
   const root = await mkdtemp(join(tmpdir(), "rakazo-pi-model-"));
   roots.push(root);
   const command = await writeLocalPiEmulator(root);
   await writeLocalPiScenario(root, scenario);
-  return {
-    root,
+  const service = new LocalPiModelRuntimeService({
     command,
-    service: new LocalPiModelRuntimeService({
-      command,
-      cwd: root,
-      sessionDir: join(root, "sessions"),
-    }),
-  };
+    cwd: root,
+    sessionDir: join(root, "sessions"),
+  });
+  services.push(service);
+  return { root, command, service };
 }
 
 afterEach(async () => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
+  await Promise.all(services.splice(0).map((service) => service.close()));
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -66,6 +66,7 @@ describe("LocalPiModelRuntimeService", () => {
       cwd: root,
       sessionDir: join(root, "sessions"),
     });
+    services.push(service);
     const suffix = process.env.PATH ?? "/usr/bin:/bin";
     const packagePath = `${shim}:${packageBin}:${caller}:${suffix}`;
     vi.stubEnv("PATH", packagePath);
@@ -201,7 +202,7 @@ describe("LocalPiModelRuntimeService", () => {
     expect((await service.read()).catalog[0]?.id).toBe("second");
     expect(
       (await readLocalPiEmulatorLog(root)).filter((entry) => entry.type === "start"),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
   it("refreshes explicitly, drops stale success on failure, and retries failures", async () => {
@@ -229,7 +230,7 @@ describe("LocalPiModelRuntimeService", () => {
     expect((await service.read()).catalog[0]?.id).toBe("third");
     expect(
       (await readLocalPiEmulatorLog(root)).filter((entry) => entry.type === "start"),
-    ).toHaveLength(4);
+    ).toHaveLength(2);
   });
 
   it("bounds canonical cwd cache entries", async () => {
@@ -256,7 +257,7 @@ describe("LocalPiModelRuntimeService", () => {
     ).toHaveLength(1);
   });
 
-  it("keeps validate uncached", async () => {
+  it("validates against the cached catalog without spawning Pi again", async () => {
     const { root, service } = await fixture();
     const selection = {
       provider: "offline",
@@ -271,7 +272,7 @@ describe("LocalPiModelRuntimeService", () => {
 
     expect(
       (await readLocalPiEmulatorLog(root)).filter((entry) => entry.type === "start"),
-    ).toHaveLength(3);
+    ).toHaveLength(1);
   });
 
   it("keeps the full catalog and only whitelisted metadata", async () => {
@@ -316,7 +317,6 @@ describe("LocalPiModelRuntimeService", () => {
           { provider: "offline", id: "second" },
         ],
         [fault]: "get_available_thinking_levels",
-        faultModel: "second",
       });
       await expect(service.read()).rejects.toMatchObject({
         code: fault === "hangOnCommand" ? "PI_DISCOVERY_TIMEOUT" : "PI_DISCONNECTED",
@@ -343,15 +343,20 @@ describe("LocalPiModelRuntimeService", () => {
     });
   });
 
-  it("rejects a successful set_model response whose state did not acknowledge selection", async () => {
-    const { service } = await fixture({ ignoreModelSelection: true });
+  it("rejects models that are not in the cached catalog", async () => {
+    const { service } = await fixture();
     await expect(
       service.validate({ provider: "offline", modelId: "different", thinkingLevel: null }),
     ).rejects.toThrow("Model is unavailable in Pi");
   });
 
   it("asks Pi to validate the selected model and reasoning level", async () => {
-    const { service } = await fixture({ thinkingLevels: ["off", "high"] });
+    const { service } = await fixture({
+      thinkingLevels: ["off", "high"],
+      availableModels: [
+        { provider: "extension-provider", id: "extension-model", name: "Extension", reasoning: true },
+      ],
+    });
 
     await expect(
       service.validate({
@@ -394,6 +399,7 @@ describe("LocalPiModelRuntimeService", () => {
       cwd: root,
       sessionDir: join(root, "sessions"),
     });
+    services.push(service);
 
     await expect(service.read()).rejects.toThrow("PI_START_FAILED");
   });
@@ -406,12 +412,6 @@ describe("LocalPiModelRuntimeService", () => {
     const { root, service } = await fixture({ availableModels });
     const controller = new AbortController();
     const cancelled = service.read(controller.signal);
-    let started = false;
-    for (let attempt = 0; attempt < 100 && !started; attempt += 1) {
-      started = (await readLocalPiEmulatorLog(root)).some((entry) => entry.type === "start");
-      if (!started) await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    expect(started).toBe(true);
     const surviving = service.read();
     const reason = new Error("cancelled");
     controller.abort(reason);

@@ -40,6 +40,7 @@ function prisma(
     },
     runtimeSession: { findUnique: vi.fn(async () => ({ state })) },
     runtimeModelPreference: { findUnique: vi.fn(async () => null) },
+    run: { findFirst: vi.fn(async () => null) },
   } as unknown as PrismaClient;
 }
 

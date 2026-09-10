@@ -17,6 +17,7 @@ import { record } from "./pi-rpc-protocol.js";
 import { JsonPeer } from "./pi-rpc-transport.js";
 
 const PROBE_TIMEOUT_MS = 15_000;
+const WARM_IDLE_MS = 60_000;
 // Cache only completed public profiles; refresh and failures discard prior success.
 const PROFILE_CACHE_TTL_MS = 5 * 60_000;
 const MAX_PROFILE_CACHE_ENTRIES = 16;
@@ -54,6 +55,7 @@ export interface PiModelRuntimeService {
   ): Promise<PiModelProfile>;
   validate(selection: ModelSelection, signal?: AbortSignal, cwd?: string): Promise<void>;
   supportsCheckpoint?(checkpoint: unknown): boolean;
+  close?(): Promise<void>;
 }
 
 function publicLabel(value: unknown): string | undefined {
@@ -150,11 +152,21 @@ async function waitForCaller<T>(operation: Promise<T>, signal?: AbortSignal): Pr
   }
 }
 
+type WarmPeer = {
+  cwd: string;
+  child: ChildProcessWithoutNullStreams;
+  peer: JsonPeer;
+  exited: Promise<void>;
+  idle?: ReturnType<typeof setTimeout>;
+};
+
 export class LocalPiModelRuntimeService implements PiModelRuntimeService {
   private readonly command: string;
   private readonly cwd: string;
   private readonly cwdHash: string;
   private readonly profileCache = new Map<string, ProfileCacheEntry>();
+  private warm: WarmPeer | undefined;
+  private warmQueue: Promise<void> = Promise.resolve();
 
   constructor(options: LocalPiRuntimeOptions) {
     if (!options.cwd || !isAbsolute(options.cwd)) throw new Error("Local Pi cwd must be absolute");
@@ -219,49 +231,51 @@ export class LocalPiModelRuntimeService implements PiModelRuntimeService {
     return cloneProfile(await waitForCaller(loading, signal));
   }
 
+  async close(): Promise<void> {
+    const warm = this.warm;
+    this.warm = undefined;
+    if (!warm) return;
+    if (warm.idle) clearTimeout(warm.idle);
+    await warm.peer.close().catch(() => undefined);
+    await stopProbe(warm.child, warm.exited);
+  }
+
   private discoverProfile(cwd: string): Promise<PiModelProfile> {
-    return this.probe(
-      async (peer, probeSignal) => {
-        const [availableValue, stateValue] = await Promise.all([
-          peer.request("get_available_models", {}, probeSignal),
-          peer.request("get_state", {}, probeSignal),
-        ]);
-        const state = record(stateValue);
-        const current = modelIdentity(state.model);
-        const currentThinking = ThinkingLevelSchema.safeParse(state.thinkingLevel);
-        const profileDefault = current
-          ? {
-              ...current,
-              thinkingLevel: currentThinking.success ? currentThinking.data : null,
-            }
-          : null;
-        const availableModels = record(availableValue).models;
-        if (!Array.isArray(availableModels)) throw new PiModelRuntimeError("PI_PROTOCOL_FAILED");
-        const values: unknown[] = availableModels;
-        const catalog: ModelCatalogEntry[] = [];
-        const seen = new Set<string>();
-        for (const value of values) {
-          const identity = modelIdentity(value);
-          if (!identity) continue;
-          const key = `${identity.provider}\u0000${identity.modelId}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          await peer.request(
-            "set_model",
-            { provider: identity.provider, modelId: identity.modelId },
-            probeSignal,
-          );
-          const levels = thinkingLevels(
-            await peer.request("get_available_thinking_levels", {}, probeSignal),
-          );
-          const entry = catalogEntry(value, levels);
-          if (entry) catalog.push(entry);
-        }
-        return { catalog, profileDefault };
-      },
-      undefined,
-      cwd,
-    );
+    return this.probe(async (peer, probeSignal) => {
+      const [availableValue, stateValue, thinkingValue] = await Promise.all([
+        peer.request("get_available_models", {}, probeSignal),
+        peer.request("get_state", {}, probeSignal),
+        peer.request("get_available_thinking_levels", {}, probeSignal),
+      ]);
+      const state = record(stateValue);
+      const current = modelIdentity(state.model);
+      const currentThinking = ThinkingLevelSchema.safeParse(state.thinkingLevel);
+      const profileDefault = current
+        ? {
+            ...current,
+            thinkingLevel: currentThinking.success ? currentThinking.data : null,
+          }
+        : null;
+      const availableModels = record(availableValue).models;
+      if (!Array.isArray(availableModels)) throw new PiModelRuntimeError("PI_PROTOCOL_FAILED");
+      const sharedLevels = thinkingLevels(thinkingValue);
+      const catalog: ModelCatalogEntry[] = [];
+      const seen = new Set<string>();
+      for (const value of availableModels) {
+        const identity = modelIdentity(value);
+        if (!identity) continue;
+        const key = identity.provider + "\0" + identity.modelId;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const model = record(value);
+        const ownLevels = thinkingLevels(model);
+        const levels =
+          ownLevels.length > 0 ? ownLevels : model.reasoning === false ? [] : sharedLevels;
+        const entry = catalogEntry(value, levels);
+        if (entry) catalog.push(entry);
+      }
+      return { catalog, profileDefault };
+    }, undefined, cwd);
   }
 
   private touchProfileCache(cwd: string, entry: ProfileCacheEntry): void {
@@ -279,46 +293,17 @@ export class LocalPiModelRuntimeService implements PiModelRuntimeService {
   }
 
   async validate(selection: ModelSelection, signal?: AbortSignal, cwd?: string): Promise<void> {
-    await this.probe(
-      async (peer, probeSignal) => {
-        try {
-          await peer.request(
-            "set_model",
-            { provider: selection.provider, modelId: selection.modelId },
-            probeSignal,
-          );
-          const levels = thinkingLevels(
-            await peer.request("get_available_thinking_levels", {}, probeSignal),
-          );
-          if (selection.thinkingLevel !== null && !levels.includes(selection.thinkingLevel)) {
-            throw new Error("Reasoning level is unavailable in Pi");
-          }
-          if (selection.thinkingLevel !== null) {
-            await peer.request(
-              "set_thinking_level",
-              { level: selection.thinkingLevel },
-              probeSignal,
-            );
-          }
-          const state = record(await peer.request("get_state", {}, probeSignal));
-          const effective = modelIdentity(state.model);
-          if (
-            effective?.provider !== selection.provider ||
-            effective.modelId !== selection.modelId ||
-            (selection.thinkingLevel !== null && state.thinkingLevel !== selection.thinkingLevel)
-          ) {
-            throw new Error("Pi did not acknowledge the model selection");
-          }
-        } catch (error) {
-          if (error instanceof Error && error.message === "Reasoning level is unavailable in Pi") {
-            throw error;
-          }
-          throw new Error("Model is unavailable in Pi", { cause: error });
-        }
-      },
-      signal,
-      cwd,
+    const profile = await this.read(signal, cwd);
+    const entry = profile.catalog.find(
+      (item) => item.provider === selection.provider && item.id === selection.modelId,
     );
+    if (!entry) throw new Error("Model is unavailable in Pi");
+    if (
+      selection.thinkingLevel !== null &&
+      !entry.thinkingLevels?.includes(selection.thinkingLevel)
+    ) {
+      throw new Error("Reasoning level is unavailable in Pi");
+    }
   }
 
   private async probeCwd(cwd?: string): Promise<string> {
@@ -333,19 +318,20 @@ export class LocalPiModelRuntimeService implements PiModelRuntimeService {
     return target;
   }
 
-  private async probe<T>(
-    operation: (peer: JsonPeer, signal: AbortSignal) => Promise<T>,
-    signal?: AbortSignal,
-    cwd?: string,
-  ): Promise<T> {
-    const probeSignal = signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(PROBE_TIMEOUT_MS)])
-      : AbortSignal.timeout(PROBE_TIMEOUT_MS);
-    probeSignal.throwIfAborted();
-    const probeCwd = await this.probeCwd(cwd).catch((cause: unknown) => {
-      throw new PiModelRuntimeError("PI_WORKSPACE_UNAVAILABLE", { cause });
-    });
-    probeSignal.throwIfAborted();
+  private armIdle(handle: WarmPeer) {
+    if (handle.idle) clearTimeout(handle.idle);
+    handle.idle = setTimeout(() => {
+      if (this.warm === handle) void this.close();
+    }, WARM_IDLE_MS);
+    handle.idle.unref?.();
+  }
+
+  private async ensureWarm(probeCwd: string): Promise<WarmPeer> {
+    const existing = this.warm;
+    if (existing && existing.cwd === probeCwd && existing.child.exitCode === null && existing.child.signalCode === null) {
+      return existing;
+    }
+    if (existing) await this.close();
     const child = spawn(this.command, localPiRpcArguments(), {
       cwd: probeCwd,
       env: sanitizedLocalPiEnvironment({ [LOCAL_PI_MODEL_PROBE_ENV]: "1" }),
@@ -368,54 +354,79 @@ export class LocalPiModelRuntimeService implements PiModelRuntimeService {
       throw new PiModelRuntimeError("PI_START_FAILED");
     }
     child.stderr.resume();
-    let peer: JsonPeer | undefined;
-    try {
-      peer = new JsonPeer(
-        localPiChildPort(child),
-        async () => {
-          throw new Error("Stock Pi RPC sent an unexpected reverse request");
-        },
-        (message) => {
-          const id = publicIdentity(message.id, 500);
-          const method = publicIdentity(message.method, 100);
-          if (
-            message.type === "extension_ui_request" &&
-            id &&
-            method &&
-            BLOCKING_PI_UI_METHODS.has(method)
-          ) {
-            queueMicrotask(() => {
-              void peer
-                ?.send({ type: "extension_ui_response", id, cancelled: true })
-                .catch(() => undefined);
-            });
-          }
-        },
-        true,
-      );
-      void peer.finished.catch(() => undefined);
-      return await operation(peer, probeSignal);
-    } catch (cause) {
-      if (signal?.aborted) throw signal.reason;
-      if (probeSignal.aborted) {
-        throw new PiModelRuntimeError("PI_DISCOVERY_TIMEOUT", { cause });
-      }
-      if (cause instanceof PiModelRuntimeError) throw cause;
-      if (cause instanceof Error && cause.message === "Managed RPC disconnected") {
-        throw new PiModelRuntimeError("PI_DISCONNECTED", { cause });
-      }
-      if (
-        cause instanceof SyntaxError ||
-        (cause instanceof Error &&
-          (cause.message.startsWith("Managed RPC") || cause.message === "Pi command rejected"))
-      ) {
-        throw new PiModelRuntimeError("PI_PROTOCOL_FAILED", { cause });
-      }
-      throw cause;
-    } finally {
-      await peer?.close().catch(() => undefined);
-      await stopProbe(child, exited);
+    const peer = new JsonPeer(
+      localPiChildPort(child),
+      async () => {
+        throw new Error("Stock Pi RPC sent an unexpected reverse request");
+      },
+      (message) => {
+        const id = publicIdentity(message.id, 500);
+        const method = publicIdentity(message.method, 100);
+        if (
+          message.type === "extension_ui_request" &&
+          id &&
+          method &&
+          BLOCKING_PI_UI_METHODS.has(method)
+        ) {
+          queueMicrotask(() => {
+            void peer.send({ type: "extension_ui_response", id, cancelled: true }).catch(() => undefined);
+          });
+        }
+      },
+      true,
+    );
+    void peer.finished.catch(() => undefined);
+    const handle: WarmPeer = { cwd: probeCwd, child, peer, exited };
+    this.warm = handle;
+    return handle;
+  }
+
+  private mapProbeError(cause: unknown, signal?: AbortSignal, probeSignal?: AbortSignal): never {
+    if (signal?.aborted) throw signal.reason;
+    if (probeSignal?.aborted) throw new PiModelRuntimeError("PI_DISCOVERY_TIMEOUT", { cause });
+    if (cause instanceof PiModelRuntimeError) throw cause;
+    if (cause instanceof Error && cause.message === "Managed RPC disconnected") {
+      throw new PiModelRuntimeError("PI_DISCONNECTED", { cause });
     }
+    if (
+      cause instanceof SyntaxError ||
+      (cause instanceof Error &&
+        (cause.message.startsWith("Managed RPC") || cause.message === "Pi command rejected"))
+    ) {
+      throw new PiModelRuntimeError("PI_PROTOCOL_FAILED", { cause });
+    }
+    throw cause;
+  }
+
+  private async probe<T>(
+    operation: (peer: JsonPeer, signal: AbortSignal) => Promise<T>,
+    signal?: AbortSignal,
+    cwd?: string,
+  ): Promise<T> {
+    const probeCwd = await this.probeCwd(cwd).catch((cause: unknown) => {
+      throw new PiModelRuntimeError("PI_WORKSPACE_UNAVAILABLE", { cause });
+    });
+    const run = this.warmQueue.then(async () => {
+      const probeSignal = signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(PROBE_TIMEOUT_MS)])
+        : AbortSignal.timeout(PROBE_TIMEOUT_MS);
+      probeSignal.throwIfAborted();
+      const handle = await this.ensureWarm(probeCwd);
+      if (handle.idle) clearTimeout(handle.idle);
+      try {
+        const result = await operation(handle.peer, probeSignal);
+        this.armIdle(handle);
+        return result;
+      } catch (cause) {
+        await this.close();
+        this.mapProbeError(cause, signal, probeSignal);
+      }
+    });
+    this.warmQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 }
 

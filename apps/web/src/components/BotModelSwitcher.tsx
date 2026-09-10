@@ -26,26 +26,44 @@ function ScopedBotModelSwitcher({ botId, desired, onChanged }: BotModelSwitcherP
   const revision = useRef(0);
   const saving = useRef(false);
   const edited = useRef(false);
+  const loaded = useRef(false);
   const refresh = useCallback(
     async (force = false) => {
       if (saving.current) return;
       const request = ++revision.current;
-      setLoading(true);
-      setError(undefined);
+      const showLoading = force || !loaded.current;
+      if (showLoading) {
+        setLoading(true);
+        setError(undefined);
+      }
       try {
         const next = await rpc.models.runtime({ botId, ...(force ? { refresh: true } : {}) });
         if (request !== revision.current) return;
-        setRuntime(next);
+        loaded.current = true;
+        setRuntime((previous) =>
+          previous &&
+          previous.selection?.status === next.selection?.status &&
+          previous.current?.provider === next.current?.provider &&
+          previous.current?.modelId === next.current?.modelId &&
+          previous.current?.thinkingLevel === next.current?.thinkingLevel &&
+          previous.selection?.requested?.provider === next.selection?.requested?.provider &&
+          previous.selection?.requested?.modelId === next.selection?.requested?.modelId &&
+          previous.selection?.requested?.thinkingLevel === next.selection?.requested?.thinkingLevel &&
+          previous.catalog.length === next.catalog.length
+            ? previous
+            : next,
+        );
         if (!edited.current) setSelection(next.selection?.requested ?? null);
       } catch {
-        if (request === revision.current) setError(t`Could not refresh models`);
+        if (request === revision.current && showLoading) setError(t`Could not refresh models`);
       } finally {
-        if (request === revision.current) setLoading(false);
+        if (request === revision.current && showLoading) setLoading(false);
       }
     },
     [botId],
   );
   useEffect(() => {
+    loaded.current = false;
     if (open) void refresh();
     return () => {
       revision.current += 1;
@@ -58,7 +76,15 @@ function ScopedBotModelSwitcher({ botId, desired, onChanged }: BotModelSwitcherP
   }, [open, runtime, busy, loading, error, refresh]);
 
   async function save(next: ModelSelection | null) {
-    if (saving.current || loading || error || runtime?.availability.status !== "available") return;
+    if (saving.current || loading || error || !runtime || runtime.availability.status !== "available")
+      return;
+    if (next) {
+      const entry = runtime.catalog.find(
+        (item) => item.provider === next.provider && item.id === next.modelId,
+      );
+      if (!entry) return;
+      if (next.thinkingLevel && !entry.thinkingLevels?.includes(next.thinkingLevel)) return;
+    }
     saving.current = true;
     const request = ++revision.current;
     setBusy(true);
@@ -78,17 +104,18 @@ function ScopedBotModelSwitcher({ botId, desired, onChanged }: BotModelSwitcherP
         (previous) =>
           previous && {
             ...previous,
+            current: next ?? previous.profileDefault,
             selection: {
               requested: next,
-              effective: previous.current,
-              status: "pending",
+              effective: next ?? previous.profileDefault,
+              status: "applied",
               error: null,
             },
           },
       );
       void onChanged?.().catch(() => undefined);
       saving.current = false;
-      await refresh();
+      void refresh();
     } catch {
       if (request === revision.current) setError(t`Could not switch model`);
     } finally {
@@ -96,13 +123,8 @@ function ScopedBotModelSwitcher({ botId, desired, onChanged }: BotModelSwitcherP
       setBusy(false);
     }
   }
-  const selected = runtime?.catalog.find(
-    (entry) => entry.provider === selection?.provider && entry.id === selection?.modelId,
-  );
   const available = runtime?.availability.status === "available";
   const locked = loading || busy || !available || Boolean(error);
-  const supported =
-    !selection?.thinkingLevel || selected?.thinkingLevels?.includes(selection.thinkingLevel);
 
   const persisted = runtime ? runtime.selection?.requested : desired;
   const displayed = persisted ?? runtime?.current ?? runtime?.profileDefault;
@@ -171,20 +193,15 @@ function ScopedBotModelSwitcher({ botId, desired, onChanged }: BotModelSwitcherP
             catalog={runtime.catalog}
             selection={selection}
             disabled={locked}
+            showSelectionSummary={false}
             onChange={(next) => {
               edited.current = true;
               setSelection(next);
+              void save(next);
             }}
           />
         )}
         <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            disabled={locked || !selected || !supported}
-            onClick={() => void save(selection)}
-          >
-            {busy ? t`Switching…` : t`Use model`}
-          </Button>
           <Button
             size="sm"
             variant="ghost"
