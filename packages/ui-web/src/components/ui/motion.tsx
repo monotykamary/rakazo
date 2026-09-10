@@ -61,6 +61,29 @@ export function SpringButton({ animate, style, ...props }: SpringProps<"button">
   );
 }
 
+export function SpringWidth({
+  width,
+  className,
+  children,
+}: {
+  width: number;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const { reduced, transition } = useShellMotion();
+  return (
+    <motion.div
+      className={className}
+      initial={false}
+      animate={reduced ? undefined : { width }}
+      style={reduced ? { width } : undefined}
+      transition={transition}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
 export function SpringDisclosure({ open, children }: { open: boolean; children: React.ReactNode }) {
   const { reduced, transition } = useShellMotion();
   return (

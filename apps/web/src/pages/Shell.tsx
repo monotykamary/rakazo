@@ -87,6 +87,7 @@ import {
   useFrameState,
 } from "@rakazo/ui-web";
 import { ComposerActionIcon } from "@rakazo/ui-web/components/ui/composer-action-icon";
+import { SpringWidth } from "@rakazo/ui-web/components/ui/motion";
 import {
   SpringAside,
   SpringButton,
@@ -3518,6 +3519,17 @@ export function ShellPage() {
               mentionTargets={composerMentionTargets}
               onMentionOpen={requestMentionMetadata}
               agentSkills={agentSkills}
+              onOpenComputer={
+                !inGroup && active
+                  ? () => {
+                      const next = panel === "computer" ? null : "computer";
+                      setPanel(next);
+                      if (next === "computer") {
+                        void refreshThread(active.id).catch(() => undefined);
+                      }
+                    }
+                  : undefined
+              }
               onSlashOpen={refreshAgentSkills}
               onSlashAction={(action) => {
                 if (action === "chat-settings") {
@@ -4818,6 +4830,7 @@ export const Composer = memo(function Composer({
   agentSkills,
   onSlashOpen,
   onSlashAction,
+  onOpenComputer,
 }: {
   activeName?: string;
   running: boolean;
@@ -4855,6 +4868,7 @@ export const Composer = memo(function Composer({
   agentSkills?: AgentSkillCatalogEntry[];
   onSlashOpen?: () => void;
   onSlashAction?: (action: SlashActionId) => void;
+  onOpenComputer?: () => void;
 }) {
   const { t } = useLingui();
   const [draft, setDraft] = useState("");
@@ -5092,6 +5106,7 @@ export const Composer = memo(function Composer({
         };
       }
       setQueueEdit(edit);
+      setActionMenuOpen(false);
       setQueueBotId(edit.botId);
       setDraft(edit.row.text);
       setSelectedMentions([]);
@@ -5440,13 +5455,14 @@ export const Composer = memo(function Composer({
           onEditChange={handleQueueEditChange}
           onPopulatedChange={setQueuePopulated}
           onTargetChange={setQueueBotId}
+          onOpenComputer={onOpenComputer}
         />
       ) : null}
       <div
         data-testid="composer-bar"
         data-queue-attached={queuePopulated || undefined}
-        className={`flex items-center gap-2 border border-border bg-background py-[9px] pe-2.5 ps-3 ${
-          queuePopulated ? "rounded-b-[18px] rounded-t-md" : "rounded-full"
+        className={`flex items-center gap-2 border border-border bg-background py-[9px] pe-2.5 ps-3 transition-[border-radius] duration-300 ease-[cubic-bezier(.22,1,.36,1)] motion-reduce:transition-none ${
+          queuePopulated ? "rounded-t-none rounded-b-[18px]" : "rounded-full"
         }`}
       >
         <input
@@ -5601,13 +5617,16 @@ export const Composer = memo(function Composer({
             <Mic size={16} strokeWidth={1.8} />
           </Button>
         ) : null}
-        <div className="flex shrink-0 items-center">
+        <SpringWidth
+          width={queueEdit ? 36 : 56}
+          className="flex h-9 shrink-0 overflow-hidden rounded-full bg-primary text-primary-foreground"
+        >
           <Tooltip>
             <TooltipTrigger
               render={
                 <Button
                   size="icon"
-                  className="size-9 rounded-e-md rounded-s-full"
+                  className="size-9 shrink-0 rounded-none border-0 bg-transparent text-primary-foreground hover:bg-primary/80"
                 />
               }
               aria-label={actionLabel}
@@ -5646,14 +5665,15 @@ export const Composer = memo(function Composer({
             </TooltipTrigger>
             <TooltipContent>{actionLabel}</TooltipContent>
           </Tooltip>
-          {!queueEdit ? (
+          <div className="flex h-9 w-5 shrink-0" inert={queueEdit ? true : undefined}>
             <DropdownMenu open={actionMenuOpen} onOpenChange={setActionMenuOpen}>
               <DropdownMenuTrigger
                 aria-label={t`Choose message action`}
+                disabled={Boolean(queueEdit)}
                 render={
                   <Button
                     size="icon-sm"
-                    className="h-9 w-5 rounded-e-full rounded-s-none border-s border-primary-foreground/20 px-0"
+                    className="h-9 w-5 rounded-none border-0 border-s border-primary-foreground/20 bg-transparent px-0 text-primary-foreground hover:bg-primary/80"
                   />
                 }
               >
@@ -5720,8 +5740,8 @@ export const Composer = memo(function Composer({
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
-          ) : null}
-        </div>
+          </div>
+        </SpringWidth>
       </div>
     </fieldset>
   );

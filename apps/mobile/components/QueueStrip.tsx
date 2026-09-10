@@ -354,7 +354,7 @@ export function QueueStrip({
                 Boolean(snapshot?.uncertainRowIds.length),
             )}
             {button(
-              snapshot?.gracefulPausePending ? t("Pause pending") : t("Pause after tools"),
+              snapshot?.gracefulPausePending ? t("Pause pending") : t("Pause"),
               () => void mutate({ type: "graceful-pause" }),
               disabled ||
                 Boolean(selected) ||

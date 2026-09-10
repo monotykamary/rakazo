@@ -96,6 +96,20 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
     if (operation.type === "resume") snapshot.paused = false;
     if (operation.type === "pause") snapshot.paused = true;
     if (operation.type === "graceful-pause") snapshot.gracefulPausePending = true;
+    if (operation.type === "bind-placement") {
+      const row = snapshot.rows.find((item) => item.id === operation.id);
+      if (row) {
+        row.placement = {
+          version: 1,
+          kind: "project",
+          computerId: "computer",
+          homeKey: "home",
+          projectPath: "/project",
+          worktreePath: null,
+          revision: 1,
+        };
+      }
+    }
     if (operation.type === "enqueue")
       snapshot.rows.push({
         id: "third",
@@ -234,56 +248,6 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
       },
     }),
   );
-  const effective = { provider: "local", modelId: "small", thinkingLevel: null };
-  let requestedModel: unknown;
-  await page.route("**/rpc/models/runtime", (route) =>
-    route.fulfill({
-      json: {
-        json: {
-          catalog: [
-            {
-              provider: "local",
-              id: "small",
-              label: "Small",
-              billing: "local",
-              thinkingLevels: ["low", "high"],
-            },
-            {
-              provider: "local",
-              id: "large",
-              label: "Large",
-              billing: "local",
-              thinkingLevels: ["low", "high"],
-            },
-          ],
-          current: effective,
-          profileDefault: effective,
-          selection: {
-            requested: requestedModel ?? effective,
-            effective,
-            status: requestedModel === undefined ? "applied" : "pending",
-            error: null,
-          },
-          availability: { status: "available", error: null },
-        },
-      },
-    }),
-  );
-  await page.route("**/rpc/models/setWorkerSelection", (route) => {
-    const input = route.request().postDataJSON().json;
-    expect(input).toMatchObject({ botId: "bot", threadId: "thread", participantId: "worker" });
-    requestedModel = input.selection;
-    return route.fulfill({
-      json: {
-        json: {
-          requested: input.selection ?? effective,
-          effective,
-          status: "pending",
-          error: null,
-        },
-      },
-    });
-  });
   await page.goto("/e2e/fixtures/queue-inspection.html");
   const queueRegion = page.getByRole("region", { name: "Queue", exact: true });
   await expect(page.getByRole("button", { name: "Queue, 2 messages" })).toBeVisible();
@@ -296,6 +260,8 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
 
   await first.getByLabel(/Options for queued message:/).click();
   await page.getByRole("menuitem", { name: "Use current project", exact: true }).click();
+  await first.getByRole("button", { name: "Project bound", exact: true }).click();
+  expect(operations.some((operation) => operation.type === "edit-begin")).toBe(false);
   await first.getByLabel(/Options for queued message:/).click();
   await page.getByRole("menuitem", { name: "Move to steer", exact: true }).click();
   await first.getByLabel(/Options for queued message:/).click();
@@ -308,9 +274,9 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
   await page.getByLabel("Queue options", { exact: true }).click();
   await page.getByRole("menuitem", { name: "Resume", exact: true }).click();
   await page.getByLabel("Queue options", { exact: true }).click();
-  await page.getByRole("menuitem", { name: "Pause", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Pause", exact: true }).first().click();
   await page.getByLabel("Queue options", { exact: true }).click();
-  await page.getByRole("menuitem", { name: "Pause after tools", exact: true }).click();
+  await page.getByTestId("queue-graceful-pause").click();
   await captureScreenshot(page, testInfo, "queue-controls");
   await page.getByRole("button", { name: "Execution", exact: true }).click();
   const execution = page.getByRole("dialog", { name: "Execution", exact: true });
@@ -321,17 +287,7 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
   );
   await expect(execution.getByRole("combobox", { name: "Run", exact: true })).toHaveCount(0);
   await expect(execution.getByRole("button", { name: "Flow", exact: true })).toHaveCount(0);
-  await expect(execution.getByRole("button", { name: "Model", exact: true })).toHaveCount(1);
-  await execution.getByRole("button", { name: "Model", exact: true }).click();
-  await execution.getByRole("option", { name: "Large local/large", exact: true }).click();
-  await execution.getByRole("combobox", { name: "Thinking", exact: true }).selectOption("high");
-  await expect(execution.getByTestId("current-model")).toHaveText("Current: local/small");
-  await expect(
-    execution.getByText(`Pending · local/${requestedModel ? "large" : "small"}`, { exact: true }),
-  ).toBeVisible();
-  expect(requestedModel).toEqual({ provider: "local", modelId: "large", thinkingLevel: "high" });
-  await captureScreenshot(page, testInfo, "execution-worker-model");
-  await execution.getByRole("button", { name: "Model", exact: true }).click();
+  await expect(execution.getByRole("button", { name: "Model", exact: true })).toHaveCount(0);
   await execution.getByRole("list", { name: "Retained events" }).getByText("bash").click();
   await expect(page.getByText("npm test", { exact: false })).toBeVisible();
   await expect(page.getByText("run.completed", { exact: false })).toHaveCount(0);

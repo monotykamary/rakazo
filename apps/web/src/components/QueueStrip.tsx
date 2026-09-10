@@ -11,11 +11,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@rakazo/ui-web";
+import { SpringDisclosure } from "@rakazo/ui-web/components/ui/motion";
 import {
   ArrowDown,
   ArrowUp,
   CircleAlert,
+  CirclePause,
   CornerDownRight,
+  FastForward,
   FileText,
   ListOrdered,
   Monitor,
@@ -55,6 +58,7 @@ export const QueueStrip = forwardRef<
     onOpenChange?: (open: boolean) => void;
     onEditChange?: (row: QueueRow | null) => void;
     onPopulatedChange?: (populated: boolean) => void;
+    onOpenComputer?: () => void;
     targetControl?: ReactNode;
   }
 >(function QueueStrip(
@@ -66,6 +70,7 @@ export const QueueStrip = forwardRef<
     onOpenChange,
     onEditChange,
     onPopulatedChange,
+    onOpenComputer,
     targetControl,
   },
   ref,
@@ -120,15 +125,15 @@ export const QueueStrip = forwardRef<
     <section
       aria-label={t`Queue`}
       data-testid="composer-queue"
-      className="relative z-0 -mb-px min-w-0 rounded-t-[18px] border border-border bg-muted/70 px-2 pb-2 pt-1 text-sm shadow-sm"
+      className="relative z-0 -mb-px min-w-0 rounded-t-[18px] border border-border bg-muted/70 pb-1 pt-1 text-sm shadow-sm"
     >
-      <div className="flex min-h-8 items-center gap-1">
+      <div className="flex min-h-8 items-center ps-2 pe-1">
         <button
           type="button"
           aria-label={rows.length === 1 ? t`Queue, 1 message` : t`Queue, ${rows.length} messages`}
           aria-expanded={open}
           onClick={() => setOpen(!open)}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-start text-muted-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-start text-muted-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
         >
           <ListOrdered aria-hidden className="size-3.5 shrink-0" />
           <span className="font-medium tabular-nums">{rows.length}</span>
@@ -139,21 +144,32 @@ export const QueueStrip = forwardRef<
             <span className="truncate text-xs">{t`Delivery pending`}</span>
           ) : null}
           {snapshot?.compaction ? <span className="truncate text-xs">{t`Compacting`}</span> : null}
-          <ArrowDown
-            aria-hidden
-            className={`ms-auto size-3.5 shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
-          />
         </button>
         {targetControl}
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            aria-label={t`Queue options`}
-            render={
-              <Button size="icon-sm" variant="ghost" className="shrink-0 text-muted-foreground" />
-            }
+        <div className="flex shrink-0 items-center">
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label={open ? t`Hide queue` : t`Show queue`}
+            aria-expanded={open}
+            onClick={() => setOpen(!open)}
+            className="shrink-0 text-muted-foreground"
           >
-            <MoreHorizontal aria-hidden className="size-4" />
-          </DropdownMenuTrigger>
+            <ArrowDown
+              aria-hidden
+              className={`size-3.5 transition-transform duration-300 ease-[cubic-bezier(.22,1,.36,1)] motion-reduce:transition-none ${open ? "rotate-180" : ""}`}
+            />
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              aria-label={t`Queue options`}
+              render={
+                <Button size="icon-sm" variant="ghost" className="shrink-0 text-muted-foreground" />
+              }
+            >
+              <MoreHorizontal aria-hidden className="size-3.5" />
+            </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem
               disabled={
@@ -187,9 +203,11 @@ export const QueueStrip = forwardRef<
               }
               onClick={() => void mutate({ type: "drain" })}
             >
+              <FastForward />
               {t`Drain all`}
             </DropdownMenuItem>
             <DropdownMenuItem
+              data-testid="queue-graceful-pause"
               disabled={
                 disabled ||
                 Boolean(snapshot?.gracefulPausePending) ||
@@ -198,10 +216,12 @@ export const QueueStrip = forwardRef<
               }
               onClick={() => void mutate({ type: "graceful-pause" })}
             >
-              {snapshot?.gracefulPausePending ? t`Pause pending` : t`Pause after tools`}
+              <CirclePause />
+              {snapshot?.gracefulPausePending ? t`Pause pending` : t`Pause`}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        </div>
       </div>
       {error ? (
         <p role="alert" className="px-1.5 pb-1 text-xs text-destructive">
@@ -213,9 +233,9 @@ export const QueueStrip = forwardRef<
           {t`Waiting for recovery`}
         </p>
       ) : null}
-      {open ? (
+      <SpringDisclosure open={open}>
         <ol
-          className="max-h-[min(15rem,35dvh)] space-y-0.5 overflow-y-auto overscroll-contain pe-1"
+          className="max-h-[min(15rem,35dvh)] overflow-y-auto overscroll-contain"
           aria-label={t`Execution order`}
         >
           {rows.map((row, index) => {
@@ -227,8 +247,10 @@ export const QueueStrip = forwardRef<
                 key={row.id}
                 data-row-id={row.id}
                 data-lane={row.lane}
-                className={`group/queue-row flex min-w-0 items-start gap-1 rounded-lg px-1 py-0.5 ${
-                  selected === row.id ? "bg-accent ring-1 ring-ring/40" : "hover:bg-accent/70"
+                className={`group/queue-row flex min-w-0 items-center rounded-lg ps-2 pe-1 ${
+                  selected === row.id
+                    ? "bg-accent ring-1 ring-inset ring-border"
+                    : "hover:bg-accent/70"
                 } ${removed ? "opacity-60" : ""}`}
               >
                 <button
@@ -294,9 +316,6 @@ export const QueueStrip = forwardRef<
                     {row.target ? (
                       <Target aria-label={t`Participant targeted`} className="size-3" />
                     ) : null}
-                    {row.placement?.kind === "project" ? (
-                      <Monitor aria-label={t`Project bound`} className="size-3" />
-                    ) : null}
                     {row.paused ? <Pause aria-label={t`Held`} className="size-3" /> : null}
                     {uncertain ? (
                       <CircleAlert
@@ -307,19 +326,35 @@ export const QueueStrip = forwardRef<
                     {removed ? <span className="text-[10px]">{t`Removed`}</span> : null}
                   </span>
                 </button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    aria-label={t`Options for queued message: ${row.text || "attachment"}`}
-                    render={
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        className="mt-0.5 shrink-0 text-muted-foreground"
-                      />
-                    }
-                  >
-                    <MoreHorizontal aria-hidden className="size-3.5" />
-                  </DropdownMenuTrigger>
+                <div className="flex shrink-0 items-center">
+                  {row.placement?.kind === "project" ? (
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label={t`Project bound`}
+                      disabled={rowDisabled}
+                      onClick={() => onOpenComputer?.()}
+                      className="shrink-0 text-muted-foreground"
+                    >
+                      <Monitor aria-hidden className="size-3.5" />
+                    </Button>
+                  ) : (
+                    <span className="size-7 shrink-0" aria-hidden />
+                  )}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      aria-label={t`Options for queued message: ${row.text || "attachment"}`}
+                      render={
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          className="shrink-0 text-muted-foreground"
+                        />
+                      }
+                    >
+                      <MoreHorizontal aria-hidden className="size-3.5" />
+                    </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem
                       disabled={
@@ -388,12 +423,13 @@ export const QueueStrip = forwardRef<
                       {removed ? t`Restore` : t`Remove`}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
-                </DropdownMenu>
+                  </DropdownMenu>
+                </div>
               </li>
             );
           })}
         </ol>
-      ) : null}
+      </SpringDisclosure>
       <Dialog open={confirmResume} onOpenChange={setConfirmResume}>
         <DialogContent>
           <DialogHeader>

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SpringAside, SpringButton, SpringDisclosure, shellSpring } from "./motion";
+import { SpringAside, SpringButton, SpringDisclosure, SpringWidth, shellSpring } from "./motion";
 
 const state = vi.hoisted(() => ({ reduced: false, props: {} as Record<string, unknown> }));
 vi.mock("react", async (original) => ({
@@ -29,6 +29,9 @@ describe("shell motion", () => {
     expect(state.props.initial).toBe(false);
     renderToStaticMarkup(<SpringButton animate={{ insetInlineStart: 308 }} />);
     expect(state.props.transition).toBe(shellSpring);
+    renderToStaticMarkup(<SpringWidth width={36} />);
+    expect(state.props.animate).toEqual({ width: 36 });
+    expect(state.props.initial).toBe(false);
   });
   it("makes closing content inaccessible immediately", () => {
     renderToStaticMarkup(
