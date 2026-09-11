@@ -10,7 +10,7 @@ export const PI_KIT_PACKAGES = [
   { name: "pi-fovea", version: "0.22.1", entry: "pi-fovea/ops", extensions: ["src/index.ts"] },
   {
     name: "pi-queue-steer-factory",
-    version: "0.16.2",
+    version: "0.17.1",
     entry: "pi-queue-steer-factory/headless",
     extensions: ["index.ts"],
   },

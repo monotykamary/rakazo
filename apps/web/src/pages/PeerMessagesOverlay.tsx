@@ -1,4 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro";
+import { queueTurnsForParticipant } from "@rakazo/core";
 import type { ThreadMessage } from "@rakazo/contracts";
 import { BotAvatar, Button } from "@rakazo/ui-web";
 import { Menu, X } from "lucide-react";
@@ -7,6 +8,7 @@ import type { ChatTurn } from "../components/ChatTurns";
 import { ChatTurns } from "../components/ChatTurns";
 import { peerConversations } from "../lib/peer-messages";
 import { rpc } from "../lib/rpc";
+import { queueRows, useQueue } from "../lib/use-queue";
 
 // Read-only peer history hosted inside the main conversation pane.
 export function PeerMessagesOverlay({
@@ -20,6 +22,7 @@ export function PeerMessagesOverlay({
   onClose,
   turns,
   canSteer,
+  threadId,
 }: {
   botId: string;
   botName: string;
@@ -31,6 +34,7 @@ export function PeerMessagesOverlay({
   onClose: () => void;
   turns?: readonly ChatTurn[];
   canSteer?: boolean;
+  threadId?: string;
 }) {
   const { t } = useLingui();
   const titleId = useId();
@@ -206,7 +210,17 @@ export function PeerMessagesOverlay({
               <Trans>Could not load this chat.</Trans>
             </p>
           ) : null}
-          <ChatTurns turns={chatTurns} />
+          {threadId ? (
+            <OverlayQueueTurns
+              threadId={threadId}
+              botId={botId}
+              peerBotId={peerBotId}
+              parentName={botName}
+              history={chatTurns}
+            />
+          ) : (
+            <ChatTurns turns={chatTurns} />
+          )}
         </>
       )}
 
@@ -219,4 +233,30 @@ export function PeerMessagesOverlay({
       )}
     </section>
   );
+}
+
+function OverlayQueueTurns({
+  threadId,
+  botId,
+  peerBotId,
+  parentName,
+  history,
+}: {
+  threadId: string;
+  botId: string;
+  peerBotId: string;
+  parentName: string;
+  history: readonly ChatTurn[];
+}) {
+  const { snapshot } = useQueue(rpc.queue, threadId, botId);
+  const turns = useMemo(() => {
+    const pending = queueTurnsForParticipant(
+      snapshot ? queueRows(snapshot) : [],
+      peerBotId,
+      parentName,
+    );
+    const seen = new Set(history.map((turn) => turn.text));
+    return [...history, ...pending.filter((turn) => !seen.has(turn.text))];
+  }, [history, parentName, peerBotId, snapshot]);
+  return <ChatTurns turns={turns} />;
 }

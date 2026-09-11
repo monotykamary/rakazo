@@ -17,10 +17,10 @@
     },
     {
       "name": "pi-queue-steer-factory",
-      "version": "0.16.2",
-      "filename": "pi-queue-steer-factory-0.16.2-7d5a12d3688f.tgz",
-      "sha256": "7d5a12d3688f8b118c89a7edb32da03693e16b93178ac21dc56d7ae51d934159",
-      "baseCommit": "71db0f376fca163248885fb96fd22877d830217e"
+      "version": "0.17.1",
+      "filename": "pi-queue-steer-factory-0.17.1-b529d9db29ee.tgz",
+      "sha256": "b529d9db29eec2ac389629c6104d537f64545118bc9909d863ac7d7d3da42b44",
+      "baseCommit": "d7dfa70e2d97e21828cff0dda74f384eac6fb492"
     },
     {
       "name": "@monotykamary/pi-retry",

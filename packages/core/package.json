@@ -46,7 +46,7 @@
   },
   "dependencies": {
     "@rakazo/contracts": "workspace:*",
-    "pi-queue-steer-factory": "file:../../vendor/pi-kit/pi-queue-steer-factory-0.16.2-7d5a12d3688f.tgz",
+    "pi-queue-steer-factory": "file:../../vendor/pi-kit/pi-queue-steer-factory-0.17.1-b529d9db29ee.tgz",
     "dotenv": "^17.4.2",
     "@observablehq/plot": "^0.6.17",
     "d3-dsv": "^3.0.1",

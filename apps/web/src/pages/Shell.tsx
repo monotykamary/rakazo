@@ -3528,6 +3528,7 @@ export function ShellPage() {
                 onClose={closePeerConversation}
                 turns={peerConversation.turns}
                 canSteer={peerConversation.canSteer}
+                threadId={activeSnapshot?.threadId}
               />
             </Suspense>
           </div>
@@ -3586,6 +3587,14 @@ export function ShellPage() {
               }
               queueOpen={queueOpen}
               onQueueOpenChange={setQueueOpen}
+              queueParticipantId={
+                peerConversation?.canSteer ? peerConversation.peerBotId : undefined
+              }
+              queueParticipantNames={
+                peerConversation
+                  ? { [peerConversation.peerBotId]: peerConversation.peerBotName }
+                  : undefined
+              }
               onStop={stopRun}
               onVoice={
                 !inGroup && active
@@ -4881,6 +4890,8 @@ export const Composer = memo(function Composer({
   queueMembers,
   queueOpen,
   onQueueOpenChange,
+  queueParticipantId,
+  queueParticipantNames,
   onStop,
   onVoice,
   replyTarget,
@@ -4921,6 +4932,8 @@ export const Composer = memo(function Composer({
   queueMembers: { botId: string; name: string }[];
   queueOpen?: boolean;
   onQueueOpenChange: (open: boolean) => void;
+  queueParticipantId?: string;
+  queueParticipantNames?: Readonly<Record<string, string>>;
   onStop: () => Promise<void>;
   onVoice?: () => void;
   replyTarget?: ThreadMessage | null;
@@ -5526,6 +5539,8 @@ export const Composer = memo(function Composer({
           onPopulatedChange={setQueuePopulated}
           onTargetChange={setQueueBotId}
           onOpenComputer={onOpenComputer}
+          participantId={queueParticipantId}
+          participantNames={queueParticipantNames}
         />
       ) : null}
       <div

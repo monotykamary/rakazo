@@ -344,7 +344,7 @@
         "croner": "^10.0.1",
         "d3-dsv": "^3.0.1",
         "dotenv": "^17.4.2",
-        "pi-queue-steer-factory": "file:../../vendor/pi-kit/pi-queue-steer-factory-0.16.2-7d5a12d3688f.tgz",
+        "pi-queue-steer-factory": "file:../../vendor/pi-kit/pi-queue-steer-factory-0.17.1-b529d9db29ee.tgz",
       },
       "devDependencies": {
         "@types/d3-dsv": "^3.0.7",
@@ -409,7 +409,7 @@
         "pi-fovea": "file:../../vendor/pi-kit/pi-fovea-0.22.1-b8a01161c936.tgz",
         "pi-hide-providers": "file:../../vendor/pi-kit/pi-hide-providers-0.1.18-d26f6fc7825e.tgz",
         "pi-multiprovider": "file:../../vendor/pi-kit/pi-multiprovider-0.2.10-7f54b802745f.tgz",
-        "pi-queue-steer-factory": "file:../../vendor/pi-kit/pi-queue-steer-factory-0.16.2-7d5a12d3688f.tgz",
+        "pi-queue-steer-factory": "file:../../vendor/pi-kit/pi-queue-steer-factory-0.17.1-b529d9db29ee.tgz",
         "typebox": "1.3.29",
       },
       "devDependencies": {
@@ -3392,7 +3392,7 @@
 
     "pi-multiprovider": ["pi-multiprovider@../../vendor/pi-kit/pi-multiprovider-0.2.10-7f54b802745f.tgz", { "peerDependencies": { "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*" } }, "sha512-nqG3f5bc8FNKXkgiu6LjWEat/b2DkCxrcXtYNQY3QFo4CwaI6FF3mfcAqdh+an0ChhaFOlacmbYonNJPiggljQ=="],
 
-    "pi-queue-steer-factory": ["pi-queue-steer-factory@../../vendor/pi-kit/pi-queue-steer-factory-0.16.2-7d5a12d3688f.tgz", { "peerDependencies": { "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*" } }, "sha512-r+NvWxn5+21xFH1rFrvZ7KetNdMWmtPnGLcG9PUUj3JnJit/k6kWmpSkfibsSiY8MaOgyDS/k43e6v7VMjv8Qg=="],
+    "pi-queue-steer-factory": ["pi-queue-steer-factory@../../vendor/pi-kit/pi-queue-steer-factory-0.17.1-b529d9db29ee.tgz", { "peerDependencies": { "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*" } }, "sha512-qF58hNHd8AuZ7NE376Q9X9kB7pXCu3xgUkL8buld7+cRNTdQKqkvEjLCSrP3Vm+W2/4mRdVw4ktW2LIpbN8nIQ=="],
 
     "piccolore": ["piccolore@0.1.3", "", {}, "sha512-o8bTeDWjE086iwKrROaDf31K0qC/BENdm15/uH9usSC/uZjJOKb2YGiVHfLY4GhwsERiPI1jmwI2XrA7ACOxVw=="],
 

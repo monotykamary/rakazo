@@ -17,7 +17,7 @@
     "typebox": "1.3.29",
     "pi-fabric": "file:../../vendor/pi-kit/pi-fabric-0.90.1-97fe0e031f5e.tgz",
     "pi-fovea": "file:../../vendor/pi-kit/pi-fovea-0.22.1-b8a01161c936.tgz",
-    "pi-queue-steer-factory": "file:../../vendor/pi-kit/pi-queue-steer-factory-0.16.2-7d5a12d3688f.tgz",
+    "pi-queue-steer-factory": "file:../../vendor/pi-kit/pi-queue-steer-factory-0.17.1-b529d9db29ee.tgz",
     "@monotykamary/pi-retry": "file:../../vendor/pi-kit/monotykamary-pi-retry-0.8.6-ac70784e6bb9.tgz",
     "pi-multiprovider": "file:../../vendor/pi-kit/pi-multiprovider-0.2.10-7f54b802745f.tgz",
     "pi-hide-providers": "file:../../vendor/pi-kit/pi-hide-providers-0.1.18-d26f6fc7825e.tgz"

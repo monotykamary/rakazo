@@ -46,12 +46,56 @@ export function participantChatTurns(
     }
     const text = turnText(event.payload);
     if (!text) continue;
+    const lane = "lane" in event.payload ? event.payload.lane : undefined;
+    const queued = lane === "steer" || lane === "followUp";
     turns.push({
       id: event.id,
-      role: "bot",
+      role: queued ? "user" : "bot",
       text,
       speakerName: typeof event.payload.name === "string" ? event.payload.name : undefined,
     });
   }
   return turns;
+}
+
+export function queueTurnsForParticipant(
+  rows: readonly {
+    id: string;
+    text: string;
+    target?: { participantId: string };
+  }[],
+  participantId: string,
+  speakerName?: string,
+): ParticipantChatTurn[] {
+  return rows.flatMap((row) => {
+    if (row.target?.participantId !== participantId) return [];
+    const text = row.text.trim();
+    if (!text) return [];
+    return [{ id: row.id, role: "user" as const, text, speakerName }];
+  });
+}
+
+export function projectParticipantChat(input: {
+  events: readonly ProductEvent[];
+  participantId: string;
+  parentName?: string;
+  participantName?: string;
+  queueRows?: readonly {
+    id: string;
+    text: string;
+    target?: { participantId: string };
+  }[];
+}): ParticipantChatTurn[] {
+  const history = participantChatTurns(input.events, input.participantId).map((turn) =>
+    turn.role === "user"
+      ? { ...turn, speakerName: turn.speakerName ?? input.parentName }
+      : { ...turn, speakerName: turn.speakerName ?? input.participantName },
+  );
+  const seen = new Set(history.map((turn) => turn.text));
+  const pending = queueTurnsForParticipant(
+    input.queueRows ?? [],
+    input.participantId,
+    input.parentName,
+  ).filter((turn) => !seen.has(turn.text));
+  return [...history, ...pending];
 }

@@ -60,6 +60,8 @@ export const QueueStrip = forwardRef<
     onPopulatedChange?: (populated: boolean) => void;
     onOpenComputer?: () => void;
     targetControl?: ReactNode;
+    participantId?: string;
+    participantNames?: Readonly<Record<string, string>>;
   }
 >(function QueueStrip(
   {
@@ -72,13 +74,17 @@ export const QueueStrip = forwardRef<
     onPopulatedChange,
     onOpenComputer,
     targetControl,
+    participantId,
+    participantNames,
   },
   ref,
 ) {
   const { snapshot, error, busy, mutate } = useQueue(queueClient, threadId, botId);
   const [localOpen, setLocalOpen] = useState<boolean | undefined>(initialOpen);
   const [confirmResume, setConfirmResume] = useState(false);
-  const rows = snapshot ? queueRows(snapshot) : [];
+  const rows = (snapshot ? queueRows(snapshot) : []).filter(
+    (row) => !participantId || row.target?.participantId === participantId,
+  );
   const selected = snapshot?.editing?.selectedId;
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
@@ -314,7 +320,15 @@ export const QueueStrip = forwardRef<
                   </span>
                   <span className="flex shrink-0 items-center gap-1 pt-0.5 text-muted-foreground">
                     {row.target ? (
-                      <Target aria-label={t`Participant targeted`} className="size-3" />
+                      <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                        <Target
+                          aria-label={
+                            participantNames?.[row.target.participantId] ?? t`Participant targeted`
+                          }
+                          className="size-3"
+                        />
+                        {participantNames?.[row.target.participantId] ?? null}
+                      </span>
                     ) : null}
                     {row.paused ? <Pause aria-label={t`Held`} className="size-3" /> : null}
                     {uncertain ? (

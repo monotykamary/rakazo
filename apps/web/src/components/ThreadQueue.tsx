@@ -20,6 +20,8 @@ export const ThreadQueue = forwardRef<
     onPopulatedChange?: (populated: boolean) => void;
     onTargetChange?: (botId: string) => void;
     onOpenComputer?: () => void;
+    participantId?: string;
+    participantNames?: Readonly<Record<string, string>>;
   }
 >(function ThreadQueue(
   {
@@ -32,6 +34,8 @@ export const ThreadQueue = forwardRef<
     onPopulatedChange,
     onTargetChange,
     onOpenComputer,
+    participantId,
+    participantNames,
   },
   ref,
 ) {
@@ -80,6 +84,8 @@ export const ThreadQueue = forwardRef<
         onPopulatedChange={onPopulatedChange}
         onOpenComputer={onOpenComputer}
         targetControl={targetControl}
+        participantId={participantId}
+        participantNames={participantNames}
         onEditChange={(row) => {
           setEditing(Boolean(row));
           onEditChange?.(row ? { botId: member.botId, row } : null);

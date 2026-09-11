@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { participantChatTurns, participantConversationEvents } from "./execution-conversation.js";
+import {
+  participantChatTurns,
+  participantConversationEvents,
+  projectParticipantChat,
+} from "./execution-conversation.js";
 import type { ProductEvent } from "@rakazo/contracts";
 
 function event(type: ProductEvent["type"], payload: ProductEvent["payload"]): ProductEvent {
@@ -33,5 +37,31 @@ describe("participant conversation", () => {
       "agent.execution.updated",
     ]);
     expect(participantChatTurns(events, "child").map((turn) => turn.role)).toEqual(["user", "bot"]);
+  });
+
+  it("projects queued steers for that participant after history", () => {
+    const events = [
+      event("thread.subagent", {
+        agentId: "child",
+        name: "Scout",
+        task: "Scan the diff",
+        status: "running",
+      }),
+    ];
+    expect(
+      projectParticipantChat({
+        events,
+        participantId: "child",
+        parentName: "Rakazo",
+        participantName: "Scout",
+        queueRows: [
+          { id: "row-other", text: "Ignore", target: { participantId: "other" } },
+          { id: "row-steer", text: "Keep existing variants.", target: { participantId: "child" } },
+        ],
+      }).map((turn) => [turn.role, turn.text, turn.speakerName]),
+    ).toEqual([
+      ["user", "Scan the diff", "Rakazo"],
+      ["user", "Keep existing variants.", "Rakazo"],
+    ]);
   });
 });

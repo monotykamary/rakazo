@@ -13,6 +13,7 @@ const emptyQueue: QueueSnapshot = {
       lane: "steer",
       text: "Keep Scout on the existing variants.",
       images: [],
+      target: { participantId: "scout" },
     },
     {
       id: "row-2",
@@ -20,6 +21,7 @@ const emptyQueue: QueueSnapshot = {
       lane: "followUp",
       text: "Then open the PR.",
       images: [],
+      target: { participantId: "scout" },
     },
   ],
   identity: { nextIdNumber: 3, nextSequence: 3 },
