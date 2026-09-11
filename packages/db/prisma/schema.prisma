@@ -737,6 +737,7 @@ model CloudAgent {
   url                 String   @default("")
   branch              String?
   prUrl               String?
+  prMergedAt          DateTime?
   launchRequest       Json
   launchDispatched    Boolean  @default(false)
   followup            Json?

@@ -20,12 +20,14 @@ export function ExecutionFlowList({
   rootRunId,
   runIds = [],
   onRun,
+  onOpenAgent,
   onEvidence,
 }: {
   flow: ExecutionFlow;
   rootRunId?: string;
   runIds?: string[];
   onRun: (runId: string) => void;
+  onOpenAgent?: (agent: { participantId: string; name?: string }) => void;
   onEvidence: (ids: string[]) => void;
 }) {
   const { t } = useI18n();
@@ -156,6 +158,9 @@ export function ExecutionFlowList({
                 setExpandedId(expanded ? undefined : node.id);
                 setEdgeId(undefined);
                 setShowEvidence(false);
+                if (node.kind === "participant" && node.participantId) {
+                  onOpenAgent?.({ participantId: node.participantId, name: node.name });
+                }
               }}
               style={[styles.row, expanded && { backgroundColor: tokens.muted }]}
             >

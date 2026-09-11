@@ -106,6 +106,7 @@ export function ExecutionFlow({
   selectedId,
   onSelect,
   onRun,
+  onOpenAgent,
   onEvidence,
 }: {
   flow: Flow;
@@ -114,6 +115,7 @@ export function ExecutionFlow({
   selectedId?: string;
   onSelect?: (id: string | undefined) => void;
   onRun: (runId: string) => void;
+  onOpenAgent?: (agent: { participantId: string; name?: string; status?: string }) => void;
   onEvidence: (ids: string[]) => void;
 }) {
   const rows = executionFlowRows(flow, rootRunId);
@@ -148,6 +150,14 @@ export function ExecutionFlow({
               aria-pressed={selected}
               onClick={() => {
                 onSelect?.(selected ? undefined : node.id);
+                if (node.kind === "participant" && node.participantId) {
+                  onOpenAgent?.({
+                    participantId: node.participantId,
+                    name: node.name,
+                    status: node.status,
+                  });
+                  return;
+                }
                 if (node.runId && node.runId !== rootRunId) onRun(node.runId);
                 else if (eventIds.length) onEvidence(eventIds);
               }}
@@ -155,7 +165,7 @@ export function ExecutionFlow({
                 selected ? "bg-muted" : "hover:bg-muted/60"
               }`}
             >
-              {parent ? (
+              {parent && node.kind !== "participant" ? (
                 <CornerDownRight
                   aria-hidden="true"
                   className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"

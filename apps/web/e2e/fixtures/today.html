@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Today</title></head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      import { i18n } from "@lingui/core";
+      import { I18nProvider } from "@lingui/react";
+      import { createElement as h, useRef } from "react";
+      import { createRoot } from "react-dom/client";
+      import { BotAvatar } from "@rakazo/ui-web";
+      import { CollaborationMarker } from "../../src/components/ai/CollaborationMarker.tsx";
+      import { ChatTurns } from "../../src/components/ChatTurns.tsx";
+      import { ComposerOpsPills } from "../../src/components/ComposerOpsPills.tsx";
+      import { ExecutionFlow } from "../../src/components/ExecutionFlow.tsx";
+      import { PeerMessagesOverlay } from "../../src/pages/PeerMessagesOverlay.tsx";
+      import { Composer } from "../../src/pages/Shell.tsx";
+      import "../../src/styles.css";
+
+      const scene = new URLSearchParams(location.search).get("scene") || "thread";
+      const turns = [
+        { id: "task", role: "user", text: "Scan the diff for design-system misses.", speakerName: "You" },
+        {
+          id: "reply",
+          role: "bot",
+          text: "Reuse the existing button variants. No new component.",
+          speakerName: "Scout",
+        },
+      ];
+      const flow = {
+        hasMoreRelatedRuns: false,
+        nodes: [
+          {
+            id: "run:run",
+            kind: "run",
+            runId: "run",
+            name: "Run",
+            status: "running",
+            evidence: [{ kind: "event", id: "e1" }],
+          },
+          {
+            id: "participant:run:scout",
+            kind: "participant",
+            runId: "run",
+            participantId: "scout",
+            name: "Scout",
+            status: "running",
+            evidence: [{ kind: "event", id: "e2" }],
+          },
+        ],
+        edges: [
+          {
+            id: "delegates:run:scout",
+            from: "run:run",
+            to: "participant:run:scout",
+            kind: "delegates",
+            evidence: [{ kind: "event", id: "e2" }],
+          },
+        ],
+      };
+      const ops = {
+        working: [{ id: "run", botId: "bot", name: "Scout" }],
+        pullRequests: [{ id: "pr", title: "Cmd+T new tab", url: "https://github.com/example/repo/pull/1" }],
+        listening: [{ id: "watch", name: "Merge watch" }],
+      };
+
+      i18n.load("en", {});
+      i18n.activate("en");
+
+      function ThreadScene() {
+        return h(
+          "main",
+          {
+            "data-testid": "scene-thread",
+            className: "mx-auto flex min-h-dvh max-w-xl flex-col justify-end bg-background px-4 py-8 text-foreground",
+          },
+          h("div", { className: "flex flex-1 flex-col justify-end gap-3 pb-6" },
+            h("div", { className: "flex justify-end" },
+              h("div", {
+                "data-testid": "message-user-bubble",
+                className: "rounded-[20px] bg-secondary px-[18px] py-3 text-[14.5px] text-secondary-foreground",
+              }, "Watch nested agents and open PRs."),
+            ),
+            h(CollaborationMarker, {
+              ariaLabel: "Scout",
+              color: "#888888",
+              identity: "scout",
+              label: "Scout",
+              onClick: () => undefined,
+            }),
+            h(CollaborationMarker, {
+              ariaLabel: "Messaged Scout",
+              color: "#F2622A",
+              identity: "peer",
+              label: "Messaged Scout",
+              onClick: () => undefined,
+            }),
+          ),
+          h(ComposerOpsPills, { ops }),
+          h("div", {
+            "data-testid": "composer-bar",
+            className: "flex items-center gap-2 rounded-full border border-border bg-background py-[9px] pe-2.5 ps-3",
+          },
+            h("span", { className: "flex-1 text-[14.5px] text-muted-foreground" }, "Message"),
+            h("button", {
+              type: "button",
+              className: "size-9 rounded-full bg-primary text-primary-foreground",
+              "aria-label": "Send",
+            }, "↑"),
+          ),
+        );
+      }
+
+      function OverlayComposer() {
+        const fileInputRef = useRef(null);
+        return h(
+          "div",
+          { className: "relative z-10 mx-auto w-full max-w-3xl shrink-0 px-4 pb-4 pt-2" },
+          h(Composer, {
+            activeName: "Scout",
+            running: true,
+            pendingAttachments: [],
+            attachmentNotice: null,
+            sendError: null,
+            runError: null,
+            runErrorId: null,
+            onRunErrorPresented: () => undefined,
+            onDismissError: () => undefined,
+            sending: false,
+            fileInputRef,
+            onAttachmentPick: () => undefined,
+            onRemoveAttachment: () => undefined,
+            onSend: async () => true,
+            onQueue: async () => true,
+            queueThreadId: "thread",
+            queueMembers: [{ botId: "bot", name: "Rakazo" }],
+            onQueueOpenChange: () => undefined,
+            onStop: async () => undefined,
+            mentionTargets: [],
+            agentSkills: [],
+          }),
+        );
+      }
+
+      function OverlayScene({ steer }) {
+        return h(
+          "div",
+          {
+            className: "flex h-dvh bg-background",
+            "data-testid": steer ? "scene-steer" : "scene-readonly",
+          },
+          h(
+            "aside",
+            {
+              className: "hidden w-[316px] shrink-0 border-e border-sidebar-border bg-sidebar md:block",
+              "data-testid": "bots-sidebar",
+            },
+            h("div", { className: "flex items-center gap-3 px-[18px] py-4" },
+              h(BotAvatar, { color: "#888888", identity: "bot", size: 26 }),
+              h("span", { className: "text-[15px] font-medium text-sidebar-foreground" }, "Rakazo"),
+            ),
+            h("button", {
+              type: "button",
+              className: "mx-2 flex w-[calc(100%-1rem)] items-center gap-3 rounded-lg px-3 py-2 text-start hover:bg-sidebar-accent",
+            },
+              h(BotAvatar, { color: "#F2622A", identity: "scout", size: 26 }),
+              h("span", { className: "text-[14px] text-sidebar-foreground" }, "Scout"),
+            ),
+          ),
+          h("div", { className: "flex min-h-0 min-w-0 flex-1 flex-col" },
+          h(PeerMessagesOverlay, {
+            botId: "bot",
+            botName: "Rakazo",
+            botColor: "#888888",
+            peerBotId: "scout",
+            peerBotName: "Scout",
+            peerBotColor: "#F2622A",
+            turns,
+            canSteer: steer,
+            onClose: () => undefined,
+          }),
+          steer ? h(OverlayComposer) : null,
+          ),
+        );
+      }
+
+      function FlowScene() {
+        return h(
+          "main",
+          { "data-testid": "scene-flow", className: "min-h-dvh bg-background p-8 text-foreground" },
+          h("div", { className: "w-72 rounded-2xl border border-border bg-card p-3" },
+            h(ExecutionFlow, {
+              flow,
+              rootRunId: "run",
+              runIds: ["run"],
+              selectedId: "participant:run:scout",
+              onRun: () => undefined,
+              onOpenAgent: () => undefined,
+              onEvidence: () => undefined,
+            }),
+          ),
+        );
+      }
+
+      const root =
+        scene === "readonly" ? h(OverlayScene, { steer: false })
+        : scene === "steer" ? h(OverlayScene, { steer: true })
+        : scene === "flow" ? h(FlowScene)
+        : h(ThreadScene);
+
+      createRoot(document.getElementById("root")).render(h(I18nProvider, { i18n }, root));
+    </script>
+  </body>
+</html>

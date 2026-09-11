@@ -37,6 +37,8 @@ import {
   buildComposerMentionOptions,
   type ComposerMention,
   clampMentionHighlightIndex,
+  composerOps,
+  type ComposerOps,
   cronFromPreset,
   groupBotsForSidebar,
   inferAttachmentMimeType,
@@ -162,7 +164,9 @@ import {
 } from "../components/MessageActivityLinks";
 import { MessageHoverMetadata } from "../components/MessageHoverMetadata";
 import { OutgoingDraftCard } from "../components/OutgoingDraftCard";
+import type { OverlayChat } from "../components/ChatTurns";
 import { ThreadInspector, type ThreadInspectorTarget } from "../components/ThreadInspector";
+import { ComposerOpsPills } from "../components/ComposerOpsPills";
 import {
   ThreadQueue,
   type ThreadQueueEdit,
@@ -396,11 +400,9 @@ export function ShellPage() {
   const officePromptPending = useRef(false);
   const [threadInspector, setThreadInspector] = useState<ThreadInspectorTarget | null>(null);
   const [queueOpen, setQueueOpen] = useState<boolean | undefined>();
-  const [peerConversation, setPeerConversation] = useState<{
-    botId?: string;
-    peerBotId: string;
-    peerBotName: string;
-  } | null>(null);
+  const [peerConversation, setPeerConversation] = useState<OverlayChat | null>(null);
+  const peerConversationRef = useRef(peerConversation);
+  peerConversationRef.current = peerConversation;
   const peerReturnFocus = useRef<HTMLElement | null>(null);
   const closePeerConversation = useCallback(() => {
     setPeerConversation(null);
@@ -1704,6 +1706,30 @@ export function ShellPage() {
     setPeerConversation(null);
   }, [activeSnapshot?.threadId]);
   const transcriptMembers = activeSnapshot?.members ?? activeGroup?.members;
+  const threadOps = useMemo(
+    () =>
+      composerOps({
+        runs: currentRuns,
+        botNames: Object.fromEntries(
+          (inGroup
+            ? (transcriptMembers ?? [])
+            : active
+              ? [{ botId: active.id, name: active.name }]
+              : []
+          ).map((member) => [member.botId, member.name]),
+        ),
+        messages: activeSnapshot?.messages ?? [],
+        routines: activeRoutines,
+      }),
+    [
+      active,
+      activeRoutines,
+      activeSnapshot?.messages,
+      currentRuns,
+      inGroup,
+      transcriptMembers,
+    ],
+  );
   const resolveTranscriptBot = useCallback(
     (botId: string) => {
       const bot = bots.find((candidate) => candidate.id === botId);
@@ -2172,10 +2198,19 @@ export function ShellPage() {
           );
           artifactIds.push(artifact.id);
         }
+        const nested = peerConversationRef.current;
         await enqueueQueueMessage(
           rpc.queue,
           { threadId, botId: botTarget },
-          { lane: mode, text: trimmed, artifactIds },
+          {
+            lane: mode,
+            text: trimmed,
+            artifactIds,
+            target:
+              nested?.canSteer && nested.peerBotId
+                ? { participantId: nested.peerBotId }
+                : undefined,
+          },
         );
         revokePendingAttachmentPreviews(attachments);
         setPendingAttachments((current) =>
@@ -2303,7 +2338,7 @@ export function ShellPage() {
     setPanel("routine");
   }, []);
   const openPeerMessages = useCallback(
-    (peer: { botId?: string; peerBotId: string; peerBotName: string }) => {
+    (peer: OverlayChat) => {
       peerReturnFocus.current =
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setPanel(null);
@@ -3296,7 +3331,7 @@ export function ShellPage() {
         className="relative z-0 flex min-w-0 flex-1 flex-col bg-background"
       >
         <div
-          className={peerConversation ? "invisible contents" : "contents"}
+          className={peerConversation ? "hidden" : "contents"}
           aria-hidden={Boolean(peerConversation) || undefined}
           inert={Boolean(peerConversation)}
         >
@@ -3452,6 +3487,7 @@ export function ShellPage() {
               threadId={activeSnapshot.threadId}
               target={threadInspector}
               onClose={() => setThreadInspector(null)}
+              onOpenNestedChat={openPeerMessages}
               members={
                 inGroup
                   ? (transcriptMembers ?? [])
@@ -3469,7 +3505,39 @@ export function ShellPage() {
               ]}
             />
           )}
+          </div>
+          {peerConversation && (peerConversation.botId ?? active?.id) ? (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <Suspense fallback={null}>
+              <PeerMessagesOverlay
+                botId={peerConversation.botId ?? active?.id ?? ""}
+                botName={
+                  bots.find((bot) => bot.id === (peerConversation.botId ?? active?.id))?.name ??
+                  t`Bot`
+                }
+                botColor={
+                  resolveTranscriptBot(peerConversation.botId ?? active?.id ?? "")?.color ??
+                  FALLBACK_BOT_COLOR
+                }
+                peerBotId={peerConversation.peerBotId}
+                peerBotName={peerConversation.peerBotName}
+                peerBotColor={
+                  resolveTranscriptBot(peerConversation.peerBotId)?.color ?? FALLBACK_BOT_COLOR
+                }
+                onOpenNavigation={() => setMobileSidebarOpen(true)}
+                onClose={closePeerConversation}
+                turns={peerConversation.turns}
+                canSteer={peerConversation.canSteer}
+              />
+            </Suspense>
+          </div>
+          ) : null}
           {active || activeGroup ? (
+            <div
+              className={
+                peerConversation && !peerConversation.canSteer ? "hidden" : "contents"
+              }
+            >
             <Composer
               key={inGroup ? `group:${groupId}` : `bot:${active?.id}`}
               activeName={inGroup ? (activeGroup?.name ?? activeSnapshot?.groupName) : active?.name}
@@ -3481,15 +3549,32 @@ export function ShellPage() {
               runError={displayedRunError}
               runErrorId={displayedRunErrorId}
               onRunErrorPresented={handleRunErrorPresented}
-              onInspectRun={(runId) =>
-                setThreadInspector({ view: "execution", runId, botId: active?.id })
+              onInspectRun={(runId, botId) =>
+                setThreadInspector({
+                  view: "execution",
+                  runId,
+                  botId: botId ?? active?.id,
+                })
               }
+              onOpenRoutine={(routineId) => {
+                const routine = routines.find((item) => item.id === routineId);
+                if (!routine) return;
+                setRoutineDraft(draftFromRoutine(routine));
+                setRoutineWebhookSecret(null);
+                setEditingRoutine(routine);
+                setPanel("routine");
+              }}
+              composerOps={threadOps}
               onDismissError={dismissComposerError}
               sending={sending}
               fileInputRef={fileInputRef}
               onAttachmentPick={onAttachmentPick}
               onRemoveAttachment={removeAttachment}
-              onSend={sendMessage}
+              onSend={(text, mentions) =>
+                peerConversation?.canSteer
+                  ? queueMessage("steer", text, mentions ?? [])
+                  : sendMessage(text, mentions)
+              }
               onQueue={queueMessage}
               queueThreadId={!recordingSkill ? activeSnapshot?.threadId : undefined}
               queueMembers={
@@ -3551,32 +3636,8 @@ export function ShellPage() {
                 }
               }}
             />
+            </div>
           ) : null}
-        </div>
-        {peerConversation && (peerConversation.botId ?? active?.id) ? (
-          <div className="absolute inset-0 z-20 bg-background">
-            <Suspense fallback={null}>
-              <PeerMessagesOverlay
-                botId={peerConversation.botId ?? active?.id ?? ""}
-                botName={
-                  bots.find((bot) => bot.id === (peerConversation.botId ?? active?.id))?.name ??
-                  t`Bot`
-                }
-                botColor={
-                  resolveTranscriptBot(peerConversation.botId ?? active?.id ?? "")?.color ??
-                  FALLBACK_BOT_COLOR
-                }
-                peerBotId={peerConversation.peerBotId}
-                peerBotName={peerConversation.peerBotName}
-                peerBotColor={
-                  resolveTranscriptBot(peerConversation.peerBotId)?.color ?? FALLBACK_BOT_COLOR
-                }
-                onOpenNavigation={() => setMobileSidebarOpen(true)}
-                onClose={closePeerConversation}
-              />
-            </Suspense>
-          </div>
-        ) : null}
       </main>
 
       <SpringAside
@@ -4511,7 +4572,7 @@ export const Transcript = memo(function Transcript({
   onReply: (message: ThreadMessage) => void;
   onReact: (message: ThreadMessage, reaction: MessageReaction | null) => Promise<void>;
   onJumpToMessage: (messageId: string) => void;
-  onOpenPeerMessages: (peer: { botId?: string; peerBotId: string; peerBotName: string }) => void;
+  onOpenPeerMessages: (peer: OverlayChat) => void;
   onOpenExecution: (runId: string, botId?: string) => void;
   onOpenRoutine: (routineId: string, botId?: string) => Promise<void>;
   memberName?: (botId: string | undefined) => string | undefined;
@@ -4831,6 +4892,8 @@ export const Composer = memo(function Composer({
   onSlashOpen,
   onSlashAction,
   onOpenComputer,
+  onOpenRoutine,
+  composerOps: threadOps,
 }: {
   activeName?: string;
   running: boolean;
@@ -4841,7 +4904,7 @@ export const Composer = memo(function Composer({
   runError: string | null;
   runErrorId: string | null;
   onRunErrorPresented: (runId: string) => void;
-  onInspectRun?: (runId: string) => void;
+  onInspectRun?: (runId: string, botId?: string) => void;
   onDismissError: () => void;
   sending: boolean;
   fileInputRef: RefObject<HTMLInputElement | null>;
@@ -4869,6 +4932,8 @@ export const Composer = memo(function Composer({
   onSlashOpen?: () => void;
   onSlashAction?: (action: SlashActionId) => void;
   onOpenComputer?: () => void;
+  onOpenRoutine?: (routineId: string) => void;
+  composerOps?: ComposerOps;
 }) {
   const { t } = useLingui();
   const [draft, setDraft] = useState("");
@@ -5444,6 +5509,11 @@ export const Composer = memo(function Composer({
           })}
         </div>
       ) : null}
+      <ComposerOpsPills
+        ops={threadOps ?? { working: [], pullRequests: [], listening: [] }}
+        onInspectRun={onInspectRun}
+        onOpenRoutine={onOpenRoutine}
+      />
       {queueThreadId ? (
         <ThreadQueue
           ref={queueRef}
@@ -6073,7 +6143,7 @@ const MessageView = memo(function MessageView({
   message: ThreadMessage;
   onAnswer: (message: ThreadMessage, text: string) => Promise<void>;
   onOpenBot: (botId: string) => void;
-  onOpenPeerMessages: (peer: { botId?: string; peerBotId: string; peerBotName: string }) => void;
+  onOpenPeerMessages: (peer: OverlayChat) => void;
   speakerName?: string;
   memberName?: (botId: string | undefined) => string | undefined;
   peerBot: (botId: string) => { color: string; status?: string } | undefined;
@@ -6228,41 +6298,41 @@ const MessageView = memo(function MessageView({
           );
         }
         if (block.kind === "subagent") {
-          const running = block.status === "running";
-          const failed = block.status === "failed";
+          const reply = block.result || block.progress || "";
           return (
-            <div
+            <CollaborationMarker
               key={i}
-              className="w-[min(420px,90%)] rounded-[18px] border border-border bg-muted px-[18px] py-4"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-[14px] font-medium text-foreground" dir="auto">
-                  {block.name}
-                </span>
-                <span
-                  className={`rounded-full px-[11px] py-1 text-[13px] ${
-                    failed
-                      ? "bg-destructive/15 text-destructive"
-                      : running
-                        ? "bg-warning/15 text-warning"
-                        : "bg-success/15 text-success"
-                  }`}
-                  style={{
-                    animation: running ? "rkPulse 1.2s ease-in-out infinite" : undefined,
-                  }}
-                >
-                  {running ? <Trans>subagent</Trans> : block.status}
-                </span>
-              </div>
-              <div className="mt-2 text-[13.5px] text-muted-foreground">{block.task}</div>
-              {block.progress || block.result ? (
-                <div className="mt-2.5 text-[14.5px] leading-[1.5] text-foreground/75">
-                  <ChatMarkdown streaming={running}>
-                    {block.result || block.progress || ""}
-                  </ChatMarkdown>
-                </div>
-              ) : null}
-            </div>
+              ariaLabel={block.name}
+              color={peerBot(block.agentId)?.color ?? FALLBACK_BOT_COLOR}
+              identity={block.agentId}
+              label={block.name}
+              onClick={() =>
+                onOpenPeerMessages({
+                  botId: message.botId,
+                  peerBotId: block.agentId,
+                  peerBotName: block.name,
+                  canSteer: block.status === "running",
+                  turns: [
+                    {
+                      id: `${message.id}:task`,
+                      role: "user",
+                      text: block.task,
+                      speakerName,
+                    },
+                    ...(reply
+                      ? [
+                          {
+                            id: `${message.id}:reply`,
+                            role: "bot" as const,
+                            text: reply,
+                            speakerName: block.name,
+                          },
+                        ]
+                      : []),
+                  ],
+                })
+              }
+            />
           );
         }
         if (block.kind === "child_bot") {

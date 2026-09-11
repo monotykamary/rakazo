@@ -219,6 +219,7 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     url: z.string(),
     branch: z.string().optional(),
     prUrl: z.string().optional(),
+    prMergedAt: z.string().optional(),
     latestRunId: z.string().optional(),
   }),
   z.object({

@@ -47,7 +47,12 @@ export function queueComposerBlockReason(input: {
 export async function enqueueQueueMessage(
   client: QueueClient,
   scope: { threadId: string; botId: string },
-  input: { lane: Exclude<ComposerMode, "send">; text: string; artifactIds?: string[] },
+  input: {
+    lane: Exclude<ComposerMode, "send">;
+    text: string;
+    artifactIds?: string[];
+    target?: { participantId: string };
+  },
 ): Promise<void> {
   const snapshot = await client.list(scope);
   const operation: QueueOperation = {
@@ -55,6 +60,7 @@ export async function enqueueQueueMessage(
     lane: input.lane,
     text: input.text,
     artifactIds: input.artifactIds?.length ? input.artifactIds : undefined,
+    target: input.target,
   };
   const reply = await client.mutate({
     ...scope,

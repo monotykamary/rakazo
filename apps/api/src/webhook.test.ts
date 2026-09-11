@@ -73,6 +73,9 @@ function createDeps(
       routine: {
         findMany: findRoutines,
       },
+      cloudAgent: {
+        findMany: vi.fn(async () => []),
+      },
     } as unknown as WebhookDeps["prisma"],
     secrets: {
       load: overrides.load ?? (() => SECRET),

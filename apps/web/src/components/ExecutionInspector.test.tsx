@@ -11,6 +11,11 @@ vi.mock("../lib/use-queue", () => ({
     busy: false,
     loadMore: () => undefined,
   }),
+  useQueue: () => ({
+    busy: false,
+    steeringParticipants: () => [],
+    steer: async () => false,
+  }),
 }));
 
 import { ExecutionInspector } from "./ExecutionInspector";

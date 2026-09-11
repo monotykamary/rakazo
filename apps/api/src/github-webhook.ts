@@ -1,4 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { recordMergedCloudAgentPullRequest } from "@rakazo/adapters";
+import { mergedPullRequestUrl } from "@rakazo/core";
 import type { Hono } from "hono";
 import { readBoundedBody } from "./http-body.js";
 import {
@@ -182,6 +184,17 @@ export function mountGithubWebhookRoute(app: Hono, deps: WebhookDeps) {
       return unauthorized();
     }
 
+    const payload = parseWebhookPayload(raw, c.req.header("content-type"));
+    const githubEvent = githubEventName(c.req.header("x-github-event"));
+    const mergedUrl = mergedPullRequestUrl(githubEvent, payload);
+    if (mergedUrl) {
+      await recordMergedCloudAgentPullRequest(deps.prisma, {
+        spaceId: target.bot.spaceId,
+        userId: target.bot.userId,
+        prUrl: mergedUrl,
+      });
+    }
+
     const githubRoutines = await deps.prisma.routine.findMany({
       where: {
         botId: target.bot.id,
@@ -201,8 +214,6 @@ export function mountGithubWebhookRoute(app: Hono, deps: WebhookDeps) {
     const deliveryId = c.req.header("x-github-delivery")?.trim();
     if (!deliveryId) return unauthorized();
 
-    const payload = parseWebhookPayload(raw, c.req.header("content-type"));
-    const githubEvent = githubEventName(c.req.header("x-github-event"));
     const eventPrompt = formatGithubEventPrompt(githubEvent, payload);
 
     return c.json(

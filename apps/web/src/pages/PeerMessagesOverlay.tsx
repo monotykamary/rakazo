@@ -1,9 +1,10 @@
 import { Trans, useLingui } from "@lingui/react/macro";
-import { ChatMarkdown } from "@rakazo/chat-ui/web";
 import type { ThreadMessage } from "@rakazo/contracts";
 import { BotAvatar, Button } from "@rakazo/ui-web";
-import { Menu } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import type { ChatTurn } from "../components/ChatTurns";
+import { ChatTurns } from "../components/ChatTurns";
 import { peerConversations } from "../lib/peer-messages";
 import { rpc } from "../lib/rpc";
 
@@ -17,6 +18,8 @@ export function PeerMessagesOverlay({
   peerBotColor,
   onOpenNavigation,
   onClose,
+  turns,
+  canSteer,
 }: {
   botId: string;
   botName: string;
@@ -26,13 +29,14 @@ export function PeerMessagesOverlay({
   peerBotColor: string;
   onOpenNavigation?: () => void;
   onClose: () => void;
+  turns?: readonly ChatTurn[];
+  canSteer?: boolean;
 }) {
   const { t } = useLingui();
   const titleId = useId();
   const viewRef = useRef<HTMLElement>(null);
-  const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    closeRef.current?.focus({ preventScroll: true });
+    viewRef.current?.focus({ preventScroll: true });
   }, []);
   useEffect(() => {
     const view = viewRef.current;
@@ -45,7 +49,7 @@ export function PeerMessagesOverlay({
     return () => view?.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
   const [messages, setMessages] = useState<readonly ThreadMessage[]>([]);
-  const [historyReady, setHistoryReady] = useState(false);
+  const [historyReady, setHistoryReady] = useState(Boolean(turns));
   const [historyFailed, setHistoryFailed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [olderCursor, setOlderCursor] = useState<number | null>(null);
@@ -57,8 +61,28 @@ export function PeerMessagesOverlay({
     return peerConversations(messages).find((entry) => entry.peerBotId === peerBotId) ?? null;
   }, [historyReady, messages, peerBotId]);
   const peerBotName = conversation?.peerBotName ?? initialPeerBotName;
+  const chatTurns: ChatTurn[] = useMemo(() => {
+    if (turns) return [...turns];
+    return (
+      conversation?.messages.map((peerMessage, index) => {
+        const sent = peerMessage.direction === "sent";
+        const turn: ChatTurn = {
+          id: `${peerMessage.messageId}-${index}`,
+          role: sent ? "user" : "bot",
+          text: peerMessage.text,
+          speakerName: sent ? botName : peerBotName,
+        };
+        return turn;
+      }) ?? []
+    );
+  }, [botName, conversation, peerBotName, turns]);
 
   useEffect(() => {
+    if (turns) {
+      setHistoryReady(true);
+      setHistoryFailed(false);
+      return;
+    }
     const abort = new AbortController();
     setHistoryReady(false);
     setHistoryFailed(false);
@@ -83,7 +107,7 @@ export function PeerMessagesOverlay({
     return () => {
       abort.abort();
     };
-  }, [botId, peerBotId, reloadKey]);
+  }, [botId, peerBotId, reloadKey, turns]);
 
   async function loadEarlier() {
     const abort = lifecycle.current;
@@ -114,8 +138,9 @@ export function PeerMessagesOverlay({
     <section
       ref={viewRef}
       aria-labelledby={titleId}
+      tabIndex={-1}
       data-testid="peer-conversation-view"
-      className="flex h-full min-h-0 w-full min-w-0 flex-col bg-background text-foreground"
+      className="flex h-full min-h-0 w-full min-w-0 flex-col bg-background text-foreground outline-none"
     >
       <div className="flex items-center justify-between gap-4 border-b border-sidebar-border px-[18px] py-3.5">
         <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -142,8 +167,8 @@ export function PeerMessagesOverlay({
             {title}
           </h2>
         </div>
-        <Button ref={closeRef} aria-label={t`Close`} variant="ghost" size="sm" onClick={onClose}>
-          <Trans>Close</Trans>
+        <Button aria-label={t`Close`} variant="ghost" size="icon-sm" onClick={onClose}>
+          <X />
         </Button>
       </div>
 
@@ -160,16 +185,13 @@ export function PeerMessagesOverlay({
             </Button>
           </div>
         </div>
-      ) : !conversation || conversation.messages.length === 0 ? (
+      ) : chatTurns.length === 0 ? (
         <div className="grid flex-1 place-items-center px-8 text-center text-[13.5px] text-muted-foreground/80">
           <Trans>No messages with {peerBotName} yet.</Trans>
         </div>
       ) : (
-        <div
-          data-testid="peer-conversation-transcript"
-          className="rk-scroll flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 py-5 md:px-7 md:py-6"
-        >
-          {olderCursor !== null && (
+        <>
+          {olderCursor !== null && !turns ? (
             <Button
               variant="ghost"
               size="sm"
@@ -178,42 +200,23 @@ export function PeerMessagesOverlay({
             >
               <Trans>Load earlier</Trans>
             </Button>
-          )}
-          {earlierFailed && (
-            <p role="alert" className="text-xs text-destructive">
+          ) : null}
+          {earlierFailed && !turns ? (
+            <p role="alert" className="px-4 text-xs text-destructive">
               <Trans>Could not load this chat.</Trans>
             </p>
-          )}
-          {conversation.messages.map((peerMessage, index) => {
-            const sent = peerMessage.direction === "sent";
-            return (
-              <div
-                key={`${peerMessage.messageId}-${index}`}
-                className={`flex ${sent ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${
-                    sent ? "bg-accent" : "bg-muted"
-                  }`}
-                >
-                  <div className="mb-1 text-[12px] text-muted-foreground/70" dir="auto">
-                    {sent ? botName : peerBotName}
-                  </div>
-                  <div className="text-[14.5px] leading-[1.5] text-foreground/90" dir="auto">
-                    <ChatMarkdown>{peerMessage.text}</ChatMarkdown>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+          ) : null}
+          <ChatTurns turns={chatTurns} />
+        </>
       )}
 
-      <div className="flex items-center gap-4 border-t border-sidebar-border px-[18px] py-3.5">
-        <p className="text-[13.5px] text-muted-foreground/80">
-          <Trans>This chat is view-only</Trans>
-        </p>
-      </div>
+      {canSteer ? null : (
+        <div className="flex items-center gap-4 border-t border-sidebar-border px-[18px] py-3.5">
+          <p className="text-[13.5px] text-muted-foreground/80">
+            <Trans>This chat is view-only</Trans>
+          </p>
+        </div>
+      )}
     </section>
   );
 }

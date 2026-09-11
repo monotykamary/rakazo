@@ -1,40 +1,63 @@
 import { t } from "@lingui/core/macro";
 import type { ProductEvent } from "@rakazo/contracts";
+import { participantChatTurns } from "@rakazo/core";
 import { useState } from "react";
 import { rpc } from "../lib/rpc";
-import { useExecution } from "../lib/use-queue";
+import { useExecution, useQueue } from "../lib/use-queue";
+import type { OverlayChat } from "./ChatTurns";
 import { ExecutionFlow } from "./ExecutionFlow";
 import { ExecutionTraceList } from "./ExecutionTraceList";
 
 const executionClient = rpc.execution;
+const queueClient = rpc.queue;
 
 export function ExecutionInspector({
   runIds,
+  botId,
+  threadId,
+  onOpenNestedChat,
 }: {
   runIds: string[];
   botId: string;
   threadId: string;
+  onOpenNestedChat?: (chat: OverlayChat) => void;
 }) {
   const [runId, setRunId] = useState(runIds[0] ?? "");
   const runs = [...new Set([...runIds, runId])].filter(Boolean);
   if (!runs.length) {
     return <p className="px-6 py-8 text-sm text-muted-foreground">{t`No retained events`}</p>;
   }
-  return <RetainedEvents runId={runId || runs[0]!} runIds={runs} onRun={setRunId} />;
+  return (
+    <RetainedEvents
+      runId={runId || runs[0]!}
+      runIds={runs}
+      botId={botId}
+      threadId={threadId}
+      onRun={setRunId}
+      onOpenNestedChat={onOpenNestedChat}
+    />
+  );
 }
 
 function RetainedEvents({
   runId,
   runIds,
+  botId,
+  threadId,
   onRun,
+  onOpenNestedChat,
 }: {
   runId: string;
   runIds: string[];
+  botId: string;
+  threadId: string;
   onRun: (runId: string) => void;
+  onOpenNestedChat?: (chat: OverlayChat) => void;
 }) {
   const [eventId, setEventId] = useState<string>();
   const [flowId, setFlowId] = useState<string>();
   const { inspection, busy, error } = useExecution(executionClient, runId);
+  const queue = useQueue(queueClient, threadId, botId);
   const selectedEvent = inspection?.events.find((event) => event.id === eventId);
 
   return (
@@ -95,6 +118,17 @@ function RetainedEvents({
               onRun={(id) => {
                 onRun(id);
                 setEventId(undefined);
+              }}
+              onOpenAgent={(opened) => {
+                onOpenNestedChat?.({
+                  botId,
+                  peerBotId: opened.participantId,
+                  peerBotName: opened.name ?? "",
+                  canSteer: queue
+                    .steeringParticipants(inspection)
+                    .some((item) => item.participantId === opened.participantId),
+                  turns: participantChatTurns(inspection.events, opened.participantId),
+                });
               }}
               onEvidence={(ids) => setEventId(ids[0])}
             />

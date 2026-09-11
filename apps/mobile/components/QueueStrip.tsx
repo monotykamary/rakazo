@@ -723,6 +723,11 @@ function ExecutionEvents({
             setFlow(false);
             onRun(id);
           }}
+          onOpenAgent={(opened) => {
+            setTarget(opened.participantId);
+            setMessage("");
+            setFlow(false);
+          }}
           onEvidence={(ids) => {
             setEvidence(ids);
             setFlow(false);

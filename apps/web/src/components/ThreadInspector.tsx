@@ -9,6 +9,7 @@ import {
 } from "@rakazo/ui-web";
 import { X } from "lucide-react";
 import { useState } from "react";
+import type { OverlayChat } from "./ChatTurns";
 import { ExecutionInspector } from "./ExecutionInspector";
 import { QueueStrip } from "./QueueStrip";
 
@@ -20,12 +21,14 @@ export function ThreadInspector({
   runIds,
   target,
   onClose,
+  onOpenNestedChat,
 }: {
   threadId: string;
   members: { botId: string; name: string }[];
   runIds: string[];
   target: ThreadInspectorTarget;
   onClose: () => void;
+  onOpenNestedChat?: (chat: OverlayChat) => void;
 }) {
   const [selected, setSelected] = useState(target.botId ?? members[0]?.botId ?? "");
   const botId = members.some((member) => member.botId === selected) ? selected : members[0]?.botId;
@@ -69,7 +72,16 @@ export function ThreadInspector({
               <QueueStrip key={botId} threadId={threadId} botId={botId} runIds={runs} initialOpen />
             </div>
           ) : (
-            <ExecutionInspector key={botId} threadId={threadId} botId={botId} runIds={runs} />
+            <ExecutionInspector
+              key={botId}
+              threadId={threadId}
+              botId={botId}
+              runIds={runs}
+              onOpenNestedChat={(chat) => {
+                onClose();
+                onOpenNestedChat?.(chat);
+              }}
+            />
           )
         ) : null}
       </DialogContent>

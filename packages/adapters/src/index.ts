@@ -17,6 +17,7 @@ export * from "./child-bots.js";
 export * from "./cloud-agent-emulator.js";
 export * from "./cloud-agent-factory.js";
 export * from "./cloud-agent-poll.js";
+export * from "./cloud-agent-pr.js";
 export * from "./cloud-agent-provider-env.js";
 export * from "./cloud-agent-service.js";
 export * from "./cloud-agent-tools.js";

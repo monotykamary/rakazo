@@ -18,6 +18,7 @@ import {
   buildComposerMentionOptions,
   type ComposerMention,
   cloudAgentHttpsUrl,
+  composerOps,
   isApprovalAskBlock,
   isRunTerminalEvent,
   isSecretAskBlock,
@@ -72,6 +73,7 @@ import {
 import { NativeSymbol } from "../components/native-symbol";
 import { OutgoingDraftCard } from "../components/OutgoingDraftCard";
 import { PeerMessagesSheet } from "../components/PeerMessagesSheet";
+import { ComposerOpsPills } from "../components/ComposerOpsPills";
 import { GroupQueueStrip, QueueStrip } from "../components/QueueStrip";
 import {
   applyMobileThreadEvent,
@@ -448,6 +450,35 @@ function Thread() {
     });
   }, [inGroup, snap?.activeRuns, snap?.members, snap?.run]);
   const working = inGroup ? workingGroupBots.length > 0 : isWorkingStatus(currentBotStatus);
+  const threadOps = useMemo(
+    () =>
+      composerOps({
+        runs: snap?.activeRuns ?? (snap?.run ? [snap.run] : []),
+        botNames: Object.fromEntries(
+          inGroup
+            ? (snap?.members ?? []).map((member) => [member.botId, member.name])
+            : botId
+              ? [[botId, displayName ?? ""]]
+              : [],
+        ),
+        messages: snap?.messages ?? [],
+        routines: mentionRoutines.filter((routine) =>
+          inGroup
+            ? (snap?.members ?? []).some((member) => member.botId === routine.botId)
+            : routine.botId === botId,
+        ),
+      }),
+    [
+      botId,
+      displayName,
+      inGroup,
+      mentionRoutines,
+      snap?.activeRuns,
+      snap?.members,
+      snap?.messages,
+      snap?.run,
+    ],
+  );
 
   useEffect(() => {
     void rpc<AgentSkillCatalogEntry[]>("agentSkills/list")
@@ -2003,6 +2034,28 @@ function Thread() {
               />
             ) : null)}
         </ScrollView>
+        <ComposerOpsPills
+          ops={threadOps}
+          onInspectRun={(runId, runBotId) =>
+            setInspector({ view: "execution", runId, botId: runBotId ?? botId })
+          }
+          onOpenPullRequest={(url) => {
+            const href = cloudAgentHttpsUrl(url);
+            if (href) void Linking.openURL(href);
+          }}
+          onOpenRoutine={(routineId) => {
+            const routine = mentionRoutines.find((item) => item.id === routineId);
+            if (!routine) return;
+            router.push({
+              pathname: "/routine",
+              params: {
+                botId: routine.botId,
+                botName: routine.botName ?? displayName ?? "",
+                routineId: routine.id,
+              },
+            });
+          }}
+        />
         {replyTarget ? (
           <View
             style={{
