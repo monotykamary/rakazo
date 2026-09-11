@@ -28,6 +28,7 @@ async function findArtifactMessages(
         WHERE t."spaceId" = ${actor.spaceId}
           AND t."userId" = ${actor.userId}
           AND ${targetColumn} = candidate."targetId"
+          AND (t."sessionStartedAfterSeq" IS NULL OR m.seq > t."sessionStartedAfterSeq")
           AND m.blocks::text ILIKE ('%' || candidate."artifactId" || '%')
         ORDER BY m."createdAt" DESC
         LIMIT 1
@@ -239,6 +240,7 @@ export async function querySpaceSearch(
     WHERE t."spaceId" = ${actor.spaceId}
       AND t."userId" = ${actor.userId}
       AND b."archivedAt" IS NULL
+      AND (t."sessionStartedAfterSeq" IS NULL OR m.seq > t."sessionStartedAfterSeq")
       AND m.blocks::text ILIKE ${pattern}
     ORDER BY m."createdAt" DESC
     LIMIT ${SEARCH_LIMIT}
@@ -272,6 +274,7 @@ export async function querySpaceSearch(
     WHERE t."spaceId" = ${actor.spaceId}
       AND t."userId" = ${actor.userId}
       AND t."groupId" IS NOT NULL
+      AND (t."sessionStartedAfterSeq" IS NULL OR m.seq > t."sessionStartedAfterSeq")
       AND m.blocks::text ILIKE ${pattern}
     ORDER BY m."createdAt" DESC
     LIMIT ${SEARCH_LIMIT}

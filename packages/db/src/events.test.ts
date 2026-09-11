@@ -1666,13 +1666,16 @@ describe("clearThread", () => {
         executionLeaseExpiresAt: null,
       },
     });
-    // Every deleted message counts as compacted, so compaction cannot summarize cleared history.
+    // Prior messages stay stored but count as compacted and hidden from the new session.
+    expect(tx.message.deleteMany).not.toHaveBeenCalled();
+    expect(tx.event.deleteMany).not.toHaveBeenCalled();
     expect(tx.thread.update).toHaveBeenCalledWith({
       where: { id: "thread-1" },
       data: {
         historyCompactedUpToSeq: 41,
         historyCompactionSummary: null,
         historyCompactionGeneration: { increment: 1 },
+        sessionStartedAfterSeq: 41,
       },
     });
     expect(tx.runtimeSession.deleteMany).toHaveBeenCalledWith({

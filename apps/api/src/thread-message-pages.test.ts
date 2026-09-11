@@ -8,6 +8,13 @@ import {
   shouldForwardPeerThreadEvent,
 } from "./thread-message-pages.js";
 
+function pagesDb<T extends object>(prisma: T) {
+  return {
+    thread: { findUnique: vi.fn(async () => ({ sessionStartedAfterSeq: null })) },
+    ...prisma,
+  } as unknown as PrismaClient;
+}
+
 describe("thread message pages", () => {
   it("reads one bounded peer page and never returns unrelated blocks", async () => {
     const sent = {
@@ -39,7 +46,7 @@ describe("thread message pages", () => {
       row(5, [sent, { ...sent, toBotId: "another-peer" }]),
       row(2, [sent]),
     ]);
-    const prisma = { message: { findMany } } as unknown as PrismaClient;
+    const prisma = pagesDb({ message: { findMany } });
     const page = await loadPeerMessagePage(prisma, {
       threadId: "owned-thread",
       peerBotId: "peer",
@@ -65,7 +72,7 @@ describe("thread message pages", () => {
 
   it("does not scan or auto-fetch earlier pages for an empty peer conversation", async () => {
     const findMany = vi.fn(async () => []);
-    const prisma = { message: { findMany } } as unknown as PrismaClient;
+    const prisma = pagesDb({ message: { findMany } });
     await expect(
       loadPeerMessagePage(prisma, { threadId: "owned-thread", peerBotId: "peer", pageSize: 60 }),
     ).resolves.toEqual({
@@ -154,10 +161,10 @@ describe("thread message pages", () => {
         createdAt: new Date("2026-08-16T00:00:01.000Z"),
       },
     ]);
-    const prisma = {
+    const prisma = pagesDb({
       message: { findMany },
       run: { findMany: vi.fn(async () => [{ id: "run-peer" }]) },
-    } as unknown as PrismaClient;
+    });
 
     const page = await loadMessagePage(prisma, "thread-1", undefined, 3);
 
@@ -193,10 +200,10 @@ describe("thread message pages", () => {
         createdAt: new Date("2026-08-16T00:00:01.000Z"),
       },
     ]);
-    const prisma = {
+    const prisma = pagesDb({
       message: { findMany },
       run: { findMany: vi.fn(async () => [{ id: "run-peer" }]) },
-    } as unknown as PrismaClient;
+    });
 
     const page = await loadMessagePage(prisma, "thread-1", undefined, 2);
 
@@ -241,10 +248,10 @@ describe("thread message pages", () => {
     ]);
     const count = vi.fn(async () => 1);
     const runFindMany = vi.fn(async () => [{ id: "run-peer" }]);
-    const prisma = {
+    const prisma = pagesDb({
       message: { findMany, count },
       run: { findMany: runFindMany },
-    } as unknown as PrismaClient;
+    });
 
     const page = await loadMessagePage(prisma, "thread-1", undefined, 4, {
       messageId: "message-peer-target",
@@ -302,10 +309,10 @@ describe("thread message pages", () => {
       },
     ]);
     const count = vi.fn(async () => 0);
-    const prisma = {
+    const prisma = pagesDb({
       message: { findMany, count },
       run: { findMany: vi.fn(async () => [{ id: "run-peer" }]) },
-    } as unknown as PrismaClient;
+    });
 
     const page = await loadMessagePage(prisma, "thread-1", undefined, 4, {
       messageId: "message-peer-receipt",
@@ -333,9 +340,9 @@ describe("thread message pages", () => {
         createdAt: new Date("2026-08-16T00:00:01.000Z"),
       },
     ]);
-    const prisma = {
+    const prisma = pagesDb({
       message: { findMany, count: vi.fn(async () => 0) },
-    } as unknown as PrismaClient;
+    });
 
     const page = await loadMessagePage(
       prisma,
@@ -372,7 +379,7 @@ describe("thread message pages", () => {
         row(2, "run-peer", "steps"),
       ])
       .mockResolvedValueOnce([row(1, "run-user")]);
-    const prisma = {
+    const prisma = pagesDb({
       message: { findMany },
       run: {
         findMany: vi
@@ -380,7 +387,7 @@ describe("thread message pages", () => {
           .mockResolvedValueOnce([{ id: "run-peer" }])
           .mockResolvedValueOnce([]),
       },
-    } as unknown as PrismaClient;
+    });
 
     const page = await loadMessagePage(prisma, "thread-1", undefined, 2);
 
@@ -452,7 +459,7 @@ describe("thread message pages", () => {
       },
     ];
     const findMany = vi.fn().mockResolvedValueOnce(receiptRows).mockResolvedValueOnce(olderRows);
-    const prisma = {
+    const prisma = pagesDb({
       message: { findMany },
       run: {
         findMany: vi
@@ -460,7 +467,7 @@ describe("thread message pages", () => {
           .mockResolvedValueOnce([{ id: "run-peer" }])
           .mockResolvedValueOnce([]),
       },
-    } as unknown as PrismaClient;
+    });
 
     const page = await loadMessagePage(prisma, "thread-1", undefined, 2);
 
@@ -488,10 +495,10 @@ describe("thread message pages", () => {
       createdAt: new Date(`2026-08-16T00:00:0${seq}.000Z`),
     });
     const findMany = vi.fn(async () => [receipt(3), receipt(2), receipt(1)]);
-    const prisma = {
+    const prisma = pagesDb({
       message: { findMany },
       run: { findMany: vi.fn(async () => [{ id: "run-peer" }]) },
-    } as unknown as PrismaClient;
+    });
 
     const page = await loadMessagePage(prisma, "thread-1", undefined, 2, undefined, false, true);
 
@@ -516,7 +523,7 @@ describe("thread message pages", () => {
         createdAt: new Date(`2026-08-16T00:00:0${seq}.000Z`),
       })),
     );
-    const prisma = { message: { findMany } } as unknown as PrismaClient;
+    const prisma = pagesDb({ message: { findMany } });
 
     const page = await loadMessagePage(prisma, "thread-1", 6, 2);
 
@@ -542,7 +549,7 @@ describe("thread message pages", () => {
         createdAt: new Date("2026-08-16T00:00:00.000Z"),
       },
     ]);
-    const prisma = { message: { findMany } } as unknown as PrismaClient;
+    const prisma = pagesDb({ message: { findMany } });
 
     const page = await loadMessagePage(prisma, "thread-1", 1, 2);
 
@@ -585,9 +592,9 @@ describe("thread message pages", () => {
       ])
       .mockResolvedValueOnce(1);
     const count = vi.fn(async () => 1);
-    const prisma = {
+    const prisma = pagesDb({
       message: { findFirst, findMany, count },
-    } as unknown as PrismaClient;
+    });
 
     const page = await loadMessagePage(prisma, "thread-1", undefined, 4, { seq: 5 });
 
@@ -615,11 +622,39 @@ describe("thread message pages", () => {
       .mockResolvedValueOnce([row(4), row(3), row(2)])
       .mockResolvedValueOnce([row(2), row(1), row(0)])
       .mockResolvedValueOnce([row(0)]);
-    const prisma = { message: { findMany } } as unknown as PrismaClient;
+    const prisma = pagesDb({ message: { findMany } });
 
     const messages = await loadAllMessages(prisma, "thread-1", 2);
 
     expect(messages.map((message) => message.seq)).toEqual([0, 1, 2, 3, 4]);
     expect(findMany.mock.calls.map(([query]) => query.where.seq?.lt)).toEqual([undefined, 3, 1]);
+  });
+
+  it("hides messages at or before the session start watermark", async () => {
+    const findMany = vi.fn(async () => [
+      {
+        id: "message-6",
+        threadId: "thread-1",
+        seq: 6,
+        role: "user",
+        blocks: [{ kind: "text", text: "after" }],
+        botId: null,
+        replyToMessageId: null,
+        runId: null,
+        thumbsUp: false,
+        createdAt: new Date("2026-09-11T00:00:06.000Z"),
+      },
+    ]);
+    const prisma = pagesDb({
+      thread: { findUnique: vi.fn(async () => ({ sessionStartedAfterSeq: 4 })) },
+      message: { findMany },
+    });
+    const page = await loadMessagePage(prisma, "thread-1", undefined, 20);
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { threadId: "thread-1", seq: { gt: 4 } },
+      }),
+    );
+    expect(page.messages.map((message) => message.seq)).toEqual([6]);
   });
 });

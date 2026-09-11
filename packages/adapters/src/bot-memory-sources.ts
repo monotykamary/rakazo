@@ -439,8 +439,17 @@ async function loadSessionSnapshot(
   signal: AbortSignal | undefined,
 ): Promise<MemorySourceSnapshot> {
   await checkAborts(bound, signal);
+  const thread = await prisma.thread.findUnique({
+    where: { id: session.threadId },
+    select: { sessionStartedAfterSeq: true },
+  });
   const rows = await prisma.message.findMany({
-    where: { threadId: session.threadId },
+    where: {
+      threadId: session.threadId,
+      ...(thread?.sessionStartedAfterSeq == null
+        ? {}
+        : { seq: { gt: thread.sessionStartedAfterSeq } }),
+    },
     orderBy: { seq: "desc" },
     take: SESSION_RECORDS_LIMIT + 1,
     select: { seq: true, role: true, blocks: true, createdAt: true },

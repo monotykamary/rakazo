@@ -114,6 +114,7 @@ import {
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { parse as parseShellCommand } from "shell-quote";
+import { conversationSessionId } from "./pi-runtime.js";
 import {
   connectAgent,
   messageConnectedAgent,
@@ -1186,7 +1187,12 @@ export function createRunExecutor(deps: ExecutorDeps) {
               }),
             )
           : new Set<string>();
-        const messages = loadedMessages.filter((message) => !queuedSourceIds.has(message.id));
+        const messages = loadedMessages.filter(
+          (message) =>
+            (thread.sessionStartedAfterSeq == null ||
+              message.seq > thread.sessionStartedAfterSeq) &&
+            !queuedSourceIds.has(message.id),
+        );
         const agentEnvironment = decryptAgentEnvironment(agentSecretRows, deps.secretStore);
         runSecrets.push(...Object.values(agentEnvironment));
         const agentEnvironmentInstruction = formatAgentEnvironmentInstruction(agentEnvironment);
@@ -3892,6 +3898,12 @@ export function createRunExecutor(deps: ExecutorDeps) {
         try {
           const runtimeEvents = deps.runtime.run(
             {
+              modelSessionId: conversationSessionId(
+                thread.id,
+                bot.id,
+                undefined,
+                thread.historyCompactionGeneration,
+              ),
               botId: bot.id,
               threadId: thread.id,
               runId,

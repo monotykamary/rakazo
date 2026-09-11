@@ -1424,11 +1424,10 @@ export function createRouter(deps: RouterDeps) {
             ),
           ),
         ]);
-        // Durable memories remain in their Space-private containers. Clear only removes
-        // conversation-derived summaries from the previous generation; including the new
-        // generation also covers a compaction job that began just after the clear committed.
+        // Durable memories remain in their Space-private containers. Clear starts a new Pi
+        // session; purge only conversation-derived summaries from the previous generation.
         if (configuredMemory && target.kind === "bot") {
-          // Best effort: the conversation rows are already deleted, so failing the clear here
+          // Best effort: the new session already committed, so failing the clear here
           // would help nothing — a failed purge only leaves stale summaries recallable.
           try {
             const purged = await configuredMemory.provider.purgeHistory(

@@ -4,6 +4,23 @@ import type { Prisma, PrismaClient } from "@rakazo/db";
 
 type MessageDb = PrismaClient | Prisma.TransactionClient;
 
+async function sessionStartedAfterSeq(prisma: MessageDb, threadId: string) {
+  const thread = await prisma.thread.findUnique({
+    where: { id: threadId },
+    select: { sessionStartedAfterSeq: true },
+  });
+  return thread?.sessionStartedAfterSeq ?? null;
+}
+
+function visibleSeq(
+  afterSeq: number | null,
+  range?: { gt?: number; lt?: number; gte?: number; lte?: number },
+) {
+  const seq = { ...range };
+  if (afterSeq != null) seq.gt = afterSeq;
+  return Object.keys(seq).length === 0 ? {} : { seq };
+}
+
 export async function loadPeerMessagePage(
   prisma: MessageDb,
   {
@@ -18,10 +35,11 @@ export async function loadPeerMessagePage(
     pageSize: number;
   },
 ): Promise<ThreadMessagePage> {
+  const afterSeq = await sessionStartedAfterSeq(prisma, threadId);
   const rows = await prisma.message.findMany({
     where: {
       threadId,
-      ...(before === undefined ? {} : { seq: { lt: before } }),
+      ...visibleSeq(afterSeq, before === undefined ? undefined : { lt: before }),
       OR: [
         { blocks: { array_contains: [{ kind: "bot_message_sent", toBotId: peerBotId }] } },
         { blocks: { array_contains: [{ kind: "bot_message_received", fromBotId: peerBotId }] } },
@@ -54,27 +72,33 @@ export async function loadMessagePage(
   includePeerRuns = false,
   includePeerReceipts = false,
 ): Promise<ThreadMessagePage> {
+  const afterSeq = await sessionStartedAfterSeq(prisma, threadId);
   if (around) {
     let targetSeq = around.seq;
     if (targetSeq === undefined && around.messageId) {
       const row = await prisma.message.findFirst({
-        where: { id: around.messageId, threadId },
+        where: { id: around.messageId, threadId, ...visibleSeq(afterSeq) },
         select: { seq: true },
       });
       targetSeq = row?.seq;
+    }
+    if (targetSeq !== undefined && afterSeq != null && targetSeq <= afterSeq) {
+      return { threadId, messages: [], olderCursor: null };
     }
     if (targetSeq !== undefined) {
       const half = Math.floor(pageSize / 2);
       const minSeq = Math.max(0, targetSeq - half);
       const maxSeq = targetSeq + half;
       const rows = await prisma.message.findMany({
-        where: { threadId, seq: { gte: minSeq, lte: maxSeq } },
+        where: { threadId, ...visibleSeq(afterSeq, { gte: minSeq, lte: maxSeq }) },
         orderBy: { seq: "asc" },
         take: pageSize,
       });
       const first = rows[0];
       const hasOlder = first
-        ? (await prisma.message.count({ where: { threadId, seq: { lt: first.seq } } })) > 0
+        ? (await prisma.message.count({
+            where: { threadId, ...visibleSeq(afterSeq, { lt: first.seq }) },
+          })) > 0
         : false;
       // Peer text/activity stays out of the normal transcript (including the
       // around target). Receipts remain via withoutPeerRunMessages; full peer
@@ -93,7 +117,7 @@ export async function loadMessagePage(
     const rows = await prisma.message.findMany({
       where: {
         threadId,
-        ...(cursor === undefined ? {} : { seq: { lt: cursor } }),
+        ...visibleSeq(afterSeq, cursor === undefined ? undefined : { lt: cursor }),
       },
       orderBy: { seq: "desc" },
       take: pageSize + 1,

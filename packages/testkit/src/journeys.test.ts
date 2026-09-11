@@ -348,13 +348,12 @@ describeJourneys("required product journeys", () => {
     const snap = await rpc<Snap>(app, cookie, "threads/get", { botId: bot.id });
     expect(snap.messages).toEqual([]);
     expect(snap.run).toBeNull();
-    expect(await prisma.message.count({ where: { threadId: thread.id } })).toBe(0);
-    expect(await prisma.event.findMany({ where: { threadId: thread.id } })).toMatchObject([
-      { type: "thread.cleared" },
-    ]);
-    // The deleted messages all count as compacted, so compaction cannot summarize them and
-    // recall cannot treat the fresh conversation as having uncompacted history.
+    expect(await prisma.message.count({ where: { threadId: thread.id } })).toBeGreaterThan(0);
+    expect(await prisma.event.findMany({ where: { threadId: thread.id } })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "thread.cleared" })]),
+    );
     const clearedThread = await prisma.thread.findUniqueOrThrow({ where: { id: thread.id } });
+    expect(clearedThread.sessionStartedAfterSeq).toBe(clearedThread.nextMessageSeq - 1);
     expect(clearedThread.historyCompactedUpToSeq).toBe(clearedThread.nextMessageSeq - 1);
     expect(clearedThread.historyCompactionSummary).toBeNull();
     expect(clearedThread.historyCompactionGeneration).toBe(4);
@@ -400,10 +399,7 @@ describeJourneys("required product journeys", () => {
         runId: run.id,
       }),
     ).rejects.toThrow(RunHistoryWriteError);
-    expect(await prisma.message.count({ where: { threadId: thread.id } })).toBe(0);
-    expect(await prisma.event.findMany({ where: { threadId: thread.id } })).toMatchObject([
-      { type: "thread.cleared" },
-    ]);
+    expect(await prisma.message.count({ where: { threadId: thread.id } })).toBeGreaterThan(0);
 
     const after = await sendAndWait(
       app,

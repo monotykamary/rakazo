@@ -11,7 +11,7 @@ import { DELEGATION_TOOL_NAMES } from "./builtin-tools.js";
 import { restoreAgentSnapshot } from "./pi-agent-snapshot.js";
 import { record } from "./pi-rpc-protocol.js";
 import type { RunAuthority, ToolBridge } from "./pi-rpc-tool-bridge.js";
-import { conversationSessionId } from "./pi-runtime.js";
+import { conversationSessionId, sessionGenerationFromId } from "./pi-runtime.js";
 
 type PreparedRequest = AgentRunRequest & { parentExecutionId?: string };
 
@@ -248,7 +248,12 @@ export class NativeAgents {
     return {
       ...request,
       runId: id,
-      modelSessionId: conversationSessionId(request.threadId, request.botId, id),
+      modelSessionId: conversationSessionId(
+        request.threadId,
+        request.botId,
+        id,
+        sessionGenerationFromId(request.modelSessionId, request.threadId, request.botId),
+      ),
       prompt: args.task,
       model: model ?? request.model,
       parentExecutionId:

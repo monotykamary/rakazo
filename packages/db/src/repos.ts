@@ -12,7 +12,7 @@ import { type ComputerMode, ensureComputerRecord, parseComputerMode } from "./co
 import { createThreadMessageInTransaction } from "./messages.js";
 import { IsolationError } from "./scope.js";
 import { lockSpaceForContentCreation } from "./spaces.js";
-import { activeRunSelection, previewFromBlocks } from "./thread-listing.js";
+import { activeRunSelection, previewFromBlocks, previewFromThread } from "./thread-listing.js";
 
 /** Newest messages loaded for sidebar preview; enough to skip a short peer-run tail. */
 const SIDEBAR_PREVIEW_MESSAGE_WINDOW = 16;
@@ -125,10 +125,11 @@ export function createRepos(prisma: PrismaClient) {
         thread: {
           select: {
             unread: true,
+            sessionStartedAfterSeq: true,
             messages: {
               orderBy: { seq: "desc" },
               take: 1,
-              select: { blocks: true },
+              select: { seq: true, blocks: true },
             },
           },
         },
@@ -148,7 +149,7 @@ export function createRepos(prisma: PrismaClient) {
         pinned: bot.pinned,
         sectionId: bot.sectionId,
         unread: bot.thread.unread,
-        preview: previewFromBlocks(bot.thread.messages[0]?.blocks),
+        preview: previewFromThread(bot.thread),
         status: bot.runs[0]?.status ?? "idle",
         updatedAt: bot.updatedAt.toISOString(),
       };
@@ -268,7 +269,11 @@ export function createRepos(prisma: PrismaClient) {
       const checkedRunIds = new Set(candidateRunIds);
       return Promise.all(
         bots.map(async (bot) => {
-          let messages = bot.thread?.messages ?? [];
+          let messages = (bot.thread?.messages ?? []).filter(
+            (message) =>
+              bot.thread?.sessionStartedAfterSeq == null ||
+              message.seq > bot.thread.sessionStartedAfterSeq,
+          );
           let preview = "";
           for (let attempt = 0; attempt < 5; attempt++) {
             const windowRunIds = [
@@ -295,7 +300,15 @@ export function createRepos(prisma: PrismaClient) {
             const oldest = messages[messages.length - 1];
             if (!oldest) break;
             messages = await prisma.message.findMany({
-              where: { threadId: bot.thread.id, seq: { lt: oldest.seq } },
+              where: {
+                threadId: bot.thread.id,
+                seq: {
+                  lt: oldest.seq,
+                  ...(bot.thread.sessionStartedAfterSeq == null
+                    ? {}
+                    : { gt: bot.thread.sessionStartedAfterSeq }),
+                },
+              },
               orderBy: { seq: "desc" },
               take: SIDEBAR_PREVIEW_MESSAGE_WINDOW,
             });

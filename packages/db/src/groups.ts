@@ -11,7 +11,7 @@ import type { Prisma, PrismaClient } from "./client.js";
 import { expireComputerExecutionLeases } from "./computers.js";
 import { IsolationError } from "./scope.js";
 import { lockSpaceForContentCreation } from "./spaces.js";
-import { activeRunSelection, activeRunStatuses, previewFromBlocks } from "./thread-listing.js";
+import { activeRunSelection, activeRunStatuses, previewFromThread } from "./thread-listing.js";
 
 type GroupRecord = {
   id: string;
@@ -26,7 +26,8 @@ type GroupRecord = {
   thread: {
     id: string;
     unread: boolean;
-    messages: Array<{ blocks: unknown }>;
+    sessionStartedAfterSeq: number | null;
+    messages: Array<{ seq: number; blocks: unknown }>;
   } | null;
   members: Array<{
     bot: {
@@ -44,7 +45,8 @@ type SpaceGroupRecord = Pick<
 > & {
   thread: {
     unread: boolean;
-    messages: Array<{ blocks: unknown }>;
+    sessionStartedAfterSeq: number | null;
+    messages: Array<{ seq: number; blocks: unknown }>;
   } | null;
 };
 
@@ -59,7 +61,7 @@ function mapGroupMembers(members: GroupRecord["members"]): GroupMember[] {
 
 function mapGroup(group: GroupRecord): Group {
   if (!group.thread) throw new IsolationError("Group is missing its thread");
-  const preview = previewFromBlocks(group.thread.messages[0]?.blocks);
+  const preview = previewFromThread(group.thread);
   return {
     id: group.id,
     spaceId: group.spaceId,
@@ -85,7 +87,7 @@ function mapSpaceGroup(group: SpaceGroupRecord): SpaceGroup {
     pinned: group.pinned,
     sectionId: group.sectionId,
     members: mapGroupMembers(group.members),
-    preview: previewFromBlocks(group.thread.messages[0]?.blocks),
+    preview: previewFromThread(group.thread),
     unread: group.thread.unread,
     updatedAt: group.updatedAt.toISOString(),
   };
@@ -127,7 +129,11 @@ async function assertOwnedBots(
 const groupInclude = {
   thread: {
     include: {
-      messages: { orderBy: { seq: "desc" as const }, take: 1 },
+      messages: {
+        orderBy: { seq: "desc" as const },
+        take: 1,
+        select: { seq: true, blocks: true },
+      },
     },
   },
   members: {
@@ -183,10 +189,11 @@ export function createGroupRepos(prisma: PrismaClient) {
         thread: {
           select: {
             unread: true,
+            sessionStartedAfterSeq: true,
             messages: {
               orderBy: { seq: "desc" },
               take: 1,
-              select: { blocks: true },
+              select: { seq: true, blocks: true },
             },
           },
         },

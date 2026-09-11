@@ -9,6 +9,17 @@ export const activeRunSelection = {
   select: { status: true },
 } as const;
 
+export function previewFromThread(thread: {
+  sessionStartedAfterSeq?: number | null;
+  messages: Array<{ seq?: number; blocks: unknown }>;
+}): string {
+  const after = thread.sessionStartedAfterSeq;
+  const visible = thread.messages.find(
+    (message) => after == null || (message.seq != null && message.seq > after),
+  );
+  return previewFromBlocks(visible?.blocks);
+}
+
 export function previewFromBlocks(blocks: unknown): string {
   const rows = Array.isArray(blocks) ? blocks : [];
   for (const block of rows) {

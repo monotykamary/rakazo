@@ -428,8 +428,30 @@ function redactActivityUrl(value: unknown): string {
 }
 
 /** Stable affinity for a bot conversation or one delegated participant. */
-export function conversationSessionId(threadId: string, botId: string, agentId?: string): string {
-  return agentId ? `${threadId}:${botId}:${agentId}` : `${threadId}:${botId}`;
+export function conversationSessionId(
+  threadId: string,
+  botId: string,
+  agentId?: string,
+  generation = 0,
+): string {
+  const root =
+    generation > 0 ? `${threadId}:${botId}:g${generation}` : `${threadId}:${botId}`;
+  return agentId ? `${root}:${agentId}` : root;
+}
+
+export function sessionGenerationFromId(
+  sessionId: string | undefined,
+  threadId: string,
+  botId: string,
+): number {
+  if (!sessionId) return 0;
+  const prefix = `${threadId}:${botId}:g`;
+  if (!sessionId.startsWith(prefix)) return 0;
+  const token = sessionId.slice(prefix.length).split(":")[0] ?? "";
+  const generation = Number(token);
+  return Number.isInteger(generation) && generation > 0 && token === String(generation)
+    ? generation
+    : 0;
 }
 
 export function reliableStreamOptions(

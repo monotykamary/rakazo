@@ -184,8 +184,7 @@ export function ClearConversationDialog({
           </AlertDialogTitle>
           <AlertDialogDescription>
             <Trans>
-              This permanently removes every message and stops current work. The chat remains
-              available.
+              This starts a new conversation and stops current work.
             </Trans>
           </AlertDialogDescription>
         </AlertDialogHeader>

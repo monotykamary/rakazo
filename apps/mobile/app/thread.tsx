@@ -764,7 +764,7 @@ function Thread() {
         Alert.alert(
           t("Clear conversation?"),
           t(
-            "This removes every message and stops current work. The bot, computer, memory, and routines are kept.",
+            "This starts a new conversation and stops current work. The bot, computer, memory, and routines are kept.",
           ),
           [
             { text: t("Cancel"), style: "cancel" },

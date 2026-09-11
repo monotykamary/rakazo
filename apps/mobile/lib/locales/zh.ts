@@ -667,8 +667,8 @@ export const ZH_MESSAGES: Record<string, string> = {
   Submitted: "已提交",
   "Teach a task": "教一个任务",
   "this model": "此模型",
-  "This removes every message and stops current work. The bot, computer, memory, and routines are kept.":
-    "这将删除所有消息并停止当前工作。Bot、电脑、记忆和例行任务会保留。",
+  "This starts a new conversation and stops current work. The bot, computer, memory, and routines are kept.":
+    "这将开始新的对话并停止当前工作。Bot、电脑、记忆和例行任务会保留。",
   "This subscription sign-in is not available in Rakazo yet. Use a deployment credential or choose another provider.":
     "Rakazo 暂不支持此订阅登录。请使用部署凭据或选择其他提供商。",
   "Tool sources": "工具源",

@@ -319,18 +319,16 @@ export async function clearThread(
     await tx.premoveQueue.deleteMany({
       where: { threadId: input.threadId, spaceId: input.spaceId },
     });
-    await tx.message.deleteMany({ where: { threadId: input.threadId } });
-    await tx.event.deleteMany({ where: { threadId: input.threadId } });
+    // Keep the transcript. The UI and the next Pi session only see seq after this watermark.
     if (thread.nextMessageSeq > 0) {
-      // nextMessageSeq is not reset, so mark every deleted message as already compacted.
-      // Leaving the cursor behind would let compaction re-summarize deleted history (or, reset
-      // to null, immediately re-fire on the fresh conversation).
+      // Mark prior messages compacted so the new session is not re-summarized from them.
       await tx.thread.update({
         where: { id: input.threadId },
         data: {
           historyCompactedUpToSeq: thread.nextMessageSeq - 1,
           historyCompactionSummary: null,
           historyCompactionGeneration: { increment: 1 },
+          sessionStartedAfterSeq: thread.nextMessageSeq - 1,
         },
       });
     } else {
