@@ -30,6 +30,15 @@ export async function readMobileArtifactText(
   return file.text();
 }
 
+export async function cacheMobileArtifactUri(
+  target: MobileArtifactTarget,
+  artifactId: string,
+  mimeType: string,
+): Promise<string> {
+  const file = await cacheMobileArtifact(target, artifactId, mimeType);
+  return file.uri;
+}
+
 export async function openMobileArtifact(
   target: MobileArtifactTarget,
   artifactId: string,

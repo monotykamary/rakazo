@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, signup } from "./helpers";
+import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+
+const TINY_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 test.describe.configure({ mode: "serial" });
 
@@ -62,4 +65,36 @@ test("agent-attached Markdown opens a rendered preview and can be downloaded", a
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(previewButton).toBeFocused();
+});
+
+test("consecutive images render as a fanned stack", async ({ page }, testInfo) => {
+  const stamp = Date.now();
+  await signup(page, `image-fan-${stamp}@rakazo.test`, "password12", "Image Fan");
+  await completeOnboarding(page);
+  const botId = activeBotId(page);
+  const artifactIds: string[] = [];
+  for (const name of ["one.png", "two.png", "three.png"]) {
+    const artifact = await rpc<{ id: string }>(page, "artifacts/create", {
+      botId,
+      name,
+      mimeType: "image/png",
+      contentBase64: TINY_PNG,
+    });
+    artifactIds.push(artifact.id);
+  }
+  await rpc(page, "threads/send", {
+    botId,
+    text: "Here's the latest output:",
+    artifactIds,
+  });
+  const fan = page.getByTestId("artifact-image-fan");
+  await expect(fan).toBeVisible({ timeout: 20_000 });
+  await expect(fan).toHaveAttribute("aria-label", "3 images");
+  await expect(fan.locator("img")).toHaveCount(3);
+  await captureScreenshot(page, testInfo, "image-fan");
+  await fan.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Previous image" })).toBeVisible();
+  await captureScreenshot(page, testInfo, "image-fan-open");
 });

@@ -776,6 +776,18 @@ msgstr "关闭电脑"
 msgid "Close image preview"
 msgstr "关闭图片预览"
 
+#: src/pages/shell/message-cards.tsx:1
+msgid "{count} images"
+msgstr "{count} 张图片"
+
+#: src/pages/shell/message-cards.tsx:1
+msgid "Next image"
+msgstr "下一张"
+
+#: src/pages/shell/message-cards.tsx:1
+msgid "Previous image"
+msgstr "上一张"
+
 #: src/pages/PluginsOverlay.tsx:680
 msgid "Close integrations"
 msgstr "关闭集成"

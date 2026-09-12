@@ -18,6 +18,7 @@ import {
   buildComposerMentionOptions,
   type ComposerMention,
   cloudAgentHttpsUrl,
+  clusterMessageBlocks,
   composerOps,
   isApprovalAskBlock,
   isRunTerminalEvent,
@@ -62,6 +63,7 @@ import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-co
 import { useReducedMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppConnectCard } from "../components/AppConnectCard";
+import { ArtifactImageFan } from "../components/ArtifactImageFan";
 import { AskActions } from "../components/AskActions";
 import { BotAvatar } from "../components/bot-avatar";
 import { MessageActivityLinks } from "../components/MessageActivityLinks";
@@ -3106,123 +3108,118 @@ const MessageBubble = memo(function MessageBubble({
   if (attachments.length > 0) {
     const speaker =
       message.role === "bot" ? (memberName(members, message.botId) ?? botName) : undefined;
+    const mediaClusters = clusterMessageBlocks(attachments);
+    const fileClusters = mediaClusters.filter(
+      (cluster): cluster is Extract<typeof cluster, { type: "block" }> =>
+        cluster.type === "block" && cluster.block.kind === "file",
+    );
+    const hasChrome = Boolean(speaker || replyPreview || caption || fileClusters.length);
     return (
-      <View
-        style={{
-          maxWidth: "100%",
-          borderRadius: 20,
-          borderWidth: 1,
-          borderColor: tokens.border,
-          backgroundColor: message.role === "user" ? tokens.secondary : tokens.muted,
-          paddingHorizontal: 14,
-          paddingVertical: 12,
-          gap: 8,
-        }}
-      >
-        {speaker ? (
-          <Text style={{ color: tokens.mutedForeground, fontSize: 12.5, fontWeight: "600" }}>
-            {speaker}
-          </Text>
-        ) : null}
-        {replyPreview ? (
-          <Text
+      <View style={{ maxWidth: "100%", gap: 8 }}>
+        {hasChrome ? (
+          <View
             style={{
-              color: message.role === "user" ? tokens.secondaryForeground : tokens.mutedForeground,
-              fontSize: 12.5,
-            }}
-            numberOfLines={2}
-          >
-            {previewMessageText(replyPreview)}
-          </Text>
-        ) : null}
-        {caption ? (
-          <Text
-            style={{
-              color: message.role === "user" ? tokens.secondaryForeground : tokens.foreground,
-              fontSize: 15,
+              borderRadius: 20,
+              borderWidth: 1,
+              borderColor: tokens.border,
+              backgroundColor: message.role === "user" ? tokens.secondary : tokens.muted,
+              paddingHorizontal: 14,
+              paddingVertical: 12,
+              gap: 8,
             }}
           >
-            {caption}
-          </Text>
-        ) : null}
-        {attachments.map((attachment, index) =>
-          attachment.kind === "image" ? (
-            <Pressable
-              {...actionProps}
-              key={`${attachment.artifactId ?? attachment.name ?? "image"}-${index}`}
-              onPress={() =>
-                attachment.artifactId
-                  ? void openMobileArtifact(
-                      artifactTarget,
-                      attachment.artifactId,
-                      attachment.name ?? t("Image"),
-                      attachment.mimeType ?? "image/png",
-                    ).catch((err) =>
-                      Alert.alert(
-                        t("Could not open image"),
-                        err instanceof Error ? err.message : t("Try again."),
-                      ),
-                    )
-                  : undefined
-              }
-            >
+            {speaker ? (
+              <Text style={{ color: tokens.mutedForeground, fontSize: 12.5, fontWeight: "600" }}>
+                {speaker}
+              </Text>
+            ) : null}
+            {replyPreview ? (
+              <Text
+                style={{
+                  color:
+                    message.role === "user" ? tokens.secondaryForeground : tokens.mutedForeground,
+                  fontSize: 12.5,
+                }}
+                numberOfLines={2}
+              >
+                {previewMessageText(replyPreview)}
+              </Text>
+            ) : null}
+            {caption ? (
               <Text
                 style={{
                   color: message.role === "user" ? tokens.secondaryForeground : tokens.foreground,
                   fontSize: 15,
                 }}
               >
-                🖼 {attachment.name ?? t("Image")}
+                {caption}
               </Text>
-            </Pressable>
-          ) : (
-            <Pressable
-              {...actionProps}
-              key={`${attachment.artifactId ?? attachment.name ?? "file"}-${index}`}
-              onPress={() =>
-                attachment.artifactId
-                  ? attachment.mimeType === "text/markdown"
-                    ? onPreviewMarkdown({
-                        artifactId: attachment.artifactId,
-                        name: attachment.name ?? t("Markdown file"),
-                        mimeType: attachment.mimeType,
-                      })
-                    : void openMobileArtifact(
-                        artifactTarget,
-                        attachment.artifactId,
-                        attachment.name ?? t("File"),
-                        attachment.mimeType ?? "text/plain",
-                      ).catch((err) =>
-                        Alert.alert(
-                          t("Could not open file"),
-                          err instanceof Error ? err.message : t("Try again."),
-                        ),
-                      )
-                  : undefined
-              }
-            >
-              <Text
-                style={{
-                  color: message.role === "user" ? tokens.secondaryForeground : tokens.foreground,
-                  fontSize: 15,
-                }}
-              >
-                📎 {attachment.name ?? t("File")}
-              </Text>
-              {attachment.size ? (
-                <Text
-                  style={{
-                    color:
-                      message.role === "user" ? tokens.secondaryForeground : tokens.mutedForeground,
-                    marginTop: 4,
-                    fontSize: 13,
-                  }}
+            ) : null}
+            {fileClusters.map((cluster) => {
+              const file = cluster.block;
+              if (file.kind !== "file") return null;
+              return (
+                <Pressable
+                  {...actionProps}
+                  key={`${file.artifactId ?? file.name ?? "file"}-${cluster.index}`}
+                  onPress={() =>
+                    file.artifactId
+                      ? file.mimeType === "text/markdown"
+                        ? onPreviewMarkdown({
+                            artifactId: file.artifactId,
+                            name: file.name ?? t("Markdown file"),
+                            mimeType: file.mimeType,
+                          })
+                        : void openMobileArtifact(
+                            artifactTarget,
+                            file.artifactId,
+                            file.name ?? t("File"),
+                            file.mimeType ?? "text/plain",
+                          ).catch((err) =>
+                            Alert.alert(
+                              t("Could not open file"),
+                              err instanceof Error ? err.message : t("Try again."),
+                            ),
+                          )
+                      : undefined
+                  }
                 >
-                  {attachment.mimeType ?? "file"} · {attachment.size} bytes
-                </Text>
-              ) : null}
-            </Pressable>
-          ),
+                  <Text
+                    style={{
+                      color:
+                        message.role === "user" ? tokens.secondaryForeground : tokens.foreground,
+                      fontSize: 15,
+                    }}
+                  >
+                    📎 {file.name ?? t("File")}
+                  </Text>
+                  {file.size ? (
+                    <Text
+                      style={{
+                        color:
+                          message.role === "user"
+                            ? tokens.secondaryForeground
+                            : tokens.mutedForeground,
+                        marginTop: 4,
+                        fontSize: 13,
+                      }}
+                    >
+                      {file.mimeType ?? "file"} · {file.size} bytes
+                    </Text>
+                  ) : null}
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
+        {mediaClusters.map((cluster) =>
+          cluster.type === "images" ? (
+            <ArtifactImageFan
+              key={`images-${cluster.index}`}
+              target={artifactTarget}
+              images={cluster.blocks}
+            />
+          ) : null,
         )}
         {appConnectBlocks.map((block, index) => (
           <AppConnectCard

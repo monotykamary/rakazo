@@ -37,6 +37,7 @@ import {
   buildComposerMentionOptions,
   type ComposerMention,
   clampMentionHighlightIndex,
+  clusterMessageBlocks,
   composerOps,
   type ComposerOps,
   cronFromPreset,
@@ -260,7 +261,7 @@ import {
 } from "./shell/dialogs";
 import {
   AppConnectCard,
-  ArtifactImage,
+  ArtifactImageFan,
   ChartBlockView,
   ChoiceCard,
   McpApprovalCard,
@@ -6242,7 +6243,19 @@ const MessageView = memo(function MessageView({
   return (
     <>
       {messageContext}
-      {message.blocks.map((block, i) => {
+      {clusterMessageBlocks(message.blocks).map((cluster) => {
+        if (cluster.type === "images") {
+          return (
+            <div
+              key={cluster.index}
+              className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+            >
+              <ArtifactImageFan target={artifactTarget} images={cluster.blocks} />
+            </div>
+          );
+        }
+        const block = cluster.block;
+        const i = cluster.index;
         if (isToolActivityBlock(block)) return null;
         if (block.kind === "handoff") {
           const from = memberName?.(block.fromBotId) ?? t`bot`;
@@ -6419,20 +6432,6 @@ const MessageView = memo(function MessageView({
                 transport={block.transport}
                 endpoint={block.endpoint}
                 needsOAuth={block.needsOAuth}
-              />
-            </div>
-          );
-        }
-        if (block.kind === "image") {
-          return (
-            <div
-              key={i}
-              className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
-            >
-              <ArtifactImage
-                target={artifactTarget}
-                artifactId={block.artifactId}
-                name={block.name}
               />
             </div>
           );

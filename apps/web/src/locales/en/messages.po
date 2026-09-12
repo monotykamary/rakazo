@@ -776,6 +776,18 @@ msgstr "Close computer"
 msgid "Close image preview"
 msgstr "Close image preview"
 
+#: src/pages/shell/message-cards.tsx:1
+msgid "{count} images"
+msgstr "{count} images"
+
+#: src/pages/shell/message-cards.tsx:1
+msgid "Next image"
+msgstr "Next image"
+
+#: src/pages/shell/message-cards.tsx:1
+msgid "Previous image"
+msgstr "Previous image"
+
 #: src/pages/PluginsOverlay.tsx:680
 msgid "Close integrations"
 msgstr "Close integrations"

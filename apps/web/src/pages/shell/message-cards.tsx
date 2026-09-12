@@ -1,8 +1,14 @@
 import { Trans, useLingui } from "@lingui/react/macro";
 import type { MessageBlock } from "@rakazo/contracts";
-import { abortableDelay } from "@rakazo/core";
+import {
+  ARTIFACT_IMAGE_FAN_CARD,
+  abortableDelay,
+  artifactImageFanSlots,
+  type ImageMessageBlock,
+  visibleArtifactImageFanItems,
+} from "@rakazo/core";
 import { Button, Dialog, DialogClose, DialogContent, DialogTitle } from "@rakazo/ui-web";
-import { X } from "lucide-react";
+import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { BuiCard, SuccessPop } from "../../components/ai/primitives";
 import { type ArtifactTarget, decodeArtifactBase64 } from "../../lib/artifact-open";
@@ -446,44 +452,13 @@ export function ChartBlockView({
   );
 }
 
-export function ArtifactImage({
-  target,
-  artifactId,
-  name,
-}: {
-  target: ArtifactTarget;
-  artifactId: string;
-  name: string;
-}) {
-  const { t } = useLingui();
+function useArtifactImageSrc(target: ArtifactTarget, artifactId: string, enabled: boolean) {
   const [src, setSrc] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
-  const [visible, setVisible] = useState(false);
-  const container = useRef<HTMLDivElement>(null);
   const targetBotId = "botId" in target ? target.botId : undefined;
   const targetGroupId = "groupId" in target ? target.groupId : undefined;
 
   useEffect(() => {
-    const element = container.current;
-    if (!element || typeof IntersectionObserver === "undefined") {
-      setVisible(true);
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          setVisible(true);
-          observer.disconnect();
-        }
-      },
-      { rootMargin: "320px" },
-    );
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    if (!visible) return;
+    if (!enabled) return;
     let cancelled = false;
     let objectUrl: string | null = null;
     setSrc(null);
@@ -506,7 +481,108 @@ export function ArtifactImage({
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [artifactId, targetBotId, targetGroupId, visible]);
+  }, [artifactId, enabled, targetBotId, targetGroupId]);
+
+  return src;
+}
+
+function useInView() {
+  const container = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const element = container.current;
+    if (!element || typeof IntersectionObserver === "undefined") {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "320px" },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  return { container, visible };
+}
+
+function ArtifactImagePreview({
+  name,
+  src,
+  open,
+  onOpenChange,
+  onPrevious,
+  onNext,
+}: {
+  name: string;
+  src: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onPrevious?: () => void;
+  onNext?: () => void;
+}) {
+  const { t } = useLingui();
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        showCloseButton={false}
+        className="w-auto max-w-none bg-transparent p-0 ring-0 sm:max-w-none"
+      >
+        <DialogTitle className="sr-only">{name}</DialogTitle>
+        <DialogClose
+          aria-label={t`Close image preview`}
+          render={<Button variant="ghost" size="icon-sm" className="absolute end-2 top-2" />}
+        >
+          <X />
+        </DialogClose>
+        {onPrevious ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={t`Previous image`}
+            onClick={onPrevious}
+            className="absolute start-2 top-1/2 -translate-y-1/2"
+          >
+            <ChevronLeft />
+          </Button>
+        ) : null}
+        {onNext ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={t`Next image`}
+            onClick={onNext}
+            className="absolute end-2 top-1/2 -translate-y-1/2"
+          >
+            <ChevronRight />
+          </Button>
+        ) : null}
+        <img src={src} alt={name} className="max-h-[85vh] max-w-[90vw] rounded-xl object-contain" />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function ArtifactImage({
+  target,
+  artifactId,
+  name,
+}: {
+  target: ArtifactTarget;
+  artifactId: string;
+  name: string;
+}) {
+  const { container, visible } = useInView();
+  const src = useArtifactImageSrc(target, artifactId, visible);
+  const [open, setOpen] = useState(false);
 
   return (
     <div ref={container}>
@@ -524,25 +600,123 @@ export function ArtifactImage({
         </div>
       )}
       {src ? (
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogContent
-            showCloseButton={false}
-            className="w-auto max-w-none bg-transparent p-0 ring-0 sm:max-w-none"
-          >
-            <DialogTitle className="sr-only">{name}</DialogTitle>
-            <DialogClose
-              aria-label={t`Close image preview`}
-              render={<Button variant="ghost" size="icon-sm" className="absolute end-2 top-2" />}
-            >
-              <X />
-            </DialogClose>
-            <img
-              src={src}
-              alt={name}
-              className="max-h-[85vh] max-w-[90vw] rounded-xl object-contain"
-            />
-          </DialogContent>
-        </Dialog>
+        <ArtifactImagePreview name={name} src={src} open={open} onOpenChange={setOpen} />
+      ) : null}
+    </div>
+  );
+}
+
+function ArtifactImageFanCard({
+  target,
+  artifactId,
+  name,
+  enabled,
+  slot,
+}: {
+  target: ArtifactTarget;
+  artifactId: string;
+  name: string;
+  enabled: boolean;
+  slot: { rotateDeg: number; offsetX: number; offsetY: number; zIndex: number };
+}) {
+  const src = useArtifactImageSrc(target, artifactId, enabled);
+  return (
+    <div
+      aria-hidden="true"
+      className="absolute overflow-hidden rounded-2xl border border-border bg-card shadow-md"
+      style={{
+        width: ARTIFACT_IMAGE_FAN_CARD.width,
+        height: ARTIFACT_IMAGE_FAN_CARD.height,
+        right: 0,
+        top: 10,
+        zIndex: slot.zIndex,
+        transform: `translate(${slot.offsetX}px, ${slot.offsetY}px) rotate(${slot.rotateDeg}deg)`,
+      }}
+    >
+      {src ? (
+        <img src={src} alt="" className="h-full w-full object-cover" />
+      ) : (
+        <div className="flex h-full w-full items-end bg-muted px-3 py-2 text-[12px] text-muted-foreground">
+          {name}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function ArtifactImageFan({
+  target,
+  images,
+}: {
+  target: ArtifactTarget;
+  images: readonly ImageMessageBlock[];
+}) {
+  const { t } = useLingui();
+  const { container, visible } = useInView();
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const front = images.at(-1);
+  const openImage = openIndex !== null ? images[openIndex] : undefined;
+  const openSrc = useArtifactImageSrc(
+    target,
+    openImage?.artifactId ?? front?.artifactId ?? "",
+    openIndex !== null && Boolean(openImage),
+  );
+
+  if (images.length === 1 && front) {
+    return <ArtifactImage target={target} artifactId={front.artifactId} name={front.name} />;
+  }
+  if (!front) return null;
+
+  const visibleCards = visibleArtifactImageFanItems(images);
+  const slots = artifactImageFanSlots(visibleCards.length);
+
+  return (
+    <div
+      ref={container}
+      className="relative"
+      style={{
+        width: ARTIFACT_IMAGE_FAN_CARD.width + 36,
+        height: ARTIFACT_IMAGE_FAN_CARD.height + 28,
+      }}
+    >
+      {visibleCards.map((image, index) => {
+        const slot = slots[index];
+        if (!slot) return null;
+        return (
+          <ArtifactImageFanCard
+            key={image.artifactId}
+            target={target}
+            artifactId={image.artifactId}
+            name={image.name}
+            enabled={visible}
+            slot={slot}
+          />
+        );
+      })}
+      <button
+        type="button"
+        data-testid="artifact-image-fan"
+        aria-label={t`${images.length} images`}
+        onClick={() => setOpenIndex(images.length - 1)}
+        className="absolute inset-0 z-20"
+      />
+      {openImage && openSrc ? (
+        <ArtifactImagePreview
+          name={openImage.name}
+          src={openSrc}
+          open
+          onOpenChange={(open) => {
+            if (!open) setOpenIndex(null);
+          }}
+          onPrevious={
+            openIndex !== null && openIndex > 0 ? () => setOpenIndex(openIndex - 1) : undefined
+          }
+          onNext={
+            openIndex !== null && openIndex < images.length - 1
+              ? () => setOpenIndex(openIndex + 1)
+              : undefined
+          }
+        />
       ) : null}
     </div>
   );
