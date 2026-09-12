@@ -60,12 +60,57 @@ export class NativeAgents {
         steer: async ({ id, message }) => {
           await this.control(id, "deliver", { id: crypto.randomUUID(), text: message });
         },
+        followUp: async ({ id, message }) => {
+          if (authority.request.enqueueParticipant) {
+            await authority.request.enqueueParticipant({
+              participantId: id,
+              lane: "followUp",
+              text: message,
+            });
+            return;
+          }
+          await this.control(id, "deliver", { id: crypto.randomUUID(), text: message });
+        },
         compact: async ({ id, instructions }) => {
           const result = record(await this.control(id, "compact", { instructions }));
           if (result.outcome !== "completed")
             throw new Error("Runtime command completion was not confirmed");
         },
       },
+      topology: authority.request.agentTopology
+        ? {
+            self: () => authority.request.agentTopology!.self(),
+            sessions: () => authority.request.agentTopology!.sessions(),
+            peers: () => authority.request.agentTopology!.peers(),
+            deliver: ({ id, operation, message, signal }) =>
+              authority.request.agentTopology!.deliver({ id, operation, message, signal }),
+            create: authority.request.agentTopology.create
+              ? (request) => authority.request.agentTopology!.create!({
+                  name: request.name,
+                  ...(request.instructions ? { instructions: request.instructions } : {}),
+                  ...(request.task ? { task: request.task } : {}),
+                  ...(request.signal ? { signal: request.signal } : {}),
+                })
+              : undefined,
+            remove: authority.request.agentTopology.remove
+              ? (request) => authority.request.agentTopology!.remove!({
+                  id: request.id,
+                  ...(request.name ? { name: request.name } : {}),
+                  ...(request.signal ? { signal: request.signal } : {}),
+                })
+              : undefined,
+            dispatch: authority.request.agentTopology.dispatch
+              ? (request) =>
+                  authority.request.agentTopology!.dispatch!({
+                    task: request.request.task,
+                    ...(request.request.name ? { name: request.request.name } : {}),
+                    ...(request.request.cwd ? { cwd: request.request.cwd } : {}),
+                    ...(request.request.tools ? { tools: request.request.tools } : {}),
+                    ...(request.signal ? { signal: request.signal } : {}),
+                  })
+              : undefined,
+          }
+        : undefined,
       onEvent: async (event) => {
         await this.persist();
         const child = event.record;

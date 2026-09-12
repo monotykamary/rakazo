@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import type { AgentRunRequest } from "@rakazo/adapter-kit";
 import { expect, it } from "vitest";
-import { builtinAgentTools } from "./builtin-tools.js";
+import { builtinAgentTools, PRIVATE_SUBAGENT_TOOL } from "./builtin-tools.js";
 import { createRpcHarness } from "./pi-rpc-test-emulator.js";
 
 it("gracefully suspends a background child waiting for model abort and retains its paused checkpoint", async () => {
@@ -38,7 +38,7 @@ it("gracefully suspends a background child waiting for model abort and retains i
   let saved: any;
   try {
     const work = harness.run({
-      tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+      tools: [PRIVATE_SUBAGENT_TOOL],
       executeTool: async () => ({ ok: true }),
       resolveParticipantModel: async () => ({
         ...harness.request.model,

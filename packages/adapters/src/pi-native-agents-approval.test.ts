@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { approvalPausedToolResult } from "./approval-effect.js";
-import { builtinAgentTools } from "./builtin-tools.js";
+import { PRIVATE_SUBAGENT_TOOL } from "./builtin-tools.js";
 import { createRpcHarness } from "./pi-rpc-test-emulator.js";
 
 it("checkpoints native admission approval before product events without launching a child", async () => {
@@ -17,7 +17,7 @@ it("checkpoints native admission approval before product events without launchin
     for await (const event of harness.runtime.run(
       {
         ...harness.request,
-        tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+        tools: [PRIVATE_SUBAGENT_TOOL],
         executeTool,
         session: {
           save: async (state) => {

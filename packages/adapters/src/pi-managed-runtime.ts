@@ -369,10 +369,59 @@ export class ManagedPiRuntime implements AgentRuntime {
                   return { outcome: "rejected", error: "Participant did not complete" };
                 }
               }
+              if (command.kind === "fabric-prewalk") return { outcome: "completed" };
+              if (command.kind === "new")
+                return {
+                  outcome: "rejected",
+                  error: "Queued /new is unavailable here; start a new conversation instead",
+                };
+              if (command.kind === "model" || command.kind === "thinking") {
+                if (!request.resolveParticipantModel)
+                  return { outcome: "rejected", error: "Worker model selection requires backend authorization" };
+                try {
+                  const current =
+                    (await request.resolveParticipantModel(target)) ?? request.model;
+                  const selection =
+                    command.kind === "model"
+                      ? {
+                          provider: command.target.slice(0, command.target.indexOf("/")),
+                          modelId: command.target.slice(command.target.indexOf("/") + 1),
+                          thinkingLevel: current.thinkingLevel ?? null,
+                        }
+                      : {
+                          provider: current.provider,
+                          modelId: current.id,
+                          thinkingLevel: command.level,
+                        };
+                  await request.resolveParticipantModel(target, selection);
+                  commandSignal.throwIfAborted();
+                  return { outcome: "completed" };
+                } catch (error) {
+                  return {
+                    outcome: "rejected",
+                    error: error instanceof Error ? error.message : "Model command failed",
+                  };
+                }
+              }
               const peer = authority.workerBridges.get(target);
               if (!peer) return { outcome: "rejected", error: "Participant is not active" };
               commandSignal.throwIfAborted();
               try {
+                if (command.kind === "reload") {
+                  try {
+                    const result = record(await peer.request("reload", {}, commandSignal));
+                    if (result.outcome === "completed" || result.reloaded === true)
+                      return { outcome: "completed" };
+                    if (result.outcome === "rejected")
+                      return { outcome: "rejected", error: "Runtime reload rejected" };
+                    return {
+                      outcome: "uncertain",
+                      error: "Runtime reload completion was not confirmed",
+                    };
+                  } catch {
+                    return { outcome: "rejected", error: "Runtime reload is unavailable" };
+                  }
+                }
                 if (target !== authority.request.runId) {
                   const participant = agents.entry(target)!.record;
                   await agents.service.compact(participant.parentId, target, command.instructions);

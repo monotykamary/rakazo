@@ -78,8 +78,8 @@ describe.skipIf(!enabled).each(["team", "dedicated"] as const)(
           if (request.threadId === parent.threadId) {
             if (request.prompt === "DISPATCH") {
               expect(request.instructions).toContain("builder and coordinator");
-              expect(request.tools.some((tool) => tool.name === "spawn_bot")).toBe(true);
-              expect(request.tools.some((tool) => tool.name === "dispatch_work")).toBe(true);
+              expect(request.tools.some((tool) => tool.name === "spawn_bot")).toBe(false);
+              expect(request.tools.some((tool) => tool.name === "dispatch_work")).toBe(false);
               for (const path of ["projects/alpha", "projects/beta"]) {
                 expect(
                   await request.executeTool!(

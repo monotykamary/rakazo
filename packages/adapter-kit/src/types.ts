@@ -320,6 +320,44 @@ export interface AgentInputImage {
   data: Uint8Array;
 }
 
+export interface AgentSessionParticipant {
+  id: string;
+  name: string;
+  kind: "root" | "agent" | "actor";
+  status: string;
+  capabilities: Array<"steer" | "followUp" | "stop" | "ask">;
+}
+
+export interface AgentRunTopology {
+  self(): AgentSessionParticipant;
+  sessions(): AgentSessionParticipant[] | Promise<AgentSessionParticipant[]>;
+  peers(): AgentSessionParticipant[] | Promise<AgentSessionParticipant[]>;
+  deliver(request: {
+    id: string;
+    operation: "steer" | "followUp";
+    message: string;
+    signal?: AbortSignal;
+  }): Promise<AgentSessionParticipant>;
+  create?(request: {
+    name: string;
+    instructions?: string;
+    task?: string;
+    signal?: AbortSignal;
+  }): Promise<AgentSessionParticipant>;
+  remove?(request: {
+    id: string;
+    name?: string;
+    signal?: AbortSignal;
+  }): Promise<AgentSessionParticipant>;
+  dispatch?(request: {
+    task: string;
+    name?: string;
+    cwd?: string;
+    tools?: string[];
+    signal?: AbortSignal;
+  }): Promise<AgentSessionParticipant>;
+}
+
 export interface AgentSteeringMessage {
   id: string;
   messageId: string;
@@ -402,6 +440,14 @@ export interface AgentRunRequest {
     participantId: string,
     seenIds: string[],
   ) => Promise<AgentSteeringMessage[]>;
+  /** Durable queue insert for a retained child; same FIFO lanes as the TUI owner. */
+  enqueueParticipant?: (input: {
+    participantId: string;
+    lane: "steer" | "followUp";
+    text: string;
+  }) => Promise<void>;
+  /** Host directory of live session agents and peers for Fabric agents.followUp/steer. */
+  agentTopology?: AgentRunTopology;
   /** Managed execution state is separate from product history and takeover checkpoints. */
   session?: { restore?: unknown; save(state: unknown): Promise<void> };
   /** Revalidate the live run lease before effects and model requests. */

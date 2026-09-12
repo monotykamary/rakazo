@@ -1,5 +1,6 @@
 import { t } from "@lingui/core/macro";
 import type { QueueSnapshot } from "@rakazo/contracts";
+import { queueRowCommand } from "@rakazo/core";
 import {
   Button,
   Dialog,
@@ -26,6 +27,7 @@ import {
   Paperclip,
   Pause,
   Play,
+  Settings,
   Target,
 } from "lucide-react";
 import {
@@ -90,6 +92,12 @@ export const QueueStrip = forwardRef<
   selectedRef.current = selected;
   const disabled = busy || !snapshot;
   const locked = Boolean(snapshot?.inFlight || snapshot?.drain);
+  const gatePending = Boolean(
+    snapshot?.inFlight?.rowIds.some((id) => {
+      const row = snapshot.rows.find((item) => item.id === id);
+      return row ? queueRowCommand(row)?.kind === "fabric-await" : false;
+    }),
+  );
   const resuming = !snapshot?.drain && Boolean(snapshot?.paused || snapshot?.errorHold);
   const open = controlledOpen ?? localOpen ?? rows.length > 0;
 
@@ -225,6 +233,14 @@ export const QueueStrip = forwardRef<
               <CirclePause />
               {snapshot?.gracefulPausePending ? t`Pause pending` : t`Pause`}
             </DropdownMenuItem>
+            <DropdownMenuItem
+              data-testid="queue-cancel-gate"
+              disabled={disabled || !gatePending || Boolean(selected)}
+              onClick={() => void mutate({ type: "cancel-gate" })}
+            >
+              <CircleAlert />
+              {t`Cancel wait`}
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
         </div>
@@ -284,6 +300,12 @@ export const QueueStrip = forwardRef<
                       dir="auto"
                       className="line-clamp-2 break-words text-[13px] leading-[18px] text-foreground/85"
                     >
+                      {queueRowCommand(row) ? (
+                        <Settings
+                          aria-hidden
+                          className="me-1 inline size-3 align-text-top text-muted-foreground"
+                        />
+                      ) : null}
                       {row.text || t`Attachment`}
                     </span>
                     {row.images.length || row.attachments?.length ? (

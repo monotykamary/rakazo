@@ -53,7 +53,7 @@ export interface PremoveQueueMutationOptions {
 
 function engineQueueOperation(operation: QueueMutation["operation"]) {
   if (operation.type === "enqueue") {
-    const { artifactIds: _artifactIds, ...engineOperation } = operation;
+    const { artifactIds: _artifactIds, target: _target, ...engineOperation } = operation;
     return engineOperation;
   }
   if (operation.type === "edit-patch") {

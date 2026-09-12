@@ -213,6 +213,8 @@ export async function createManagedKit(options: ManagedKitOptions): Promise<Mana
             steer: true,
             compact: true,
             resume: true,
+            followUp: true,
+            topology: true,
           }),
         )
       : provider("agents", [], async () => {

@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { translateQueueControl } from "./queue-control.js";
 
-it("translates only reviewed compact and explicitly scoped gates", () => {
+it("translates TUI command rows including scoped gates and session controls", () => {
   expect(translateQueueControl({ kind: "compact", instructions: "preserve decisions" })).toEqual({
     kind: "compact",
     instructions: "preserve decisions",
@@ -24,7 +24,23 @@ it("translates only reviewed compact and explicitly scoped gates", () => {
   expect(() =>
     translateQueueControl({ kind: "fabric-await", peer: "other" }, { participantId: "child" }),
   ).toThrow("differs");
-  for (const kind of ["reload", "new", "model", "thinking", "fabric-prewalk"] as const) {
-    expect(() => translateQueueControl({ kind })).toThrow("Unsupported queued control");
-  }
+  expect(translateQueueControl({ kind: "model", target: "openai/gpt-5.4" })).toEqual({
+    kind: "model",
+    target: "openai/gpt-5.4",
+  });
+  expect(() => translateQueueControl({ kind: "model" })).toThrow("provider/model");
+  expect(translateQueueControl({ kind: "thinking", level: "high" }, { participantId: "child" })).toEqual(
+    {
+      kind: "thinking",
+      level: "high",
+      participantId: "child",
+    },
+  );
+  expect(() => translateQueueControl({ kind: "thinking" })).toThrow("supported level");
+  expect(translateQueueControl({ kind: "reload" })).toEqual({ kind: "reload" });
+  expect(translateQueueControl({ kind: "new" }, { participantId: "child" })).toEqual({
+    kind: "new",
+    participantId: "child",
+  });
+  expect(translateQueueControl({ kind: "fabric-prewalk" })).toEqual({ kind: "fabric-prewalk" });
 });

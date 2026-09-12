@@ -38,6 +38,23 @@ export const QueueControlCommandSchema = z.discriminatedUnion("kind", [
     })
     .strict(),
   z.object({ kind: z.literal("participant-await"), participantId: Id }).strict(),
+  z
+    .object({
+      kind: z.literal("model"),
+      target: z.string().min(1).max(300),
+      participantId: Id.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("thinking"),
+      level: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]),
+      participantId: Id.optional(),
+    })
+    .strict(),
+  z.object({ kind: z.literal("reload"), participantId: Id.optional() }).strict(),
+  z.object({ kind: z.literal("new"), participantId: Id.optional() }).strict(),
+  z.object({ kind: z.literal("fabric-prewalk") }).strict(),
 ]);
 export type QueueControlCommand = z.infer<typeof QueueControlCommandSchema>;
 export type QueueControlResult = {
@@ -72,6 +89,8 @@ export const QueueOperationSchema = z.discriminatedUnion("type", [
     images: images.optional(),
     artifactIds: z.array(Id).max(ATTACHMENT_MAX_COUNT).optional(),
     paused: z.boolean().optional(),
+    /** When true, append instead of TUI steer-insert before the next follow-up root. */
+    tail: z.boolean().optional(),
   }),
   z.object({ type: z.literal("edit-begin"), id: Id }),
   z.object({ type: z.literal("edit-select"), id: Id }),
@@ -92,6 +111,7 @@ export const QueueOperationSchema = z.discriminatedUnion("type", [
   /** One combined prompt from the eligible FIFO prefix; never skips a barrier. */
   z.object({ type: z.literal("drain") }).strict(),
   z.object({ type: z.literal("graceful-pause") }),
+  z.object({ type: z.literal("cancel-gate") }),
 ]);
 export const QueueScopeSchema = z.object({ threadId: Id, botId: Id });
 export const QueueSnapshotSchema = z.object({

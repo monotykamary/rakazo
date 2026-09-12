@@ -1196,15 +1196,52 @@ export class LocalPiRuntime implements AgentRuntime {
           context: { id: string; signal: AbortSignal },
         ) => {
           context.signal.throwIfAborted();
-          if (command.kind === "compact") {
-            const participantId = "participantId" in command ? command.participantId : undefined;
-            if (participantId && participantId !== request.runId)
-              return { outcome: "rejected", error: "Local Pi does not own that participant" };
-            return compact(command.instructions);
+          const participantId = "participantId" in command ? command.participantId : undefined;
+          if (participantId && participantId !== request.runId)
+            return { outcome: "rejected", error: "Local Pi does not own that participant" };
+          if (command.kind === "compact") return compact(command.instructions);
+          if (command.kind === "fabric-prewalk") return { outcome: "completed" };
+          if (command.kind === "model" || command.kind === "thinking") {
+            if (!request.resolveParticipantModel)
+              return { outcome: "rejected", error: "Worker model selection requires backend authorization" };
+            try {
+              const current =
+                (await request.resolveParticipantModel(request.runId)) ?? request.model;
+              const selection =
+                command.kind === "model"
+                  ? {
+                      provider: command.target.slice(0, command.target.indexOf("/")),
+                      modelId: command.target.slice(command.target.indexOf("/") + 1),
+                      thinkingLevel: current.thinkingLevel ?? null,
+                    }
+                  : {
+                      provider: current.provider,
+                      modelId: current.id,
+                      thinkingLevel: command.level,
+                    };
+              await request.resolveParticipantModel(request.runId, selection);
+              return { outcome: "completed" };
+            } catch (error) {
+              return {
+                outcome: "rejected",
+                error: error instanceof Error ? error.message : "Model command failed",
+              };
+            }
+          }
+          if (command.kind === "reload") {
+            try {
+              await peer!.request("reload", {});
+              return { outcome: "completed" };
+            } catch {
+              return { outcome: "rejected", error: "Runtime reload is unavailable" };
+            }
           }
           return {
             outcome: "rejected",
-            error: "Local Pi cannot await installed Pi/Fabric participants",
+            error:
+              command.kind === "participant-await"
+                ? "Local Pi cannot await installed Pi/Fabric participants"
+                : "Unsupported queued control",
           };
         },
         pause: async () => {

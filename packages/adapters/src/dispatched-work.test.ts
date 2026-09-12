@@ -3,10 +3,9 @@ import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { DispatchWorkInput, WorkToolName } from "@rakazo/contracts";
+import { DispatchWorkInput } from "@rakazo/contracts";
 import { projectPathsOverlap } from "@rakazo/db";
 import { describe, expect, it } from "vitest";
-import { builtinAgentTools } from "./builtin-tools.js";
 import { canonicalComputerPath } from "./dispatched-work.js";
 
 const exec = promisify(execFile);
@@ -16,12 +15,6 @@ describe("dispatched project scope", () => {
     expect(
       DispatchWorkInput.parse({ task: "Write a report", project_path: "project" }).tools,
     ).toEqual(["read_file", "list_files", "write_file", "edit_file"]);
-    expect(
-      builtinAgentTools.find((tool) => tool.name === "dispatch_work")?.inputSchema,
-    ).toMatchObject({
-      properties: { tools: { items: { enum: WorkToolName.options } } },
-      required: ["task", "project_path"],
-    });
     for (const tools of [["shell"], ["computer_act"], ["spawn_bot"], ["message_bot"], []]) {
       expect(
         DispatchWorkInput.safeParse({ task: "Task", project_path: "project", tools }).success,

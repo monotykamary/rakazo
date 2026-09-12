@@ -14,7 +14,7 @@ import type { AgentRunRequest } from "@rakazo/adapter-kit";
 import { resolvePiKit } from "@rakazo/pi-kit";
 import type { FabricInvocationContext } from "pi-fabric/protocol";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { builtinAgentTools } from "./builtin-tools.js";
+import { builtinAgentTools, PRIVATE_SUBAGENT_TOOL } from "./builtin-tools.js";
 import {
   createManagedKit,
   hybridMemoryProvider,
@@ -145,7 +145,7 @@ const base: AgentRunRequest = {
   history: [],
   queueOnly: true,
   executeTool: async () => ({ ok: true }),
-  tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+  tools: [PRIVATE_SUBAGENT_TOOL],
   model: {
     provider: "openai-compatible",
     id: "offline",

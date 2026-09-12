@@ -42,6 +42,13 @@ export const AGENT_ACTIONS = [
   "steer",
   "compact",
   "resume",
+  "followUp",
+  "sessions",
+  "peers",
+  "self",
+  "members",
+  "create",
+  "remove",
 ] as const satisfies readonly import("pi-fabric/agents").AgentServiceAction[];
 export function agentAction(value: unknown): import("pi-fabric/agents").AgentServiceAction {
   if (typeof value !== "string" || !(AGENT_ACTIONS as readonly string[]).includes(value))

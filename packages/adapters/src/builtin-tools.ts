@@ -2,15 +2,14 @@ import type { ConnectorTool } from "@rakazo/adapter-kit";
 import {
   BotSecretDestination,
   BotSecretName,
-  ModelSelectionSchema,
   SecretAskPurpose,
   SecretHttpRequest,
-  WorkToolName,
 } from "@rakazo/contracts";
 import { z } from "zod";
 import { MANAGE_OFFICE_TOOL } from "./office-tools.js";
 import { manageQueueTool } from "./premove-tool-schema.js";
 
+/** Internal authorization callback names. Not model-facing product tools. */
 export const DELEGATION_TOOL_NAMES = new Set([
   "run_subagent",
   "spawn_bot",
@@ -20,6 +19,25 @@ export const DELEGATION_TOOL_NAMES = new Set([
   "handoff_to_bot",
   "message_bot",
 ]);
+
+/** Private callback for Fabric agents.run authorization. Never an extensions.* tool. */
+export const PRIVATE_SUBAGENT_TOOL: ConnectorTool = {
+  name: "run_subagent",
+  description: "Authorize a Fabric child participant inside this conversation.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      name: { type: "string" },
+      task: { type: "string" },
+      cwd: { type: "string" },
+      worktree: { type: "boolean" },
+      worktreeId: { type: "string" },
+      participantId: { type: "string" },
+      instructions: { type: "string" },
+    },
+    required: ["name", "task"],
+  },
+};
 
 export const builtinAgentTools: ConnectorTool[] = [
   {
@@ -734,43 +752,6 @@ export const builtinAgentTools: ConnectorTool[] = [
     },
   },
   {
-    name: "run_subagent",
-    description:
-      "Run or resume a persisted helper participant inside this conversation. It shares the bot authority and computer; nested helpers share bounded root budgets. It is not a bot: no bot list entry, independent thread, or computer. Never call this because the user asked to create a bot — that is spawn_bot, and spawn_bot alone.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        name: {
-          type: "string",
-          description: "Short label shown in the thread, e.g. scout or reviewer.",
-        },
-        task: { type: "string", description: "The work the helper should complete." },
-        cwd: {
-          type: "string",
-          description: "Existing authorized workspace-relative project directory.",
-        },
-        worktree: {
-          type: "boolean",
-          description:
-            "Automatic creation is unavailable. Create through authorized shell, then delegate using cwd.",
-        },
-        worktreeId: {
-          type: "string",
-          description: "Optional worktree identity metadata; cwd chooses the authorized directory.",
-        },
-        participantId: {
-          type: "string",
-          description: "Previously persisted direct child to resume; omitted creates a child.",
-        },
-        instructions: {
-          type: "string",
-          description: "Optional extra system instructions for the helper.",
-        },
-      },
-      required: ["name", "task"],
-    },
-  },
-  {
     name: "create_space",
     description:
       "Propose a new space in the current organization when the user asks for a separate data boundary. A space can contain many bots and groups, but its chats, files, memory, tools, and integrations stay isolated from other spaces. This always shows the user a confirmation card before creation. Creating the space is the whole action; do not create bots in it unless the user asks later.",
@@ -852,124 +833,6 @@ export const builtinAgentTools: ConnectorTool[] = [
         },
       },
       required: ["action"],
-    },
-  },
-  {
-    name: "dispatch_work",
-    description:
-      "Queue a complete one-off project task in a hidden temporary worker and return its durable receipt immediately. Work survives this conversation ending and backend restart. Results and failures return here automatically. Use separate project/worktree paths for independent work; overlapping writes are queued. This does not create a reusable bot or grant new computer access.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        task: {
-          type: "string",
-          description: "Concrete outcome, scope, anti-jobs, checks and failure report.",
-        },
-        name: { type: "string", description: "Short activity label, not a roster bot." },
-        instructions: { type: "string" },
-        project_path: {
-          type: "string",
-          description: "Existing authorized workspace-relative project directory.",
-        },
-        worktree_path: {
-          type: "string",
-          description:
-            "Optional existing authorized worktree directory; the worker writes here instead.",
-        },
-        model: {
-          ...z.toJSONSchema(ModelSelectionSchema),
-          description:
-            "Optional exact connection model pin. Defaults to this run's model; hidden or unavailable pins never fall back.",
-        },
-        tools: {
-          type: "array",
-          items: { type: "string", enum: WorkToolName.options },
-          description:
-            "Smallest file-tool subset needed. Shell is unavailable until project-scoped process isolation is supported. No GUI, connectors or further delegation.",
-        },
-      },
-      required: ["task", "project_path"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "spawn_bot",
-    description:
-      "Create a full, regular bot — the same kind the user creates from the + button. It gets its own thread, computer, and memory, and appears as a peer in the bot list. Do not also call run_subagent. Give it one concrete job, a useful voice and explicit anti-jobs in instructions. Only set prompt when the user wants it to start work: the task is durably queued and its result or failure returns to you asynchronously. Do not wait for it or create a lasting bot for a one-off helper task.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        name: { type: "string" },
-        title: { type: "string" },
-        instructions: { type: "string" },
-        prompt: {
-          type: "string",
-          description: "Optional first task to run in the new bot's thread.",
-        },
-        computer_mode: {
-          type: "string",
-          enum: ["team", "dedicated"],
-          description:
-            "Optional. team shares one screen with other Team bots; dedicated (Private) gets its own. Defaults to team.",
-        },
-      },
-      required: ["name"],
-    },
-  },
-  {
-    name: "archive_bot",
-    description:
-      "Archive a bot this bot created. Archiving stops its work and routines, hides it from the active list, and preserves its conversation, memory, and files for the user to restore or delete later. confirm_name must exactly match its name. This cannot archive you, bots the user created, or bots another bot created.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        confirm_name: { type: "string", description: "Exact current name of the bot to archive." },
-        bot_id: {
-          type: "string",
-          description:
-            "Optional bot id. If omitted, the unique bot this bot created with confirm_name is archived.",
-        },
-      },
-      required: ["confirm_name"],
-    },
-  },
-  {
-    name: "message_bot",
-    description:
-      'Send a useful update, question, or result to another of the user\'s bots. You must call this tool to actually deliver it — writing the message in your own reply text (e.g. "[to Comms] ...") does not send anything and the recipient never sees it. Delivery is async and does not end your turn. Continue independent work; do not poll or send ack-only messages. Later updates only if they add something new.',
-    inputSchema: {
-      type: "object",
-      properties: {
-        bot_id: { type: "string", description: "Target bot id from your teammate list." },
-        confirm_name: {
-          type: "string",
-          description: "Exact name of the target bot when bot_id is omitted.",
-        },
-        message: { type: "string", description: "What to send." },
-        intent: {
-          type: "string",
-          enum: ["request", "result", "question", "status", "fyi"],
-          description: "What the recipient should do with this message. Defaults to request.",
-        },
-      },
-      required: ["message"],
-    },
-  },
-  {
-    name: "handoff_to_bot",
-    description:
-      "In a group chat only: transfer a genuinely distinct next stage to another current member. Appends a visible handoff and starts that bot asynchronously. Do not hand a stage back merely to report or repeat the same work; post results in the shared thread.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        bot_id: { type: "string", description: "Target member bot id." },
-        confirm_name: {
-          type: "string",
-          description: "Exact name of the target member when bot_id is omitted.",
-        },
-        message: { type: "string", description: "What the receiving bot should do next." },
-      },
-      required: ["message"],
     },
   },
 ];

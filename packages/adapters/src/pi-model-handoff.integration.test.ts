@@ -1,7 +1,7 @@
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { assertModelVisible } from "@rakazo/contracts";
 import { describe, expect, it } from "vitest";
-import { builtinAgentTools } from "./builtin-tools.js";
+import { builtinAgentTools, PRIVATE_SUBAGENT_TOOL } from "./builtin-tools.js";
 import type { AgentProcessHost } from "./pi-rpc-protocol.js";
 import { createRpcHarness } from "./pi-rpc-test-emulator.js";
 import { AsyncChannel, readJsonFrames } from "./pi-rpc-transport.js";
@@ -119,7 +119,7 @@ describe("real managed RPC model handoffs", () => {
     let saved: any;
     try {
       await h.run({
-        tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+        tools: [PRIVATE_SUBAGENT_TOOL],
         executeTool: async () => ({ ok: true }),
         session: {
           save: async (value) => {
@@ -582,7 +582,7 @@ describe("real managed RPC model handoffs", () => {
     };
     try {
       await h.run({
-        tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+        tools: [PRIVATE_SUBAGENT_TOOL],
         executeTool: async () => ({ ok: true }),
         resolveParticipantModel,
         session: {
@@ -601,7 +601,7 @@ describe("real managed RPC model handoffs", () => {
         runId: "new-parent",
         prompt: "",
         queueOnly: true,
-        tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+        tools: [PRIVATE_SUBAGENT_TOOL],
         executeTool: async () => ({ ok: true }),
         resolveParticipantModel,
         session: {
@@ -638,7 +638,7 @@ describe("real managed RPC model handoffs", () => {
         runId: "reset-parent",
         prompt: "",
         queueOnly: true,
-        tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+        tools: [PRIVATE_SUBAGENT_TOOL],
         executeTool: async () => ({ ok: true }),
         resolveParticipantModel,
         session: {

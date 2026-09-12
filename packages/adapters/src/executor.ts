@@ -28,7 +28,7 @@ import {
   routineWakeupJob,
   runContinueJob,
 } from "@rakazo/adapter-kit";
-import type { MessageBlock, RunStatus } from "@rakazo/contracts";
+import type { Actor, MessageBlock, RunStatus } from "@rakazo/contracts";
 import {
   ATTACHMENT_MAX_BYTES,
   BotSecretName,
@@ -165,6 +165,7 @@ import {
 } from "./auto-review.js";
 import { botMemoryClient } from "./bot-memory-client.js";
 import { createBotMemorySource } from "./bot-memory-sources.js";
+import { createAgentRunTopology, enqueueFabricQueue } from "./agent-topology.js";
 import { loadBotMessageContext, messageBot, returnBotMessageOutcome } from "./bot-messages.js";
 import {
   findBotSecret,
@@ -181,7 +182,7 @@ import {
   browserNavigateFromTool,
   browserSnapshotFromTool,
 } from "./browser-tools.js";
-import { agentConnectionTools, builtinAgentTools } from "./builtin-tools.js";
+import { agentConnectionTools, builtinAgentTools, PRIVATE_SUBAGENT_TOOL } from "./builtin-tools.js";
 import { archiveSpawnedBot, spawnBot } from "./child-bots.js";
 import { type CloudAgentConnection, cloudAgentsEnabled } from "./cloud-agent-factory.js";
 import { executeCloudAgentTool } from "./cloud-agent-service.js";
@@ -3970,6 +3971,111 @@ export function createRunExecutor(deps: ExecutorDeps) {
                       },
                     })
                 : undefined,
+              enqueueParticipant: privateRuntime
+                ? async ({ participantId, lane, text }) => {
+                    await enqueueFabricQueue(
+                      deps.prisma,
+                      {
+                        userId: run.userId,
+                        spaceId: run.spaceId,
+                        email: "",
+                        isDeploymentOwner: false,
+                      } satisfies Actor,
+                      { threadId: thread.id, botId: bot.id },
+                      { lane, text, participantId },
+                    );
+                  }
+                : undefined,
+              agentTopology: privateRuntime
+                ? createAgentRunTopology(
+                    deps,
+                    {
+                      actor: {
+                        userId: run.userId,
+                        spaceId: run.spaceId,
+                        email: "",
+                        isDeploymentOwner: false,
+                      },
+                      run,
+                      bot,
+                      groupId: thread.groupId,
+                    },
+                    {
+                      createPeer: async ({ name, instructions, task }) => {
+                        const spawned = await spawnBot(deps, {
+                          spawnedBy: {
+                            id: bot.id,
+                            name: bot.name,
+                            spaceId: bot.spaceId,
+                            userId: run.userId,
+                          },
+                          runId,
+                          spawnKey: `fabric-create:${randomUUID()}`,
+                          name,
+                          instructions,
+                          prompt: task,
+                        });
+                        if ("error" in spawned) throw new Error(spawned.error);
+                        return { id: spawned.botId, name: spawned.name };
+                      },
+                      removePeer: async ({ id, name }) => {
+                        const archived = await archiveSpawnedBot(
+                          deps,
+                          {
+                            spawnedByBotId: bot.id,
+                            userId: run.userId,
+                            spaceId: run.spaceId,
+                            confirmName: name ?? "",
+                            botId: id,
+                          },
+                          context,
+                        );
+                        if ("error" in archived) throw new Error(archived.error);
+                        return { id, name: name ?? id };
+                      },
+                      dispatchWork: async ({ task, name, cwd, tools }) => {
+                        if (!cwd) throw new Error("Durable spawn requires cwd as the authorized project path");
+                        const placedPath = (value: string) =>
+                          resolveBotWorkspaceCwd(
+                            fileWorkspaceMode,
+                            bot.id,
+                            authorizedRelativePlacement(value),
+                          ) ?? ".";
+                        const projectPath = await canonicalPath(placedPath(cwd));
+                        const result = await dispatchWork(
+                          deps,
+                          run,
+                          {
+                            task,
+                            name,
+                            project_path: cwd,
+                            ...(tools ? { tools } : {}),
+                          },
+                          `fabric-dispatch:${randomUUID()}`,
+                          {
+                            computerId: storedComputer.id,
+                            homeKey: storedComputer.homeKey,
+                            projectPath,
+                          },
+                        );
+                        return { id: result.workerId, name: result.name };
+                      },
+                      handoff: thread.groupId
+                        ? async ({ id, message }) => {
+                            const result = await handoffToGroupBot(deps, run, thread.groupId!, {
+                              bot_id: id,
+                              message,
+                            });
+                            if (!("ok" in result) || !result.ok)
+                              throw new Error(
+                                "error" in result ? String(result.error) : "Handoff failed",
+                              );
+                            return { id, name: id };
+                          }
+                        : undefined,
+                    },
+                  )
+                : undefined,
               queueOnly: privateRuntime && !task.prompt.trim() && !run.sourceMessageId,
               placement:
                 capturedPlacement.kind === "project"
@@ -4981,7 +5087,7 @@ export function selectBuiltinToolsForRun(options: {
   cloudAgentEnabled?: boolean;
   messagingChannelRun: boolean;
 }) {
-  return selectCloudAgentTools(
+  const tools = selectCloudAgentTools(
     selectMemoryTools(
       filterBuiltinToolsForRun(
         filterBuiltinToolsForThread(
@@ -5006,6 +5112,8 @@ export function selectBuiltinToolsForRun(options: {
         (!["remember", "save_memory", "recall_memory"].includes(tool.name) &&
           !tool.name.startsWith("scratchpad_"))),
   );
+  if (!isPrivateRuntimeTrigger(options.trigger)) return tools;
+  return [...tools, PRIVATE_SUBAGENT_TOOL];
 }
 
 export const PAGE_BROWSER_TOOL_NAMES = new Set([

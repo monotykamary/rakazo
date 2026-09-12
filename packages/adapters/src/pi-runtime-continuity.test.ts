@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { builtinAgentTools } from "./builtin-tools.js";
+import { builtinAgentTools, PRIVATE_SUBAGENT_TOOL } from "./builtin-tools.js";
 import { boundedExecutionEvidence } from "./pi-execution-evidence.js";
 import { createRpcHarness } from "./pi-rpc-test-emulator.js";
 
@@ -70,9 +70,10 @@ describe("managed runtime continuity", () => {
         currentTurnImages: [
           { name: "root.png", mimeType: "image/png", data: Buffer.from("root-only-image-fixture") },
         ],
-        tools: builtinAgentTools.filter((tool) =>
-          ["run_subagent", "manage_queue"].includes(tool.name),
-        ),
+        tools: [
+          PRIVATE_SUBAGENT_TOOL,
+          ...builtinAgentTools.filter((tool) => tool.name === "manage_queue"),
+        ],
         executeTool: async () => ({ ok: true }),
         authorizeSubagentPlacement: authorized,
         session: {
@@ -101,7 +102,7 @@ describe("managed runtime continuity", () => {
         prompt: "",
         sourceMessageId: undefined,
         queueOnly: true,
-        tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+        tools: [PRIVATE_SUBAGENT_TOOL],
         executeTool: async () => ({ ok: true }),
         authorizeSubagentPlacement: authorized,
         session: {
@@ -160,7 +161,7 @@ describe("managed runtime continuity", () => {
     const trace: unknown[] = [];
     try {
       await harness.run({
-        tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+        tools: [PRIVATE_SUBAGENT_TOOL],
         executeTool: async () => ({ ok: true }),
         authorizeSubagentPlacement: async () => ({
           placement: { cwd: "project" },
@@ -219,7 +220,7 @@ describe("managed runtime continuity", () => {
     let completed = false;
     try {
       await harness.run({
-        tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+        tools: [PRIVATE_SUBAGENT_TOOL],
         executeTool: async () => ({ ok: true }),
         session: {
           save: async (state) => {

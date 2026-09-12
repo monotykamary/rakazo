@@ -210,7 +210,7 @@ describe("group members roster", () => {
     expect(context).toContain("Researcher (id: b_1) — Finds things");
     expect(context).toContain("Investigates source-backed questions");
     expect(context).toContain("Analyst (id: b_2)");
-    expect(context).toContain("handoff_to_bot");
+    expect(context).toContain("agents.followUp");
     expect(context).toContain("One bot owns each stage.");
     expect(context).toContain("You are Researcher (id: b_1)");
     expect(context).toContain("Do not hand it back merely to report");
@@ -377,8 +377,8 @@ describe("inbound wake prompt", () => {
   });
 
   it("tells the recipient how to reply, which is the only way back", () => {
-    expect(prompt).toContain("message_bot");
-    expect(prompt).toContain("bot_id b_1");
+    expect(prompt).toContain("agents.followUp");
+    expect(prompt).toContain('id: "b_1"');
   });
 
   it("does not allow a request to disappear as an FYI", () => {

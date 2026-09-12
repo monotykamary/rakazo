@@ -1,6 +1,6 @@
 import type { AgentRunRequest } from "@rakazo/adapter-kit";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { builtinAgentTools } from "./builtin-tools.js";
+import { builtinAgentTools, PRIVATE_SUBAGENT_TOOL } from "./builtin-tools.js";
 import { ManagedPiRuntime } from "./pi-managed-runtime.js";
 import type { NativeAgents } from "./pi-native-agents.js";
 import type { AgentProcessHost, JsonRecord, PrivateDuplex } from "./pi-rpc-protocol.js";
@@ -115,7 +115,10 @@ const base: AgentRunRequest = {
   instructions: "Root policy",
   history: [],
   queueOnly: true,
-  tools: builtinAgentTools.filter((tool) => ["run_subagent", "manage_queue"].includes(tool.name)),
+  tools: [
+    PRIVATE_SUBAGENT_TOOL,
+    ...builtinAgentTools.filter((tool) => tool.name === "manage_queue"),
+  ],
   executeTool: async () => ({ ok: true }),
   model: {
     provider: "openai-compatible",
@@ -533,8 +536,8 @@ describe("managed delegation admission", () => {
         expect(
           await control.command({ kind: "compact", participantId: "foreign" }, context),
         ).toMatchObject({ outcome: "rejected" });
-        expect(await control.command({ kind: "reload" } as never, context)).toMatchObject({
-          outcome: "rejected",
+        expect(await control.command({ kind: "reload" }, context)).toMatchObject({
+          outcome: "uncertain",
         });
         expect(compactReply).toHaveBeenCalledTimes(3);
         expect(
