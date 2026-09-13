@@ -377,10 +377,12 @@ export class ManagedPiRuntime implements AgentRuntime {
                 };
               if (command.kind === "model" || command.kind === "thinking") {
                 if (!request.resolveParticipantModel)
-                  return { outcome: "rejected", error: "Worker model selection requires backend authorization" };
+                  return {
+                    outcome: "rejected",
+                    error: "Worker model selection requires backend authorization",
+                  };
                 try {
-                  const current =
-                    (await request.resolveParticipantModel(target)) ?? request.model;
+                  const current = (await request.resolveParticipantModel(target)) ?? request.model;
                   const selection =
                     command.kind === "model"
                       ? {
@@ -726,6 +728,7 @@ export class ManagedPiRuntime implements AgentRuntime {
             tools: tools.catalog.filter((tool) => tool.argumentKind !== "run_subagent"),
             agents: request.tools.some((tool) => tool.name === "run_subagent"),
             model: broker.metadata(),
+            visionHandoff: broker.visionMetadata(),
             thinkingLevel: thinkingLevelFor(broker.model, request.model.thinkingLevel),
             memory: request.memory !== undefined,
           },

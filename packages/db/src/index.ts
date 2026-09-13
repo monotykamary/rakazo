@@ -20,4 +20,5 @@ export * from "./runtime-sessions.js";
 export * from "./scope.js";
 export * from "./spaces.js";
 export * from "./transaction-retry.js";
+export * from "./vision-handoff.js";
 export * from "./voice-credentials.js";

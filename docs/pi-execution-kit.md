@@ -9,7 +9,7 @@ Rakazo keeps a continuous conversation per bot. Isolated Pi coding-agent RPC wor
 
 ## Architecture
 
-- `packages/pi-kit` pins Pi and content-addressed Fabric, Fovea, queue-steer, retry, multiprovider, hide-providers, and Contour archives. Startup validates installed identities. Runtime never installs extensions or resolves sibling checkouts.
+- `packages/pi-kit` pins Pi and content-addressed Fabric, Fovea, queue-steer, retry, multiprovider, hide-providers, Contour, and vision-handoff archives. Startup validates installed identities. Runtime never installs extensions or resolves sibling checkouts.
 - The supervisor launches an unprivileged, networkless worker with a read-only image, bounded scratch space, and one private bridge socket. Computer files and credentials are not mounted into that worker.
 - Backend model and tool brokers preserve connection ownership, computer placement, approval latches, and run leases. Fabric core overrides never fall back to host tools. Managed provider authority stays sealed across reloads.
 - Fovea indexes bounded, authorized computer snapshots. Explicit roots retain isolated observation state; project configuration and plugins are not loaded from those snapshots.
@@ -61,6 +61,8 @@ Advanced model settings share one account-scoped preference across web, Electron
 
 Hiding is reversible preference, not credential revocation. It neither deletes connections nor rewrites saved model pins. A pin that becomes hidden remains the requested model and reports an actionable unhide/change failure. Backend selection, worker delegation, and request/fallback validation use the owning user's preference; there is no global API registry patch or project-config override. Changes apply before the next model request, not retroactively to an in-flight response.
 
+Account vision handoff is a separate preference: `models.getVisionHandoff()` and `models.setVisionHandoff({ enabled, visionModel })`. `visionModel` is a canonical `provider/id` of a catalog model that declares image input. The Models overlay and mobile Models screen expose one control, **Vision**, with **Off** or a vision-capable model. The pinned `pi-vision-handoff` 0.10.3 TypeScript extension loads through Pi's SDK in each isolated worker. The host writes scratch config using the worker's `rakazo-broker/<id>` identity, replaces `/vision-handoff` with a settings-only error, and brokers nested describer calls through the owner's connection for that model. Screenshot-returning computer tools stay available when a describer is configured even if the coding model is text-only.
+
 The pinned `pi-hide-providers` 0.1.18 TypeScript extension loads through Pi's SDK in each isolated worker. Its config context is restricted to fresh host-owned scratch, and the host replaces `/hide-models` with a settings-only error before binding so worker-local add/remove/reset commands cannot claim to change account preferences. That empty local config is intentional: workers see `rakazo-broker`, not real provider identities. Canonical backend checks—not the extension's notification-only `model_select` handler—enforce account visibility. Unmanaged upstream behavior is tested separately against its packaged predicate and actual headless lookup/list hooks.
 
 ## Distribution and checks
@@ -80,7 +82,7 @@ Use Node 24 LTS (or a supported newer even-numbered release) and the repository'
 | Shared queue state and write-ahead acknowledgment | Offline tests and real PostgreSQL concurrency/recovery probes passed |
 | Managed Fabric, all eight core overrides, Fovea snapshots, exact recall, and deterministic idle compaction | Installed-kit conformance probes passed |
 | Same-provider rotation and explicit fallback | Scheduler tests and real offline SDK/HTTP probes passed |
-| Account model visibility | Exact-rule safety, authenticated owner/catalog isolation, hidden pin/worker/fallback rejection, and extracted upstream headless/conformance probes passed; clean-install seven-package resolution, artifact checks, and actual managed-kit headless loading passed |
+| Account model visibility | Exact-rule safety, authenticated owner/catalog isolation, hidden pin/worker/fallback rejection, and extracted upstream headless/conformance probes passed; clean-install eight-package resolution, artifact checks, and actual managed-kit headless loading passed |
 | Shared queue/Flow/routing UI | App type checks, controller tests, browser control probes, and CI screenshot-test registration passed |
 | Clean installation and migrations | Standalone kit resolution and clean PostgreSQL migration deployment passed |
 | Atomic secret-preserving edits and delegation reservations | Raw-byte, concurrent-process, approval-boundary, reservation-race, and actual-executor PostgreSQL probes passed |

@@ -1,5 +1,6 @@
 import { ORPCError } from "@orpc/server";
 import {
+  modelAcceptsImageInput,
   PiModelRuntimeError,
   type PiModelRuntimeErrorCode,
   type PiModelRuntimeService,
@@ -76,6 +77,11 @@ export async function readPiModelRuntime(input: {
       : await input.models.read(input.signal);
     return {
       ...profile,
+      catalog: profile.catalog.map((entry) =>
+        entry.acceptsImages || modelAcceptsImageInput(entry.provider, entry.id)
+          ? { ...entry, acceptsImages: true }
+          : entry,
+      ),
       current,
       selection,
       availability: { status: "available", error: null },

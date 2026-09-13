@@ -21,7 +21,8 @@
     "@monotykamary/pi-retry": "file:../../vendor/pi-kit/monotykamary-pi-retry-0.9.0-3158b56e1d7e.tgz",
     "pi-multiprovider": "file:../../vendor/pi-kit/pi-multiprovider-0.6.3-a323974cd31e.tgz",
     "pi-hide-providers": "file:../../vendor/pi-kit/pi-hide-providers-0.1.18-d0b8bbcb190d.tgz",
-    "pi-contour": "file:../../vendor/pi-kit/pi-contour-0.2.0-13e89ebded96.tgz"
+    "pi-contour": "file:../../vendor/pi-kit/pi-contour-0.2.0-13e89ebded96.tgz",
+    "pi-vision-handoff": "file:../../vendor/pi-kit/pi-vision-handoff-0.10.3-9a15743b6566.tgz"
   },
   "devDependencies": {
     "@types/node": "^26.5.0",

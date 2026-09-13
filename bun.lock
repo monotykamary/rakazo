@@ -411,6 +411,7 @@
         "pi-hide-providers": "file:../../vendor/pi-kit/pi-hide-providers-0.1.18-d0b8bbcb190d.tgz",
         "pi-multiprovider": "file:../../vendor/pi-kit/pi-multiprovider-0.6.3-a323974cd31e.tgz",
         "pi-queue-steer-factory": "file:../../vendor/pi-kit/pi-queue-steer-factory-0.17.1-b529d9db29ee.tgz",
+        "pi-vision-handoff": "file:../../vendor/pi-kit/pi-vision-handoff-0.10.3-9a15743b6566.tgz",
         "typebox": "1.3.29",
       },
       "devDependencies": {
@@ -3404,6 +3405,8 @@
     "pi-multiprovider": ["pi-multiprovider@../../vendor/pi-kit/pi-multiprovider-0.6.3-a323974cd31e.tgz", { "peerDependencies": { "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*" } }, "sha512-jNwWx33Pk3Y7sRu3GYknYAHagZnGm+x40dQ2XWlhRslG7ZdzrFxfQ33w1pksxlSKmEiaEbZ2FqqwmkcXhO/3jw=="],
 
     "pi-queue-steer-factory": ["pi-queue-steer-factory@../../vendor/pi-kit/pi-queue-steer-factory-0.17.1-b529d9db29ee.tgz", { "peerDependencies": { "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*" } }, "sha512-qF58hNHd8AuZ7NE376Q9X9kB7pXCu3xgUkL8buld7+cRNTdQKqkvEjLCSrP3Vm+W2/4mRdVw4ktW2LIpbN8nIQ=="],
+
+    "pi-vision-handoff": ["pi-vision-handoff@../../vendor/pi-kit/pi-vision-handoff-0.10.3-9a15743b6566.tgz", { "peerDependencies": { "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*" } }, "sha512-79lQ81U2+bfI8uy0ijeW8K4VGXq8KnnalVWqZd1kXZyEIGyoeCpn8TXt7BY2vRmKo6tcpMtGFX0l+i9x5Lz28g=="],
 
     "piccolore": ["piccolore@0.1.3", "", {}, "sha512-o8bTeDWjE086iwKrROaDf31K0qC/BENdm15/uH9usSC/uZjJOKb2YGiVHfLY4GhwsERiPI1jmwI2XrA7ACOxVw=="],
 

@@ -3,6 +3,7 @@ import { Button, Dialog, DialogClose, DialogContent, DialogTitle } from "@rakazo
 import { X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PiModelPicker } from "../components/PiModelPicker";
+import { VisionHandoffSettings } from "../components/VisionHandoffSettings";
 import { rpc } from "../lib/rpc";
 
 export function ModelSettingsOverlay({ onClose }: { onClose: () => void }) {
@@ -106,6 +107,10 @@ export function ModelSettingsOverlay({ onClose }: { onClose: () => void }) {
             </details>
           )}
         </section>
+        {!loading &&
+          !error &&
+          runtime?.availability.status === "available" &&
+          runtime.catalog.length > 0 && <VisionHandoffSettings catalog={runtime.catalog} />}
         <Button
           variant="ghost"
           size="sm"

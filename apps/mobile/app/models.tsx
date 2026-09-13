@@ -1,3 +1,5 @@
+import type { VisionHandoff } from "@rakazo/contracts";
+import { formatVisionModelRef, parseVisionModelRef } from "@rakazo/contracts";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import {
@@ -28,6 +30,7 @@ export default function Models() {
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [vision, setVision] = useState<VisionHandoff>();
   const [revision, setRevision] = useState(0);
   const forceRefresh = useRef(false);
   useFocusEffect(
@@ -52,11 +55,33 @@ export default function Models() {
         .finally(() => {
           if (active) setLoading(false);
         });
+      void rpc<VisionHandoff>("models/getVisionHandoff", {})
+        .then((next) => {
+          if (active) setVision(next);
+        })
+        .catch(() => {
+          if (active) setVision(undefined);
+        });
       return () => {
         active = false;
       };
     }, [revision]),
   );
+  const visionModels = (snapshot?.catalog ?? []).filter(
+    (entry) => entry.acceptsImages && !entry.placeholder,
+  );
+  const selectedVision = parseVisionModelRef(vision?.enabled ? vision.visionModel : null);
+  async function saveVision(next: string) {
+    const parsed = next ? parseVisionModelRef(next) : null;
+    setVision(
+      await rpc<VisionHandoff>(
+        "models/setVisionHandoff",
+        parsed
+          ? { enabled: true, visionModel: formatVisionModelRef(parsed.provider, parsed.id) }
+          : { enabled: false, visionModel: null },
+      ),
+    );
+  }
   return (
     <SafeAreaView edges={["bottom"]} style={styles.screen}>
       <View style={styles.content}>
@@ -70,6 +95,35 @@ export default function Models() {
           </Text>
         ) : null}
         {loading ? <ActivityIndicator /> : null}
+        {vision && visionModels.length > 0 ? (
+          <View>
+            <Text style={styles.secondary}>{t("Vision")}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected: !selectedVision }}
+              onPress={() => void saveVision("")}
+              style={styles.row}
+            >
+              <Text style={styles.label}>{t("Off")}</Text>
+            </Pressable>
+            {visionModels.map((entry) => {
+              const ref = formatVisionModelRef(entry.provider, entry.id);
+              const selected =
+                selectedVision?.provider === entry.provider && selectedVision.id === entry.id;
+              return (
+                <Pressable
+                  key={ref}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  onPress={() => void saveVision(ref)}
+                  style={styles.row}
+                >
+                  <Text style={styles.label}>{entry.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
         <Pressable
           accessibilityRole="button"
           disabled={loading}

@@ -66,6 +66,7 @@ function buildPiCatalog(): PiCatalogEntry[] {
         signIn: signInMeta?.mode,
         reasoning: Boolean(model.reasoning),
         thinkingLevels,
+        ...(model.input.includes("image") ? { acceptsImages: true } : {}),
         // Compatibility metadata does not prove a model is served by a user's
         // endpoint. Keep each custom connection scoped to its entered model ID.
         ...(provider.id === OPENAI_COMPATIBLE_PROVIDER_ID ? { placeholder: true } : {}),

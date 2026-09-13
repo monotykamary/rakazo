@@ -828,6 +828,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       "models/list",
       "models/credentials",
       "models/getVisibility",
+      "models/getVisionHandoff",
       "models/listForVisibility",
     ]) {
       expect((await raw(app, cookie, procedure, {})).status).toBe(403);

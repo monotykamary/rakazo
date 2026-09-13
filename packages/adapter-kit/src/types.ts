@@ -412,6 +412,8 @@ export interface AgentRunRequest {
   };
   /** Recheck canonical owner model permission before inference; never sent to the worker. */
   assertModelAllowed?: (provider: string, modelId: string) => Promise<void>;
+  /** Host-owned vision describer; never accepted from worker stream options. */
+  visionHandoff?: AgentRunRequest["model"];
   /** Backend-owned connection routing. Credentials never cross the managed worker bridge. */
   modelRouting?: {
     /** Stable principal/space/preference identity; never supplied by the model. */

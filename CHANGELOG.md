@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Vision handoff: pick a vision-capable model in Models settings so text-only coding models can still work from screenshots and attached images.
 - Voice mode: spoken replies, hold-to-talk dictation, and half-duplex calls with ElevenLabs, OpenAI, or Cartesia.
 - Desktop owners using Docker can opt into running bot shell commands directly on their computer. This grants access under the owner's OS account; see [computer providers](docs/self-host.md#choosing-a-computer-provider).
 - GitHub Copilot and SuperGrok / X Premium sign-in for model access.

@@ -109,6 +109,7 @@ import {
   ServicePreviewUrlInputSchema,
   ServicePreviewUrlOutputSchema,
 } from "./services.js";
+import { VisionHandoffSchema } from "./vision-handoff.js";
 import { WorkReceiptSchema } from "./work.js";
 
 const botId = z.object({ botId: Id });
@@ -236,6 +237,8 @@ export const appContract = {
     runtime: oc.input(ModelRuntimeScopeSchema).output(ModelRuntimeSnapshotSchema),
     getVisibility: oc.output(ModelVisibilitySchema),
     setVisibility: oc.input(ModelVisibilitySchema).output(ModelVisibilitySchema),
+    getVisionHandoff: oc.output(VisionHandoffSchema),
+    setVisionHandoff: oc.input(VisionHandoffSchema).output(VisionHandoffSchema),
     listForVisibility: oc.output(z.array(ModelCatalogEntrySchema)),
     getSelection: oc.input(ModelSelectionScopeSchema).output(ModelSelectionStatusSchema),
     setWorkerSelection: oc

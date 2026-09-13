@@ -111,6 +111,7 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
         streamId,
         context,
         options: { maxTokens: options?.maxTokens, temperature: options?.temperature },
+        model: { provider: model.provider, id: model.id },
       })
       .catch(() => {
         void deliverModelEvent(stream, {
@@ -287,6 +288,9 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
       ? (record(data.placement) as { cwd: string; worktreeId?: string })
       : undefined;
     requestedModel = record(data.model) as unknown as Model<Api>;
+    const visionHandoff = data.visionHandoff
+      ? (record(data.visionHandoff) as unknown as Model<Api>)
+      : undefined;
     const restore = data.restore === undefined ? undefined : record(data.restore);
     const savedConfiguration = record(restore?.modelConfiguration ?? {});
     const model = savedConfiguration.model
@@ -352,7 +356,10 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
       baseUrl: "http://broker.invalid",
       api: "openai-completions",
       apiKey: "broker",
-      models: model.id === requestedModel.id ? [requestedModel] : [model, requestedModel],
+      models: [
+        ...(model.id === requestedModel.id ? [requestedModel] : [model, requestedModel]),
+        ...(visionHandoff && visionHandoff.id !== requestedModel.id ? [visionHandoff] : []),
+      ],
       streamSimple: brokerStream,
     });
     // Both normal turns and SDK compaction must use the private broker, not network adapters.
@@ -435,6 +442,7 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
     });
     managedKit = await createManagedKit({
       ...{ getPlacement: () => placement },
+      ...(visionHandoff ? { visionModelId: visionHandoff.id } : {}),
       instructions: String(data.instructions),
       proxyTools: proxies,
       agents:

@@ -103,6 +103,7 @@ function catalogEntry(value: unknown, levels: ThinkingLevel[]): ModelCatalogEntr
     billing: "Pi",
     reasoning: model.reasoning === true,
     thinkingLevels: levels,
+    ...(Array.isArray(model.input) && model.input.includes("image") ? { acceptsImages: true } : {}),
   };
 }
 
@@ -241,41 +242,45 @@ export class LocalPiModelRuntimeService implements PiModelRuntimeService {
   }
 
   private discoverProfile(cwd: string): Promise<PiModelProfile> {
-    return this.probe(async (peer, probeSignal) => {
-      const [availableValue, stateValue, thinkingValue] = await Promise.all([
-        peer.request("get_available_models", {}, probeSignal),
-        peer.request("get_state", {}, probeSignal),
-        peer.request("get_available_thinking_levels", {}, probeSignal),
-      ]);
-      const state = record(stateValue);
-      const current = modelIdentity(state.model);
-      const currentThinking = ThinkingLevelSchema.safeParse(state.thinkingLevel);
-      const profileDefault = current
-        ? {
-            ...current,
-            thinkingLevel: currentThinking.success ? currentThinking.data : null,
-          }
-        : null;
-      const availableModels = record(availableValue).models;
-      if (!Array.isArray(availableModels)) throw new PiModelRuntimeError("PI_PROTOCOL_FAILED");
-      const sharedLevels = thinkingLevels(thinkingValue);
-      const catalog: ModelCatalogEntry[] = [];
-      const seen = new Set<string>();
-      for (const value of availableModels) {
-        const identity = modelIdentity(value);
-        if (!identity) continue;
-        const key = identity.provider + "\0" + identity.modelId;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const model = record(value);
-        const ownLevels = thinkingLevels(model);
-        const levels =
-          ownLevels.length > 0 ? ownLevels : model.reasoning === false ? [] : sharedLevels;
-        const entry = catalogEntry(value, levels);
-        if (entry) catalog.push(entry);
-      }
-      return { catalog, profileDefault };
-    }, undefined, cwd);
+    return this.probe(
+      async (peer, probeSignal) => {
+        const [availableValue, stateValue, thinkingValue] = await Promise.all([
+          peer.request("get_available_models", {}, probeSignal),
+          peer.request("get_state", {}, probeSignal),
+          peer.request("get_available_thinking_levels", {}, probeSignal),
+        ]);
+        const state = record(stateValue);
+        const current = modelIdentity(state.model);
+        const currentThinking = ThinkingLevelSchema.safeParse(state.thinkingLevel);
+        const profileDefault = current
+          ? {
+              ...current,
+              thinkingLevel: currentThinking.success ? currentThinking.data : null,
+            }
+          : null;
+        const availableModels = record(availableValue).models;
+        if (!Array.isArray(availableModels)) throw new PiModelRuntimeError("PI_PROTOCOL_FAILED");
+        const sharedLevels = thinkingLevels(thinkingValue);
+        const catalog: ModelCatalogEntry[] = [];
+        const seen = new Set<string>();
+        for (const value of availableModels) {
+          const identity = modelIdentity(value);
+          if (!identity) continue;
+          const key = identity.provider + "\0" + identity.modelId;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const model = record(value);
+          const ownLevels = thinkingLevels(model);
+          const levels =
+            ownLevels.length > 0 ? ownLevels : model.reasoning === false ? [] : sharedLevels;
+          const entry = catalogEntry(value, levels);
+          if (entry) catalog.push(entry);
+        }
+        return { catalog, profileDefault };
+      },
+      undefined,
+      cwd,
+    );
   }
 
   private touchProfileCache(cwd: string, entry: ProfileCacheEntry): void {
@@ -328,7 +333,12 @@ export class LocalPiModelRuntimeService implements PiModelRuntimeService {
 
   private async ensureWarm(probeCwd: string): Promise<WarmPeer> {
     const existing = this.warm;
-    if (existing && existing.cwd === probeCwd && existing.child.exitCode === null && existing.child.signalCode === null) {
+    if (
+      existing &&
+      existing.cwd === probeCwd &&
+      existing.child.exitCode === null &&
+      existing.child.signalCode === null
+    ) {
       return existing;
     }
     if (existing) await this.close();
@@ -369,7 +379,9 @@ export class LocalPiModelRuntimeService implements PiModelRuntimeService {
           BLOCKING_PI_UI_METHODS.has(method)
         ) {
           queueMicrotask(() => {
-            void peer.send({ type: "extension_ui_response", id, cancelled: true }).catch(() => undefined);
+            void peer
+              .send({ type: "extension_ui_response", id, cancelled: true })
+              .catch(() => undefined);
           });
         }
       },

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -25,6 +25,7 @@ import { createManagedMcpProvider, type ManagedProxyTool } from "./pi-managed-mc
 import { managedMemoryProvider } from "./pi-managed-memory.js";
 import { createBrokerCall, managedCoreTools } from "./pi-managed-tools.js";
 import { manageModelVisibilityExtension } from "./pi-managed-visibility.js";
+import { manageVisionHandoffExtension } from "./pi-managed-vision-handoff.js";
 import { MANAGED_RESERVED_TOOL_NAMES } from "./pi-tool-names.js";
 
 import { buildRakazoGuidance, RAKAZO_SKILL_PATH, withRakazoSkillRead } from "./rakazo-guidance.js";
@@ -48,6 +49,8 @@ export interface ManagedKitOptions {
   getPlacement?(): { cwd: string; worktreeId?: string } | undefined;
   idleTtlMs?: number;
   now?: () => number;
+  /** Host-owned describer identity registered on rakazo-broker; absent disables handoff. */
+  visionModelId?: string;
 }
 export interface ManagedKit {
   resourceLoader: ResourceLoader;
@@ -112,6 +115,32 @@ export async function createManagedKit(options: ManagedKitOptions): Promise<Mana
   const scratch = await mkdtemp(join(options.scratchRoot ?? process.cwd(), ".rakazo-kit-"));
   const agentDir = join(scratch, "agent");
   await mkdir(agentDir, { mode: 0o700 });
+  if (options.visionModelId) {
+    await mkdir(join(agentDir, "extensions"), { mode: 0o700 });
+    await writeFile(
+      join(agentDir, "extensions", "pi-vision-handoff.json"),
+      `${JSON.stringify(
+        {
+          enabled: true,
+          visionModel: `rakazo-broker/${options.visionModelId}`,
+          fallbackModels: [],
+          autoHandoff: true,
+          handoffModels: [],
+          prewarmPastedImages: false,
+          asyncClipboardHandoff: false,
+          persistDescriptions: false,
+          cacheMax: 50,
+          maxDescriptionLines: 0,
+          thinking: false,
+          thinkingLevel: "medium",
+          awarePrompt: true,
+        },
+        null,
+        2,
+      )}\n`,
+      { mode: 0o600 },
+    );
+  }
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = agentDir;
   // Fabric host mode receives immutable authority from the factory, never a config file.
@@ -294,7 +323,11 @@ export async function createManagedKit(options: ManagedKitOptions): Promise<Mana
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
-    additionalExtensionPaths: [installation.extensionPaths[3]!, installation.extensionPaths[5]!],
+    additionalExtensionPaths: [
+      installation.extensionPaths[3]!,
+      installation.extensionPaths[5]!,
+      installation.extensionPaths[7]!,
+    ],
     additionalSkillPaths: [RAKAZO_SKILL_PATH],
     extensionFactories: [
       {
@@ -358,6 +391,11 @@ export async function createManagedKit(options: ManagedKitOptions): Promise<Mana
       .extensions.find((extension) => extension.path === installation.extensionPaths[5]);
     if (!visibility) throw new Error("Managed pi-hide-providers extension unavailable");
     manageModelVisibilityExtension(visibility, scratch);
+    const vision = loader
+      .getExtensions()
+      .extensions.find((extension) => extension.path === installation.extensionPaths[7]);
+    if (!vision) throw new Error("Managed pi-vision-handoff extension unavailable");
+    manageVisionHandoffExtension(vision);
   } catch (error) {
     await rm(scratch, { recursive: true, force: true });
     process.env.PI_CODING_AGENT_DIR = previousAgentDir;

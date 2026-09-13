@@ -163,6 +163,21 @@ describe("managed Pi kit", () => {
         .handler("reset", runtime.session.extensionRunner.createContext() as never),
     ).rejects.toThrow("Rakazo model settings");
   }, 60000);
+  it("loads vision-handoff without exposing worker-local preference writes", async () => {
+    const { kit, runtime, paid } = await harness([]);
+    const extension = kit.resourceLoader
+      .getExtensions()
+      .extensions.find((entry) => entry.commands.has("vision-handoff"));
+    expect(extension?.path).toMatch(/vision-handoff\.ts$/);
+    const requested = runtime.session.model;
+    await expect(
+      extension!.commands
+        .get("vision-handoff")!
+        .handler("", runtime.session.extensionRunner.createContext() as never),
+    ).rejects.toThrow("Rakazo model settings");
+    expect(runtime.session.model).toEqual(requested);
+    expect(paid).not.toHaveBeenCalled();
+  }, 60000);
   it("captures canonical tools and runs native agents through the authorized port", async () => {
     const read = vi.fn(async () => textResult(JSON.stringify({ content: "authorized source" })));
     const write = vi.fn(async () => textResult(JSON.stringify({ ok: true })));

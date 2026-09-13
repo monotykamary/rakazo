@@ -39,6 +39,7 @@ import {
   ModelHiddenError,
   ModelSelectionSchema,
   OutgoingDraftFieldsSchema,
+  parseVisionModelRef,
   ServiceChangesInputSchema,
   ServiceDeclareInputSchema,
   ThinkingLevelSchema,
@@ -96,6 +97,7 @@ import {
   effectiveMemoryScope,
   findDefaultModelCredential,
   findModelCredential,
+  getVisionHandoff,
   InvalidSpaceNameError,
   isPremoveGracefulPauseRequested,
   loadRunHistoryMessages,
@@ -114,7 +116,6 @@ import {
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { parse as parseShellCommand } from "shell-quote";
-import { conversationSessionId } from "./pi-runtime.js";
 import {
   connectAgent,
   messageConnectedAgent,
@@ -125,6 +126,7 @@ import {
   formatAgentEnvironmentInstruction,
   redactAgentCommandResult,
 } from "./agent-environment.js";
+import { createAgentRunTopology, enqueueFabricQueue } from "./agent-topology.js";
 import { buildApprovalAskBlock, buildOutgoingDraftAskBlock } from "./approval-ask.js";
 import {
   approvalPausedToolResult,
@@ -165,7 +167,6 @@ import {
 } from "./auto-review.js";
 import { botMemoryClient } from "./bot-memory-client.js";
 import { createBotMemorySource } from "./bot-memory-sources.js";
-import { createAgentRunTopology, enqueueFabricQueue } from "./agent-topology.js";
 import { loadBotMessageContext, messageBot, returnBotMessageOutcome } from "./bot-messages.js";
 import {
   findBotSecret,
@@ -275,6 +276,7 @@ import {
   serializeModelSecret,
 } from "./pi-oauth.js";
 import { authorizedRelativePlacement, bindPlacementExecutor } from "./pi-placement.js";
+import { conversationSessionId } from "./pi-runtime.js";
 import {
   assertPlotDataWithinLimits,
   PLOT_TOOL_GUIDE,
@@ -1557,6 +1559,58 @@ export function createRunExecutor(deps: ExecutorDeps) {
         const acceptsImages =
           deps.runtime.describe().capabilities.scripted ||
           modelAcceptsImageInput(runModelProvider, runModelId);
+        let visionHandoff: AgentRunRequest["model"] | undefined;
+        if (!localPiRuntime) {
+          const preference = await getVisionHandoff(deps.prisma, run);
+          const selectedVision = parseVisionModelRef(
+            preference.enabled ? preference.visionModel : null,
+          );
+          if (
+            selectedVision &&
+            modelAcceptsImageInput(selectedVision.provider, selectedVision.id)
+          ) {
+            try {
+              await assertModelVisibleForOwner(
+                deps.prisma,
+                run,
+                selectedVision.provider,
+                selectedVision.id,
+              );
+              const visionCredential = await findModelCredential(
+                deps.prisma,
+                { userId: run.userId, spaceId: run.spaceId },
+                selectedVision.provider,
+              );
+              if (
+                visionCredential ||
+                matchesDeploymentModel(selectedVision.provider, selectedVision.id, runDeployment)
+              ) {
+                const auth = await resolveModelKey(
+                  deps,
+                  run.userId,
+                  run.spaceId,
+                  visionCredential,
+                  selectedVision.provider,
+                  (values) => runSecrets.push(...values),
+                );
+                runSecrets.push(...auth.redact);
+                visionHandoff = {
+                  provider: selectedVision.provider,
+                  id: selectedVision.id,
+                  apiKey: auth.oauth ? undefined : auth.apiKey,
+                  baseUrl: auth.baseUrl,
+                  reasoning: auth.reasoning,
+                  acceptsImages: true,
+                  oauth: auth.oauth
+                    ? { credential: auth.oauth, persist: auth.persistOAuth }
+                    : undefined,
+                };
+              }
+            } catch {
+              visionHandoff = undefined;
+            }
+          }
+        }
         const groupContext = thread.groupId
           ? await loadGroupContext(deps.prisma, thread.groupId, { id: bot.id, name: bot.name })
           : undefined;
@@ -1568,7 +1622,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
               .filter(Boolean)
               .join("\n\n")
           : undefined;
-        const graphicalToolsAllowed = !dispatchedWork && graphical && acceptsImages;
+        const graphicalToolsAllowed =
+          !dispatchedWork && graphical && (acceptsImages || Boolean(visionHandoff));
         const pageBrowserAllowed =
           !dispatchedWork && graphical && browser.describe().capabilities.page;
         const builtins = [
@@ -1878,7 +1933,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           if (PAGE_BROWSER_TOOL_NAMES.has(name) && !pageBrowserAllowed) {
             return { error: "Page browser is unavailable on this computer." };
           }
-          if (IMAGE_RETURNING_COMPUTER_TOOLS.has(name) && !acceptsImages) {
+          if (IMAGE_RETURNING_COMPUTER_TOOLS.has(name) && !acceptsImages && !visionHandoff) {
             return { error: MODEL_CANNOT_SEE_MESSAGE };
           }
           let outgoingDraft: ReturnType<typeof resolveOutgoingMessageDraft> | undefined;
@@ -3935,6 +3990,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                   : undefined,
               },
               modelRouting,
+              visionHandoff,
               assertModelAllowed: (provider, modelId) =>
                 assertModelVisibleForOwner(deps.prisma, run, provider, modelId),
               resolveParticipantModel: managedRuntime
@@ -4034,7 +4090,10 @@ export function createRunExecutor(deps: ExecutorDeps) {
                         return { id, name: name ?? id };
                       },
                       dispatchWork: async ({ task, name, cwd, tools }) => {
-                        if (!cwd) throw new Error("Durable spawn requires cwd as the authorized project path");
+                        if (!cwd)
+                          throw new Error(
+                            "Durable spawn requires cwd as the authorized project path",
+                          );
                         const placedPath = (value: string) =>
                           resolveBotWorkspaceCwd(
                             fileWorkspaceMode,
@@ -4558,7 +4617,10 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 payload: {
                   name: event.name,
                   executionId: event.executionId,
-                  ...(event.args && typeof event.args === "object" && !Array.isArray(event.args) && "display" in event.args
+                  ...(event.args &&
+                  typeof event.args === "object" &&
+                  !Array.isArray(event.args) &&
+                  "display" in event.args
                     ? { display: (event.args as { display?: unknown }).display }
                     : {}),
                 },

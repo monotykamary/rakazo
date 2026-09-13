@@ -47,6 +47,7 @@ import {
   McpOAuthBroker,
   type MemoryProviderResolver,
   mapScratchpadItem,
+  modelAcceptsImageInput,
   type OfficeModelRuntimeResolver,
   type PiModelRuntimeService,
   planLiveConnectionSync,
@@ -201,6 +202,7 @@ import {
   threadHead,
   threadSnapshot,
 } from "./thread-target.js";
+import { getOwnerVisionHandoff, setOwnerVisionHandoff } from "./vision-handoff.js";
 import {
   listVoiceCatalog,
   loadDefaultVoiceCredential,
@@ -819,6 +821,14 @@ export function createRouter(deps: RouterDeps) {
         return { hide: [] };
       }),
       setVisibility: authed.models.setVisibility.handler(() => rejectModelManagement()),
+      getVisionHandoff: authed.models.getVisionHandoff.handler(({ context }) => {
+        assertLocalPiActor(context.actor);
+        return getOwnerVisionHandoff(deps.prisma, context.actor);
+      }),
+      setVisionHandoff: authed.models.setVisionHandoff.handler(({ context, input }) => {
+        assertLocalPiActor(context.actor);
+        return setOwnerVisionHandoff(deps.prisma, context.actor, input, modelAcceptsImageInput);
+      }),
       listForVisibility: authed.models.listForVisibility.handler(({ context }) =>
         piOwnedCatalog(deps, context.actor, context.signal),
       ),

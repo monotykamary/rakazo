@@ -18,6 +18,7 @@ model User {
   avatarStyle                 String                       @default("organic")
   onboardedAt                 DateTime?
   modelVisibility             Json                         @default("{\"hide\":[]}")
+  visionHandoff               Json                         @default("{\"enabled\":false,\"visionModel\":null}")
   sessions                    Session[]
   accounts                    Account[]
   members                     Member[]

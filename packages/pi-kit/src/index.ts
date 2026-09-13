@@ -38,6 +38,12 @@ export const PI_KIT_PACKAGES = [
     entry: "pi-contour/package.json",
     extensions: ["dist/index.mjs"],
   },
+  {
+    name: "pi-vision-handoff",
+    version: "0.10.3",
+    entry: "pi-vision-handoff/package.json",
+    extensions: ["vision-handoff.ts"],
+  },
 ] as const;
 
 export interface PiKitInstallation {

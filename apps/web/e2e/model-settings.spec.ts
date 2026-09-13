@@ -338,12 +338,18 @@ test("failed and delayed refresh preserve draft; reasoning follows Pi capabiliti
   await expect.poll(() => Boolean(release)).toBe(true);
   release!();
   await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
-  await expect(page.getByRole("option", { name: /Basic/i })).toHaveAttribute("data-checked", "true");
+  await expect(page.getByRole("option", { name: /Basic/i })).toHaveAttribute(
+    "data-checked",
+    "true",
+  );
   delay = false;
   fail = true;
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.getByRole("alert")).toHaveText("Could not refresh models");
-  await expect(page.getByRole("option", { name: /Basic/i })).toHaveAttribute("data-checked", "true");
+  await expect(page.getByRole("option", { name: /Basic/i })).toHaveAttribute(
+    "data-checked",
+    "true",
+  );
 });
 
 for (const available of [false, true]) {
@@ -451,4 +457,36 @@ test("unsupported persisted thinking stays visible and switching does not claim 
   await expect(page.getByTestId("selected-model")).toContainText(
     "private-extension/custom-research-2026",
   );
+});
+
+test("global inventory picks a vision describer", async ({ page }, testInfo) => {
+  let handoff = { enabled: false, visionModel: null as string | null };
+  const visionCatalog = catalog.map((entry, index) =>
+    index === 0 ? { ...entry, acceptsImages: true } : entry,
+  );
+  await page.route("**/rpc/**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/rpc/models/runtime") {
+      return route.fulfill({ json: { json: { ...snapshot(), catalog: visionCatalog } } });
+    }
+    if (path === "/rpc/models/getVisionHandoff") {
+      return route.fulfill({ json: { json: handoff } });
+    }
+    if (path === "/rpc/models/setVisionHandoff") {
+      handoff = route.request().postDataJSON().json;
+      return route.fulfill({ json: { json: handoff } });
+    }
+    return route.fulfill({ status: 503, body: "Offline fixture" });
+  });
+  await page.goto("/e2e/fixtures/pi-models.html");
+  const vision = page.getByTestId("vision-handoff").getByLabel("Vision");
+  await expect(vision).toHaveValue("");
+  await vision.selectOption("custom-extension/actual-running-v2");
+  await expect
+    .poll(() => handoff)
+    .toEqual({
+      enabled: true,
+      visionModel: "custom-extension/actual-running-v2",
+    });
+  await captureScreenshot(page, testInfo, "pi-model-vision-handoff");
 });

@@ -24,6 +24,7 @@ const allSources = [
   "pi-multiprovider",
   "pi-hide-providers",
   "pi-contour",
+  "pi-vision-handoff",
 ];
 const args = process.argv.slice(2);
 if (args.length && (args.length !== 2 || args[0] !== "--only" || !allSources.includes(args[1]))) {

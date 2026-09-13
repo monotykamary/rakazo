@@ -18,4 +18,5 @@ export * from "./rpc.js";
 export * from "./runs.js";
 export * from "./search.js";
 export * from "./services.js";
+export * from "./vision-handoff.js";
 export * from "./work.js";

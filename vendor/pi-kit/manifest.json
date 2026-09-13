@@ -49,6 +49,13 @@
       "filename": "pi-contour-0.2.0-13e89ebded96.tgz",
       "sha256": "13e89ebded96477f10cca52077e99ee0dac155380a392d42b53dc61f76852000",
       "baseCommit": "91294973f86d25a3db8efdb0a8cbcee8c653ec28"
+    },
+    {
+      "name": "pi-vision-handoff",
+      "version": "0.10.3",
+      "filename": "pi-vision-handoff-0.10.3-9a15743b6566.tgz",
+      "sha256": "9a15743b6566245eb92c536d60e852500603a46cf486681d5b561714b40ac89d",
+      "baseCommit": "406f31bd6232403a3705a42e1c2be7a4d83014e1"
     }
   ]
 }

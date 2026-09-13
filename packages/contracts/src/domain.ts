@@ -929,6 +929,8 @@ export const ModelCatalogEntrySchema = z.object({
   thinkingLevels: z.array(ThinkingLevelSchema).optional(),
   /** Catalog stand-in so a provider appears before the user enters a real model id. */
   placeholder: z.boolean().optional(),
+  /** Whether this catalog model declares image input. */
+  acceptsImages: z.boolean().optional(),
 });
 export type ModelCatalogEntry = z.infer<typeof ModelCatalogEntrySchema>;
 

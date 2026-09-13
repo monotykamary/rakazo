@@ -164,6 +164,8 @@ describe("contracts", () => {
 
   it("exposes the product rpc surface", () => {
     expect(appContract.models.beginOAuth).toBeTruthy();
+    expect(appContract.models.getVisionHandoff).toBeTruthy();
+    expect(appContract.models.setVisionHandoff).toBeTruthy();
     expect(appContract.bootstrap).toBeTruthy();
     expect(appContract.models.completeOAuth).toBeTruthy();
     expect(appContract.bots.create).toBeTruthy();
