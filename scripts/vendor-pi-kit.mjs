@@ -1,6 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +23,7 @@ const allSources = [
   "pi-retry",
   "pi-multiprovider",
   "pi-hide-providers",
+  "pi-contour",
 ];
 const args = process.argv.slice(2);
 if (args.length && (args.length !== 2 || args[0] !== "--only" || !allSources.includes(args[1]))) {
@@ -84,6 +94,10 @@ try {
     if (!packages.some((entry) => entry.name === record.name)) packages.push(record);
   }
   writeFileSync(artifactManifestPath, `${JSON.stringify({ version: 1, packages }, null, 2)}\n`);
+  const keep = new Set(["manifest.json", ...packages.map((record) => record.filename)]);
+  for (const name of readdirSync(destination)) {
+    if (!keep.has(name)) unlinkSync(resolve(destination, name));
+  }
   writeFileSync(kitManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   for (const consumer of consumers) {
     const content = `${JSON.stringify(consumer.manifest, null, 2)}\n`;

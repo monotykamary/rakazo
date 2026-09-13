@@ -34,10 +34,14 @@ export class ModelRoutingCache {
       const oldest = [...this.entries].sort((a, b) => a[1].touched - b[1].touched)[0];
       if (oldest) this.entries.delete(oldest[0]);
     }
+    const rotate = strategy === "round-robin";
     const service = new MultiProviderService({
-      defaultPolicy: strategy === "ordered" ? "priority" : "round-robin",
+      defaultPolicy: rotate ? "round-robin" : "priority",
       affinity: false,
       now: this.now,
+      // Start at the first registered connection, then rotate. Unbiased pools
+      // otherwise pick a random first account on each new scheduler.
+      ...(rotate ? { randomInt: () => 0 } : {}),
     });
     const references = targets.map(({ credentialId }, index) => ({
       id: String(index).padStart(3, "0"),
@@ -46,7 +50,12 @@ export class ModelRoutingCache {
       credentialRef: credentialId,
       priority: index,
     }));
-    service.registerProvider({ id: "pool", label: "Connections", accounts: () => references });
+    service.registerProvider({
+      id: "pool",
+      label: "Connections",
+      accounts: () => references,
+      ...(rotate ? { selectionBias: "none" as const } : {}),
+    });
     this.entries.set(identity, { service, touched: now });
     return service;
   }

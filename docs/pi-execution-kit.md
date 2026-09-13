@@ -9,7 +9,7 @@ Rakazo keeps a continuous conversation per bot. Isolated Pi coding-agent RPC wor
 
 ## Architecture
 
-- `packages/pi-kit` pins Pi and content-addressed Fabric, Fovea, queue-steer, retry, multiprovider, and hide-providers archives. Startup validates installed identities. Runtime never installs extensions or resolves sibling checkouts.
+- `packages/pi-kit` pins Pi and content-addressed Fabric, Fovea, queue-steer, retry, multiprovider, hide-providers, and Contour archives. Startup validates installed identities. Runtime never installs extensions or resolves sibling checkouts.
 - The supervisor launches an unprivileged, networkless worker with a read-only image, bounded scratch space, and one private bridge socket. Computer files and credentials are not mounted into that worker.
 - Backend model and tool brokers preserve connection ownership, computer placement, approval latches, and run leases. Fabric core overrides never fall back to host tools. Managed provider authority stays sealed across reloads.
 - Fovea indexes bounded, authorized computer snapshots. Explicit roots retain isolated observation state; project configuration and plugins are not loaded from those snapshots.
@@ -80,7 +80,7 @@ Use Node 24 LTS (or a supported newer even-numbered release) and the repository'
 | Shared queue state and write-ahead acknowledgment | Offline tests and real PostgreSQL concurrency/recovery probes passed |
 | Managed Fabric, all eight core overrides, Fovea snapshots, exact recall, and deterministic idle compaction | Installed-kit conformance probes passed |
 | Same-provider rotation and explicit fallback | Scheduler tests and real offline SDK/HTTP probes passed |
-| Account model visibility | Exact-rule safety, authenticated owner/catalog isolation, hidden pin/worker/fallback rejection, and extracted upstream headless/conformance probes passed; clean-install six-package resolution, artifact checks, and actual managed-kit headless loading passed |
+| Account model visibility | Exact-rule safety, authenticated owner/catalog isolation, hidden pin/worker/fallback rejection, and extracted upstream headless/conformance probes passed; clean-install seven-package resolution, artifact checks, and actual managed-kit headless loading passed |
 | Shared queue/Flow/routing UI | App type checks, controller tests, browser control probes, and CI screenshot-test registration passed |
 | Clean installation and migrations | Standalone kit resolution and clean PostgreSQL migration deployment passed |
 | Atomic secret-preserving edits and delegation reservations | Raw-byte, concurrent-process, approval-boundary, reservation-race, and actual-executor PostgreSQL probes passed |

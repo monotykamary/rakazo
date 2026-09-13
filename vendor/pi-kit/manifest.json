@@ -10,38 +10,45 @@
     },
     {
       "name": "pi-fovea",
-      "version": "0.22.1",
-      "filename": "pi-fovea-0.22.1-b8a01161c936.tgz",
-      "sha256": "b8a01161c9360dea49afa43e7282eba0edc0da6e54c5e21f011eb12d812e96f5",
-      "baseCommit": "7f259549432aebc94cc67a4170b783027f8e9ddd"
+      "version": "0.27.0",
+      "filename": "pi-fovea-0.27.0-594e101ead06.tgz",
+      "sha256": "594e101ead064d2f5f652063ae41fcdd018360eabbe6631678c31de0ff366738",
+      "baseCommit": "7138743787b538f3dd2eef077dbbd7ca2b3c4504"
     },
     {
       "name": "pi-queue-steer-factory",
       "version": "0.17.1",
       "filename": "pi-queue-steer-factory-0.17.1-b529d9db29ee.tgz",
       "sha256": "b529d9db29eec2ac389629c6104d537f64545118bc9909d863ac7d7d3da42b44",
-      "baseCommit": "d7dfa70e2d97e21828cff0dda74f384eac6fb492"
+      "baseCommit": "c702ace4115d288fa66a60e33d6bfc93e0f9fcee"
     },
     {
       "name": "@monotykamary/pi-retry",
-      "version": "0.8.6",
-      "filename": "monotykamary-pi-retry-0.8.6-ac70784e6bb9.tgz",
-      "sha256": "ac70784e6bb966ec681dde8eb9d4f87314a33fa2191a9da915dab47b0da7eef7",
-      "baseCommit": "c342daa5de9c664273bc66b3c15ca52cf36f7b49"
+      "version": "0.9.0",
+      "filename": "monotykamary-pi-retry-0.9.0-3158b56e1d7e.tgz",
+      "sha256": "3158b56e1d7ed4ad03f428c6fa5bcd94b90bfaad433e828295444c96e3763db1",
+      "baseCommit": "bb726b75a923a059480615f7c907cd674bf93a91"
     },
     {
       "name": "pi-multiprovider",
-      "version": "0.2.10",
-      "filename": "pi-multiprovider-0.2.10-7f54b802745f.tgz",
-      "sha256": "7f54b802745f41d4858608f4f7c7fa3f17f379233440a9f854b31da53cbd6a7f",
-      "baseCommit": "a598e0198d03e36b0c0d7c73f4b082115bb373d9"
+      "version": "0.6.3",
+      "filename": "pi-multiprovider-0.6.3-a323974cd31e.tgz",
+      "sha256": "a323974cd31ec34f73dcb601e1d30efccbabaa952e383bc8fe3dce08ec6f5926",
+      "baseCommit": "7788f7e499fdb684457540404e238a493bc07baf"
     },
     {
       "name": "pi-hide-providers",
       "version": "0.1.18",
-      "filename": "pi-hide-providers-0.1.18-d26f6fc7825e.tgz",
-      "sha256": "d26f6fc7825e60708cf5579e9bc2654310132c2281a0c9845fd06247da81dc29",
+      "filename": "pi-hide-providers-0.1.18-d0b8bbcb190d.tgz",
+      "sha256": "d0b8bbcb190d0fa1c2179855e7f94afb2afc1bbac78fc458c35a2b5c845e0fba",
       "baseCommit": "9c055d0916f661a198287f60d501180c7595d67c"
+    },
+    {
+      "name": "pi-contour",
+      "version": "0.2.0",
+      "filename": "pi-contour-0.2.0-13e89ebded96.tgz",
+      "sha256": "13e89ebded96477f10cca52077e99ee0dac155380a392d42b53dc61f76852000",
+      "baseCommit": "91294973f86d25a3db8efdb0a8cbcee8c653ec28"
     }
   ]
 }

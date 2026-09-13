@@ -16,11 +16,12 @@
     "@earendil-works/pi-tui": "0.85.1",
     "typebox": "1.3.29",
     "pi-fabric": "file:../../vendor/pi-kit/pi-fabric-0.92.5-c381801e61ce.tgz",
-    "pi-fovea": "file:../../vendor/pi-kit/pi-fovea-0.22.1-b8a01161c936.tgz",
+    "pi-fovea": "file:../../vendor/pi-kit/pi-fovea-0.27.0-594e101ead06.tgz",
     "pi-queue-steer-factory": "file:../../vendor/pi-kit/pi-queue-steer-factory-0.17.1-b529d9db29ee.tgz",
-    "@monotykamary/pi-retry": "file:../../vendor/pi-kit/monotykamary-pi-retry-0.8.6-ac70784e6bb9.tgz",
-    "pi-multiprovider": "file:../../vendor/pi-kit/pi-multiprovider-0.2.10-7f54b802745f.tgz",
-    "pi-hide-providers": "file:../../vendor/pi-kit/pi-hide-providers-0.1.18-d26f6fc7825e.tgz"
+    "@monotykamary/pi-retry": "file:../../vendor/pi-kit/monotykamary-pi-retry-0.9.0-3158b56e1d7e.tgz",
+    "pi-multiprovider": "file:../../vendor/pi-kit/pi-multiprovider-0.6.3-a323974cd31e.tgz",
+    "pi-hide-providers": "file:../../vendor/pi-kit/pi-hide-providers-0.1.18-d0b8bbcb190d.tgz",
+    "pi-contour": "file:../../vendor/pi-kit/pi-contour-0.2.0-13e89ebded96.tgz"
   },
   "devDependencies": {
     "@types/node": "^26.5.0",
