@@ -73,7 +73,9 @@ import {
   type MarkdownArtifactPreviewTarget,
 } from "../components/markdown-artifact-preview";
 import { NativeSymbol } from "../components/native-symbol";
+import { ComputerTakeoverCard } from "../components/ComputerTakeoverCard";
 import { OutgoingDraftCard } from "../components/OutgoingDraftCard";
+import { ToolStepsRow } from "../components/ToolStepsRow";
 import { PeerMessagesSheet } from "../components/PeerMessagesSheet";
 import { ComposerOpsPills } from "../components/ComposerOpsPills";
 import { GroupQueueStrip, QueueStrip } from "../components/QueueStrip";
@@ -2723,6 +2725,28 @@ const MessageBubble = memo(function MessageBubble({
       </View>
     );
   }
+  const computer = message.blocks.find(
+    (block): block is Extract<MessageBlock, { kind: "computer" }> => block.kind === "computer",
+  );
+  if (computer) {
+    const stepColor =
+      bots.find((bot) => bot.id === cardBotId)?.color ?? tokens.mutedForeground;
+    return (
+      <View style={{ gap: 8, width: "100%" }}>
+        {message.blocks
+          .filter((block): block is Extract<MessageBlock, { kind: "steps" }> => block.kind === "steps")
+          .map((block, index) => (
+            <ToolStepsRow
+              key={`steps-${index}`}
+              steps={block.steps}
+              color={stepColor}
+              identity={cardBotId}
+            />
+          ))}
+        <ComputerTakeoverCard block={computer} botId={cardBotId} />
+      </View>
+    );
+  }
   const ask = message.blocks.find(
     (block): block is Extract<MessageBlock, { kind: "ask" }> =>
       block.kind === "ask" && !isApprovalAskBlock(block) && !block.actions?.length,
@@ -3237,17 +3261,28 @@ const MessageBubble = memo(function MessageBubble({
   const speaker =
     message.role === "bot" ? (memberName(members, message.botId) ?? botName) : undefined;
   const firstContent = segments.findIndex((segment) => segment.kind === "content");
+  const stepColor =
+    bots.find((bot) => bot.id === (message.botId ?? botId))?.color ?? tokens.mutedForeground;
   return (
     <View style={{ gap: 8, width: "100%" }}>
-      {segments.map((segment, index) => (
-        <MessageTextCard
-          key={`${message.id}-content-${index}`}
-          message={{ ...message, blocks: segment.blocks }}
-          speaker={index === firstContent ? speaker : undefined}
-          replyPreview={index === firstContent ? replyPreview : undefined}
-          actionProps={actionProps}
-        />
-      ))}
+      {segments.map((segment, index) =>
+        segment.kind === "steps" ? (
+          <ToolStepsRow
+            key={`${message.id}-steps-${index}`}
+            steps={segment.block.steps}
+            color={stepColor}
+            identity={message.botId ?? botId}
+          />
+        ) : (
+          <MessageTextCard
+            key={`${message.id}-content-${index}`}
+            message={{ ...message, blocks: segment.blocks }}
+            speaker={index === firstContent ? speaker : undefined}
+            replyPreview={index === firstContent ? replyPreview : undefined}
+            actionProps={actionProps}
+          />
+        ),
+      )}
       {appConnectBlocks.map((block, index) => (
         <AppConnectCard
           key={`${block.provider}-${index}`}
@@ -3402,13 +3437,14 @@ function AskBlock({
       : ask.purpose === "api_key"
         ? t("API key")
         : t("Code");
-  const submitLabel = secretInput ? t("Save") : t("Send answer");
+  const submitLabel = secretInput ? t("Save") : t("Send back");
   const submittingLabel = secretInput ? t("Saving…") : t("Sending…");
+  const pending = !answered && canAnswer;
 
-  async function submit() {
+  async function submit(value?: string) {
     if (submitting) return;
-    if (secretInput ? answer.length === 0 : !answer.trim()) return;
-    const submitValue = secretInput ? answer : answer.trim();
+    const submitValue = value ?? (secretInput ? answer : answer.trim());
+    if (secretInput ? submitValue.length === 0 : !submitValue.trim()) return;
     setSubmitting(true);
     setError(null);
     if (secretInput) setAnswer("");
@@ -3434,9 +3470,19 @@ function AskBlock({
         gap: 10,
       }}
     >
+      {secretInput ? null : (
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <Text {...actionProps} style={{ color: tokens.foreground, fontSize: 14, fontWeight: "600" }}>
+            {t("Question")}
+          </Text>
+          <Text style={{ color: pending ? tokens.warning : tokens.mutedForeground, fontSize: 13 }}>
+            {pending ? t("Needs you") : answered ? t("Handled") : t("No longer active")}
+          </Text>
+        </View>
+      )}
       <Text
-        {...actionProps}
-        style={{ color: tokens.foreground, fontSize: 15.5, fontWeight: "600" }}
+        {...(secretInput ? actionProps : {})}
+        style={{ color: tokens.foreground, fontSize: 15.5, fontWeight: secretInput ? "600" : "400" }}
       >
         {ask.text}
       </Text>
@@ -3449,7 +3495,7 @@ function AskBlock({
         <Text style={{ color: tokens.mutedForeground, fontSize: 13.5 }}>{ask.detail}</Text>
       ) : null}
       {answered ? (
-        <Text style={{ color: tokens.success, fontSize: 14 }}>
+        <Text style={{ color: tokens.mutedForeground, fontSize: 14 }}>
           {secretInput ? t("Saved") : t("Answered: {answer}", { answer: ask.answer ?? t("Done") })}
         </Text>
       ) : canAnswer ? (
@@ -3458,7 +3504,7 @@ function AskBlock({
             accessibilityLabel={secretInput ? secretLabel : t("Answer")}
             value={answer}
             onChangeText={setAnswer}
-            placeholder={secretInput ? secretLabel : t("Type your answer")}
+            placeholder={secretInput ? secretLabel : t("Type an answer")}
             placeholderTextColor={tokens.mutedForeground}
             secureTextEntry={secretInput}
             autoComplete="off"
@@ -3476,28 +3522,68 @@ function AskBlock({
               paddingVertical: 9,
             }}
           />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={submitLabel}
-            disabled={(secretInput ? answer.length === 0 : !answer.trim()) || submitting}
-            onPress={() => void submit()}
-            style={{
-              alignSelf: "flex-end",
-              borderRadius: 999,
-              backgroundColor: tokens.foreground,
-              opacity: (secretInput ? answer.length === 0 : !answer.trim()) || submitting ? 0.5 : 1,
-              paddingHorizontal: 16,
-              paddingVertical: 9,
-            }}
-          >
-            <Text style={{ color: tokens.primaryForeground, fontWeight: "600" }}>
-              {submitting ? submittingLabel : submitLabel}
-            </Text>
-          </Pressable>
+          {secretInput ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={submitLabel}
+              disabled={answer.length === 0 || submitting}
+              onPress={() => void submit()}
+              style={{
+                alignSelf: "flex-start",
+                borderRadius: 999,
+                backgroundColor: tokens.foreground,
+                opacity: answer.length === 0 || submitting ? 0.5 : 1,
+                paddingHorizontal: 16,
+                paddingVertical: 9,
+              }}
+            >
+              <Text style={{ color: tokens.primaryForeground, fontWeight: "600" }}>
+                {submitting ? submittingLabel : submitLabel}
+              </Text>
+            </Pressable>
+          ) : (
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t("Approve")}
+                disabled={submitting}
+                onPress={() => void submit("approved")}
+                style={{
+                  borderRadius: 999,
+                  backgroundColor: tokens.foreground,
+                  opacity: submitting ? 0.5 : 1,
+                  paddingHorizontal: 16,
+                  paddingVertical: 9,
+                }}
+              >
+                <Text style={{ color: tokens.primaryForeground, fontWeight: "600" }}>
+                  {submitting ? submittingLabel : t("Approve")}
+                </Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t("Send back")}
+                disabled={!answer.trim() || submitting}
+                onPress={() => void submit()}
+                style={{
+                  borderRadius: 999,
+                  borderWidth: 1,
+                  borderColor: tokens.border,
+                  opacity: !answer.trim() || submitting ? 0.5 : 1,
+                  paddingHorizontal: 16,
+                  paddingVertical: 9,
+                }}
+              >
+                <Text style={{ color: tokens.foreground, fontWeight: "600" }}>
+                  {t("Send back")}
+                </Text>
+              </Pressable>
+            </View>
+          )}
         </>
       ) : (
         <Text style={{ color: tokens.mutedForeground, fontSize: 13.5 }}>
-          {t("Waiting for this bot’s response.")}
+          {t("No longer active")}
         </Text>
       )}
       {error ? <Text style={{ color: tokens.destructive, fontSize: 13 }}>{error}</Text> : null}

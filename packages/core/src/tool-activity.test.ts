@@ -1,6 +1,6 @@
 import type { MessageBlock, ThreadMessage } from "@rakazo/contracts";
 import { describe, expect, it } from "vitest";
-import { isToolActivityBlock, liveWorkingLabel } from "./tool-activity.js";
+import { isToolActivityBlock, liveWorkingLabel, summarizeToolSteps } from "./tool-activity.js";
 
 function message(id: string, blocks: MessageBlock[]): ThreadMessage {
   return {
@@ -48,6 +48,25 @@ describe("tool activity", () => {
       }),
     ).toBe(false);
     expect(isToolActivityBlock({ kind: "text", text: "Done." })).toBe(false);
+  });
+
+  it("summarizes a steps block as title, count, and latest label", () => {
+    expect(summarizeToolSteps([])).toBeUndefined();
+    expect(summarizeToolSteps([{ label: "Sign in", count: 1 }])).toEqual({
+      title: "Sign in",
+      count: 1,
+      latest: "Sign in",
+    });
+    expect(
+      summarizeToolSteps([
+        { label: "Sign in", count: 2 },
+        { label: "Check email", count: 1 },
+      ]),
+    ).toEqual({
+      title: "Sign in",
+      count: 3,
+      latest: "Check email",
+    });
   });
 
   it("uses the latest live tool name or short progress as the working label", () => {

@@ -146,7 +146,7 @@ export function OutgoingDraftCard({
 
   const statusLabel =
     draft.status === "pending"
-      ? t("Pending")
+      ? t("Ready to send")
       : draft.status === "sending"
         ? t("Sending…")
         : draft.status === "sent"
@@ -197,13 +197,13 @@ export function OutgoingDraftCard({
           accessibilityRole="header"
           style={[styles.title, { color: tokens.foreground }]}
         >
-          {t("Email draft")}
+          {t("New email")}
         </Text>
         <Text style={[styles.status, { color: statusColor }]}>{statusLabel}</Text>
       </View>
       {draft.account?.label ? (
         <DraftPreviewRow
-          label={t("Account")}
+          label={t("From")}
           value={draft.account.label}
           color={tokens.foreground}
           mutedColor={tokens.mutedForeground}
@@ -263,7 +263,7 @@ export function OutgoingDraftCard({
             border={tokens.border}
           />
           <DraftButton
-            label={pendingAction === "send" ? t("Sending…") : t("Send")}
+            label={pendingAction === "send" ? t("Sending…") : t("Send email")}
             disabled={!actionsEnabled}
             onPress={() => void answer("send")}
             background={tokens.primary}

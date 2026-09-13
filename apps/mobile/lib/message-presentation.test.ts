@@ -31,19 +31,21 @@ describe("mobile message presentation", () => {
     expect(isCenteredAgentEvent([{ kind: "text", text: "Hello" }])).toBe(false);
   });
 
-  it("hides completed tool activity", () => {
+  it("surfaces completed tool activity as a collapsible steps row", () => {
+    const steps = {
+      kind: "steps" as const,
+      steps: [
+        { label: "Read file", count: 1 },
+        { label: "Message bot", count: 1 },
+      ],
+    };
     const blocks = [
-      {
-        kind: "steps",
-        steps: [
-          { label: "Read file", count: 1 },
-          { label: "Message bot", count: 1 },
-        ],
-      },
+      steps,
       { kind: "bot_message_sent", toBotId: "b", toBotName: "Research", text: "Go" },
     ] as MessageBlock[];
 
     expect(messagePresentationSegments(blocks)).toEqual([
+      { kind: "steps", block: steps },
       {
         kind: "content",
         blocks: [{ kind: "bot_message_sent", toBotId: "b", toBotName: "Research", text: "Go" }],
@@ -53,7 +55,7 @@ describe("mobile message presentation", () => {
       hasVisibleMessagePresentation([
         { kind: "steps", steps: [{ label: "Message bot", count: 1 }] },
       ]),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("hides marked activity without treating Using narration as a tool", () => {
@@ -85,13 +87,9 @@ describe("mobile message presentation", () => {
         { kind: "text", text: "Done." },
       ]),
     ).toEqual([
-      {
-        kind: "content",
-        blocks: [
-          { kind: "text", text: "Checking." },
-          { kind: "text", text: "Done." },
-        ],
-      },
+      { kind: "content", blocks: [{ kind: "text", text: "Checking." }] },
+      { kind: "steps", block: tool },
+      { kind: "content", blocks: [{ kind: "text", text: "Done." }] },
     ]);
 
     expect(
@@ -99,6 +97,9 @@ describe("mobile message presentation", () => {
         { kind: "steps", steps: [{ label: "Message bot", count: 1 }] },
         { kind: "text", text: "Done." },
       ]),
-    ).toEqual([{ kind: "content", blocks: [{ kind: "text", text: "Done." }] }]);
+    ).toEqual([
+      { kind: "steps", block: { kind: "steps", steps: [{ label: "Message bot", count: 1 }] } },
+      { kind: "content", blocks: [{ kind: "text", text: "Done." }] },
+    ]);
   });
 });

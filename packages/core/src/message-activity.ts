@@ -47,11 +47,18 @@ export function projectMessageActivity<T extends ActivityMessage>(messages: read
   const resultIds = new Set<string>();
   const anchors = new Set<string>();
   for (const message of messages) {
+    const hasNarration = message.blocks.some(
+      (block) => block.kind === "text" || (block.kind === "progress" && !block.activity),
+    );
     const blocks = message.blocks.filter(
       (block) =>
         !isPeer(block) &&
         block.kind !== "routine_change" &&
-        !(message.runId && (isToolActivityBlock(block) || block.kind === "subagent")),
+        !(
+          message.runId &&
+          ((isToolActivityBlock(block) && (block.kind !== "steps" || hasNarration)) ||
+            block.kind === "subagent")
+        ),
     );
     let ownActivity = false;
     const add = (activity: MessageActivity, source = message) => {
@@ -119,7 +126,12 @@ export function projectMessageActivity<T extends ActivityMessage>(messages: read
         add({ kind: "execution", runId: message.runId, botId: message.botId });
       }
     }
-    if (blocks.length || ownActivity) {
+    const reply = message.runId ? replies.get(scope(message)) : undefined;
+    const collapsedIntoReply =
+      Boolean(reply && reply.id !== message.id) &&
+      blocks.length > 0 &&
+      blocks.every((block) => block.kind === "steps");
+    if (!collapsedIntoReply && (blocks.length || ownActivity)) {
       // Unchanged rows retain identity so streaming does not invalidate every message memo.
       result.push(blocks.length === message.blocks.length ? message : { ...message, blocks });
       resultIds.add(message.id);

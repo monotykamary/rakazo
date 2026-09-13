@@ -191,7 +191,7 @@ test("pending draft uses the actual transcript and shows the complete authoritat
   await setup(page, draft);
   const card = await open(page);
   await expect(page.getByTestId("transcript").getByTestId("outgoing-draft-card")).toHaveCount(1);
-  await expect(card.getByRole("status")).toHaveText("Awaiting approval");
+  await expect(card.getByRole("status")).toHaveText("Ready to send");
   for (const recipient of [...draft.fields.to, ...draft.fields.cc!, ...draft.fields.bcc!]) {
     await expect(card.getByText(recipient, { exact: false })).toBeVisible();
   }
@@ -217,7 +217,7 @@ test("editing saves all fields with the reviewed revision and sends only the sav
   await card.getByLabel("BCC", { exact: true }).fill("hidden@example.test");
   await card.getByLabel("Subject", { exact: true }).fill("Updated subject");
   await card.getByLabel("Message", { exact: true }).fill("Updated complete body");
-  await expect(card.getByRole("button", { name: "Send", exact: true })).toHaveCount(0);
+  await expect(card.getByRole("button", { name: "Send email", exact: true })).toHaveCount(0);
   await card.getByRole("button", { name: "Save", exact: true }).click();
   await expect(card.getByText("Updated complete body", { exact: true })).toBeVisible();
   expect(mock.requests[0]).toEqual({
@@ -238,7 +238,7 @@ test("editing saves all fields with the reviewed revision and sends only the sav
       },
     },
   });
-  await card.getByRole("button", { name: "Send", exact: true }).click();
+  await card.getByRole("button", { name: "Send email", exact: true }).click();
   await expect(card.getByRole("status")).toHaveText("Sending");
   expect(mock.requests[1]?.input.expectedDraft).toEqual({ revision: 2, hash: draftHash(2) });
   await expect(card.getByText("Sent", { exact: true })).toHaveCount(0);
@@ -287,14 +287,14 @@ test("double click sends once and only a confirmed backend result becomes Sent",
   const mock = await setup(page);
   mock.hold();
   const card = await open(page);
-  const send = card.getByRole("button", { name: "Send", exact: true });
+  const send = card.getByRole("button", { name: "Send email", exact: true });
   await send.evaluate((node) => {
     (node as HTMLButtonElement).click();
     (node as HTMLButtonElement).click();
   });
   await expect.poll(() => mock.requests.length).toBe(1);
   await expect(send).toBeDisabled();
-  await expect(card.getByRole("status")).toHaveText("Awaiting approval");
+  await expect(card.getByRole("status")).toHaveText("Ready to send");
   mock.release();
   await expect(card.getByRole("status")).toHaveText("Sending");
   await expect(card.getByRole("button")).toHaveCount(0);
@@ -327,7 +327,7 @@ test("stale edit retains local content and requires explicit review of the lates
   await expect(card.getByText("Latest server body", { exact: true })).toBeVisible();
   await card.getByRole("button", { name: "Edit draft" }).click();
   await card.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(card.getByRole("button", { name: "Send", exact: true })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Send email", exact: true })).toBeVisible();
   expect(mock.requests[1]?.input.expectedRevision).toBe(2);
 });
 
@@ -337,9 +337,9 @@ test("stale send fails without claiming delivery or changing the reviewed conten
   const mock = await setup(page);
   const card = await open(page);
   mock.setDraft({ ...mock.getDraft(), revision: 2, hash: draftHash(2) });
-  await card.getByRole("button", { name: "Send", exact: true }).click();
+  await card.getByRole("button", { name: "Send email", exact: true }).click();
   await expect(card.getByRole("alert")).toHaveText("Draft changed; review the latest version");
-  await expect(card.getByRole("status")).toHaveText("Awaiting approval");
+  await expect(card.getByRole("status")).toHaveText("Ready to send");
   await expect(card.getByText(initialDraft().fields.body, { exact: true })).toBeVisible();
   expect(mock.requests[0]?.input.expectedDraft).toEqual({ revision: 1, hash: draftHash(1) });
 });
@@ -372,9 +372,9 @@ test("shared draft state never grants a different signed-in user approval rights
 }) => {
   const mock = await setup(page, { ...initialDraft(), ownerUserId: "another-owner" });
   const card = await open(page);
-  await expect(card.getByRole("status")).toHaveText("Awaiting approval");
+  await expect(card.getByRole("status")).toHaveText("Ready to send");
   await expect(card.getByRole("button", { name: "Edit draft" })).toHaveCount(0);
-  await expect(card.getByRole("button", { name: "Send", exact: true })).toHaveCount(0);
+  await expect(card.getByRole("button", { name: "Send email", exact: true })).toHaveCount(0);
   await expect(card.getByRole("button", { name: "Discard", exact: true })).toHaveCount(0);
   expect(mock.requests).toHaveLength(0);
 });
@@ -382,7 +382,7 @@ test("shared draft state never grants a different signed-in user approval rights
 test("a viewer without approval permission cannot edit, send, or discard", async ({ page }) => {
   const mock = await setup(page, { ...initialDraft(), canApprove: false });
   const card = await open(page);
-  await expect(card.getByRole("status")).toHaveText("Awaiting approval");
+  await expect(card.getByRole("status")).toHaveText("Ready to send");
   await expect(card.getByRole("button")).toHaveCount(0);
   expect(mock.requests).toHaveLength(0);
 });
@@ -390,7 +390,7 @@ test("a viewer without approval permission cannot edit, send, or discard", async
 test("group draft actions retain the group target", async ({ page }) => {
   const mock = await setup(page);
   const card = await open(page, "?group");
-  await card.getByRole("button", { name: "Send", exact: true }).click();
+  await card.getByRole("button", { name: "Send email", exact: true }).click();
   await expect(card.getByRole("status")).toHaveText("Sending");
   expect(mock.requests[0]?.input.groupId).toBe("group");
   expect(mock.requests[0]?.input.botId).toBeUndefined();
@@ -414,7 +414,7 @@ test("calls require on-screen draft review and never start dictation for approva
   await captureScreenshot(page, testInfo, "outgoing-draft-call-review");
   await dialog.getByRole("button", { name: "Hang up", exact: true }).click();
   await expect(
-    page.getByTestId("outgoing-draft-card").getByRole("button", { name: "Send", exact: true }),
+    page.getByTestId("outgoing-draft-card").getByRole("button", { name: "Send email", exact: true }),
   ).toBeVisible();
 });
 

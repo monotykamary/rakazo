@@ -5,6 +5,25 @@ export function isToolActivityBlock(block: MessageBlock): boolean {
   return block.kind === "steps" || (block.kind === "progress" && block.activity === true);
 }
 
+export type ToolStepsSummary = {
+  title: string;
+  count: number;
+  latest: string;
+};
+
+/** Collapsed row for a `steps` block: title · N steps · latest. */
+export function summarizeToolSteps(
+  steps: readonly { label: string; count: number }[],
+): ToolStepsSummary | undefined {
+  if (steps.length === 0) return undefined;
+  const count = steps.reduce((sum, step) => sum + step.count, 0);
+  if (count < 1) return undefined;
+  const title = steps[0]?.label.trim() ?? "";
+  const latest = steps.at(-1)?.label.trim() ?? "";
+  if (!title) return undefined;
+  return { title, count, latest: latest || title };
+}
+
 const ACTIVITY_LABEL_MAX = 48;
 
 function activityPhrase(text: string): string | undefined {

@@ -176,9 +176,8 @@ test("create group from + and see two bots in one transcript", async ({ page }, 
     });
   }
   await expect(cityAsk).toBeVisible({ timeout: 15_000 });
-  await page.getByRole("button", { name: "Edit first" }).click();
   await page.getByRole("textbox", { name: "Answer" }).fill("Paris");
-  await page.getByRole("button", { name: "Send answer" }).click();
+  await page.getByRole("button", { name: "Send back" }).click();
   await expect(page.getByText("Answered: Paris", { exact: true })).toBeVisible({ timeout: 30_000 });
 
   const firstMessage = transcript.locator("[data-message-id]").first();

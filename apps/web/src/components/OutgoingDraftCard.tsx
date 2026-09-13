@@ -1,11 +1,12 @@
 import { Trans, useLingui } from "@lingui/react/macro";
 import type { OutgoingMessageDraft, ThreadMessage } from "@rakazo/contracts";
 import { Button, Textarea } from "@rakazo/ui-web";
-import { Mail, Pencil } from "lucide-react";
+import { Pencil } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ArtifactTarget } from "../lib/artifact-open";
 import { authClient } from "../lib/auth";
 import { rpc } from "../lib/rpc";
+import { HitlStatus } from "./HitlStatus";
 
 type DraftFields = OutgoingMessageDraft["fields"];
 type EditFields = { to: string; cc: string; bcc: string; subject: string; body: string };
@@ -73,7 +74,7 @@ export function OutgoingDraftCard({
     Boolean(approvalEffectId && message.runId) &&
     !acknowledged;
   const labels: Record<OutgoingMessageDraft["status"], string> = {
-    pending: t`Awaiting approval`,
+    pending: t`Ready to send`,
     sending: t`Sending`,
     sent: t`Sent`,
     discarded: t`Discarded`,
@@ -82,6 +83,8 @@ export function OutgoingDraftCard({
     unavailable: t`Unavailable`,
   };
   const fieldLabels = { to: t`To`, cc: t`CC`, bcc: t`BCC`, subject: t`Subject`, body: t`Message` };
+  const statusTone =
+    draft.status === "pending" ? "ready" : draft.status === "failed" || draft.status === "uncertain" ? "need" : "done";
 
   async function act(action: "save" | "send" | "discard") {
     if (locked.current || !active || !approvalEffectId || !message.runId) return;
@@ -145,32 +148,40 @@ export function OutgoingDraftCard({
   function field(name: keyof EditFields, value: string | undefined) {
     if (value === undefined && !(editing && draft.editable.includes(name))) return null;
     const editable = editing && active && draft.editable.includes(name);
+    const control = editable ? (
+      <Textarea
+        aria-label={fieldLabels[name]}
+        rows={name === "body" ? 4 : 1}
+        className="min-h-9 resize-none whitespace-pre-wrap wrap-anywhere"
+        value={editing.fields[name]}
+        disabled={busy}
+        onChange={(event) => {
+          const next = event.target.value;
+          setEditing(
+            (current) =>
+              current && {
+                ...current,
+                fields: { ...current.fields, [name]: next },
+              },
+          );
+        }}
+      />
+    ) : (
+      <div className="min-w-0 flex-1 whitespace-pre-wrap wrap-anywhere text-sm leading-relaxed" dir="auto">
+        {value}
+      </div>
+    );
+    if (name === "body") {
+      return (
+        <div key={name} className="min-w-0 py-3">
+          {control}
+        </div>
+      );
+    }
     return (
-      <div key={name} className="min-w-0 space-y-1">
-        <div className="text-xs text-muted-foreground">{fieldLabels[name]}</div>
-        {editable ? (
-          <Textarea
-            aria-label={fieldLabels[name]}
-            rows={name === "body" ? 4 : 1}
-            className="min-h-9 resize-none whitespace-pre-wrap wrap-anywhere"
-            value={editing.fields[name]}
-            disabled={busy}
-            onChange={(event) => {
-              const value = event.target.value;
-              setEditing(
-                (current) =>
-                  current && {
-                    ...current,
-                    fields: { ...current.fields, [name]: value },
-                  },
-              );
-            }}
-          />
-        ) : (
-          <div className="whitespace-pre-wrap wrap-anywhere text-sm leading-relaxed" dir="auto">
-            {value}
-          </div>
-        )}
+      <div key={name} className="flex min-w-0 items-start gap-3 border-b border-border py-2.5">
+        <div className="w-16 shrink-0 pt-0.5 text-xs text-muted-foreground">{fieldLabels[name]}</div>
+        {control}
       </div>
     );
   }
@@ -178,18 +189,15 @@ export function OutgoingDraftCard({
   return (
     <section
       data-testid="outgoing-draft-card"
-      aria-label={t`Email draft`}
+      aria-label={t`New email`}
       aria-busy={busy}
-      className="w-full min-w-0 overflow-hidden rounded-2xl border border-border bg-card text-card-foreground"
+      className="w-full min-w-0 max-w-full overflow-hidden rounded-2xl border border-border bg-muted text-card-foreground"
     >
-      <header className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
-        <Mail aria-hidden="true" className="size-4 shrink-0" />
-        <span className="text-sm font-medium">
-          <Trans>Email</Trans>
+      <header className="flex flex-wrap items-center gap-2 px-4 pt-4 pb-2">
+        <span className="min-w-0 flex-1 text-sm font-medium">
+          <Trans>New email</Trans>
         </span>
-        <span role="status" className="min-w-0 flex-1 text-xs text-muted-foreground">
-          {labels[draft.status]}
-        </span>
+        <HitlStatus tone={statusTone}>{labels[draft.status]}</HitlStatus>
         {active && !editing && draft.editable.length > 0 ? (
           <Button
             variant="ghost"
@@ -209,13 +217,13 @@ export function OutgoingDraftCard({
           </Button>
         ) : null}
       </header>
-      <div className="space-y-3 px-4 py-4">
+      <div className="mx-4 mb-3 min-w-0 overflow-hidden rounded-xl border border-border bg-background px-4">
         {draft.account ? (
-          <div className="space-y-1 text-sm wrap-anywhere">
-            <div className="text-xs text-muted-foreground">
-              <Trans>Account</Trans>
+          <div className="flex min-w-0 items-start gap-3 border-b border-border py-2.5 text-sm wrap-anywhere">
+            <div className="w-16 shrink-0 pt-0.5 text-xs text-muted-foreground">
+              <Trans>From</Trans>
             </div>
-            <div>{draft.account.label}</div>
+            <div className="min-w-0 flex-1 wrap-anywhere">{draft.account.label}</div>
           </div>
         ) : null}
         {field("to", draft.fields.to.join("\n"))}
@@ -223,29 +231,33 @@ export function OutgoingDraftCard({
         {field("bcc", draft.fields.bcc?.length ? draft.fields.bcc.join("\n") : undefined)}
         {field("subject", draft.fields.subject)}
         {field("body", draft.fields.body)}
-        {draft.metadata?.map((item, index) => (
-          <div key={index} className="space-y-1 text-sm">
-            <div className="whitespace-pre-wrap wrap-anywhere text-xs text-muted-foreground">
-              {item.label}
-            </div>
-            <div className="whitespace-pre-wrap wrap-anywhere" dir="auto">
-              {item.value}
-            </div>
-          </div>
-        ))}
-        {draft.error ? (
-          <p role="alert" className="whitespace-pre-wrap wrap-anywhere text-sm text-destructive">
-            {draft.error}
-          </p>
-        ) : null}
-        {error ? (
-          <p role="alert" className="whitespace-pre-wrap wrap-anywhere text-sm text-destructive">
-            {error}
-          </p>
-        ) : null}
       </div>
+      {draft.metadata?.length ? (
+        <div className="space-y-2 px-4 pb-2">
+          {draft.metadata.map((item, index) => (
+            <div key={index} className="space-y-1 text-sm">
+              <div className="whitespace-pre-wrap wrap-anywhere text-xs text-muted-foreground">
+                {item.label}
+              </div>
+              <div className="whitespace-pre-wrap wrap-anywhere" dir="auto">
+                {item.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {draft.error ? (
+        <p role="alert" className="whitespace-pre-wrap wrap-anywhere px-4 pb-2 text-sm text-destructive">
+          {draft.error}
+        </p>
+      ) : null}
+      {error ? (
+        <p role="alert" className="whitespace-pre-wrap wrap-anywhere px-4 pb-2 text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
       {active ? (
-        <footer className="flex flex-wrap gap-2 border-t border-border px-4 py-3">
+        <footer className="flex flex-wrap gap-2 px-4 pb-4">
           {editing ? (
             <>
               <Button size="sm" disabled={busy} onClick={() => void act("save")}>
@@ -266,9 +278,9 @@ export function OutgoingDraftCard({
           ) : (
             <>
               <Button size="sm" disabled={busy} onClick={() => void act("send")}>
-                <Trans>Send</Trans>
+                <Trans>Send email</Trans>
               </Button>
-              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act("discard")}>
+              <Button size="sm" variant="outline" disabled={busy} onClick={() => void act("discard")}>
                 <Trans>Discard</Trans>
               </Button>
             </>

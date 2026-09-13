@@ -150,6 +150,8 @@ import {
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArtifactFileCard } from "../components/ArtifactFileCard";
 import { AskCard } from "../components/AskCard";
+import { ComputerTakeoverCard } from "../components/ComputerTakeoverCard";
+import { ToolStepsRow } from "../components/ToolStepsRow";
 import { ActiveBotGlyph, CollaborationMarker } from "../components/ai/CollaborationMarker";
 import { BotModelSwitcher } from "../components/BotModelSwitcher";
 import { CloudAgentCard } from "../components/CloudAgentCard";
@@ -3440,6 +3442,7 @@ export function ShellPage() {
               onReact={reactToMessage}
               onJumpToMessage={jumpToReplyMessage}
               onOpenPeerMessages={openPeerMessages}
+              onOpenComputer={() => void openComputer()}
               onOpenExecution={(runId, botId) =>
                 setThreadInspector({ view: "execution", runId, botId })
               }
@@ -4556,6 +4559,7 @@ export const Transcript = memo(function Transcript({
   onReact,
   onJumpToMessage,
   onOpenPeerMessages,
+  onOpenComputer,
   onOpenExecution,
   onOpenRoutine,
   memberName,
@@ -4583,6 +4587,7 @@ export const Transcript = memo(function Transcript({
   onReact: (message: ThreadMessage, reaction: MessageReaction | null) => Promise<void>;
   onJumpToMessage: (messageId: string) => void;
   onOpenPeerMessages: (peer: OverlayChat) => void;
+  onOpenComputer?: () => void;
   onOpenExecution: (runId: string, botId?: string) => void;
   onOpenRoutine: (routineId: string, botId?: string) => Promise<void>;
   memberName?: (botId: string | undefined) => string | undefined;
@@ -4747,12 +4752,22 @@ export const Transcript = memo(function Transcript({
         {reactionView.visibleMessages.map((message) => {
           const messageReactions = reactionView.reactions.get(message.id);
           const activities = activityProjection.activities.get(message.id) ?? [];
-          if (!message.blocks.some((block) => !isToolActivityBlock(block)) && !activities.length)
+          if (
+            !message.blocks.some(
+              (block) => block.kind === "steps" || !isToolActivityBlock(block),
+            ) &&
+            !activities.length
+          )
             return null;
           const peerReceipt = message.blocks.length === 0;
           const hasOutgoingDraft = message.blocks.some(
             (block) => block.kind === "ask" && block.draft,
           );
+          const wideHitl = message.blocks.some(
+            (block) => block.kind === "ask" || block.kind === "computer",
+          );
+          const stepsOnly =
+            message.blocks.length > 0 && message.blocks.every((block) => block.kind === "steps");
           return (
             <div
               key={message.id}
@@ -4772,18 +4787,18 @@ export const Transcript = memo(function Transcript({
                     peerReceipt
                       ? undefined
                       : `relative min-w-0 ${
-                          hasOutgoingDraft
-                            ? "mb-12 w-full max-w-xl"
+                          hasOutgoingDraft || wideHitl
+                            ? "mb-12 w-full max-w-xl overflow-x-hidden"
                             : message.role === "user"
                               ? "w-fit max-w-[min(70%,calc(100%_-_6rem))]"
                               : "w-fit max-w-[min(74%,calc(100%_-_6rem))]"
                         }`
                   }
                 >
-                  {peerReceipt ? null : (
+                  {peerReceipt || stepsOnly ? null : (
                     <>
                       <MessageHoverActions
-                        below={hasOutgoingDraft}
+                        below={hasOutgoingDraft || wideHitl}
                         message={message}
                         side={message.role === "user" ? "start" : "end"}
                         execution={lastMessageExecution(activities)}
@@ -4805,6 +4820,7 @@ export const Transcript = memo(function Transcript({
                     canAnswer={message.id === answerableAskMessageId}
                     onOpenBot={onOpenBot}
                     onOpenPeerMessages={onOpenPeerMessages}
+                    onOpenComputer={onOpenComputer}
                     onAnswer={onAnswer}
                     speakerName={
                       peerReceipt
@@ -6141,6 +6157,7 @@ const MessageView = memo(function MessageView({
   onAnswer,
   onOpenBot,
   onOpenPeerMessages,
+  onOpenComputer,
   speakerName,
   memberName,
   peerBot,
@@ -6160,6 +6177,7 @@ const MessageView = memo(function MessageView({
   onAnswer: (message: ThreadMessage, text: string) => Promise<void>;
   onOpenBot: (botId: string) => void;
   onOpenPeerMessages: (peer: OverlayChat) => void;
+  onOpenComputer?: () => void;
   speakerName?: string;
   memberName?: (botId: string | undefined) => string | undefined;
   peerBot: (botId: string) => { color: string; status?: string } | undefined;
@@ -6182,6 +6200,12 @@ const MessageView = memo(function MessageView({
     );
   const isLive = message.id.startsWith("progress:");
   const visibleNarrationBlocks = message.blocks.filter((block) => !isToolActivityBlock(block));
+  const stepIdentity = message.botId ?? "bot";
+  const stepColor = (message.botId && peerBot(message.botId)?.color) || FALLBACK_BOT_COLOR;
+  const stepBlocks = message.blocks.filter(
+    (block): block is Extract<(typeof message.blocks)[number], { kind: "steps" }> =>
+      block.kind === "steps",
+  );
   const parentJumpId = replyPreview?.id ?? replyToMessageId;
   const messageContext = (
     <>
@@ -6205,10 +6229,14 @@ const MessageView = memo(function MessageView({
     </>
   );
   if (isNarration) {
-    if (visibleNarrationBlocks.length === 0) return null;
+    if (visibleNarrationBlocks.length === 0 && stepBlocks.length === 0) return null;
     return (
       <>
         {messageContext}
+        {stepBlocks.map((block, i) => (
+          <ToolStepsRow key={i} steps={block.steps} color={stepColor} identity={stepIdentity} />
+        ))}
+        {visibleNarrationBlocks.length === 0 ? null : (
         <div className="flex w-fit max-w-full justify-start">
           <div
             data-testid="message-bot-bubble"
@@ -6237,6 +6265,7 @@ const MessageView = memo(function MessageView({
             ) : null}
           </div>
         </div>
+        )}
       </>
     );
   }
@@ -6256,6 +6285,11 @@ const MessageView = memo(function MessageView({
         }
         const block = cluster.block;
         const i = cluster.index;
+        if (block.kind === "steps") {
+          return (
+            <ToolStepsRow key={i} steps={block.steps} color={stepColor} identity={stepIdentity} />
+          );
+        }
         if (isToolActivityBlock(block)) return null;
         if (block.kind === "handoff") {
           const from = memberName?.(block.fromBotId) ?? t`bot`;
@@ -6537,28 +6571,7 @@ const MessageView = memo(function MessageView({
         }
         if (block.kind === "computer") {
           return (
-            <div
-              key={i}
-              className="w-[340px] rounded-[18px] border border-border bg-muted px-[18px] py-4"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-[14px] font-medium text-foreground">
-                  <Trans>Computer</Trans>
-                </span>
-                <span
-                  className={
-                    block.state === "Needs you"
-                      ? "rounded-full bg-warning/15 px-[11px] py-1 text-[13px] text-warning"
-                      : "rounded-full bg-success/15 px-[11px] py-1 text-[13px] text-success"
-                  }
-                >
-                  {block.state}
-                </span>
-              </div>
-              <div className="my-2.5 text-[14.5px] leading-[1.5] text-foreground/75">
-                <ChatMarkdown>{block.text}</ChatMarkdown>
-              </div>
-            </div>
+            <ComputerTakeoverCard key={i} block={block} onOpenComputer={onOpenComputer} />
           );
         }
         return null;

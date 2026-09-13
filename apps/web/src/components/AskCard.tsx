@@ -3,8 +3,9 @@ import { Trans, useLingui } from "@lingui/react/macro";
 import { ChatMarkdown } from "@rakazo/chat-ui/web";
 import type { ThreadMessage } from "@rakazo/contracts";
 import { isApprovalAskBlock, isSecretAskBlock, selectedAskActionLabel } from "@rakazo/core";
-import { Button, Input } from "@rakazo/ui-web";
+import { Button, Input, Textarea } from "@rakazo/ui-web";
 import { useState } from "react";
+import { HitlStatus } from "./HitlStatus";
 
 export type AskBlock = Extract<ThreadMessage["blocks"][number], { kind: "ask" }>;
 
@@ -55,7 +56,6 @@ export function AskCard({
   onAnswer: (text: string) => Promise<void>;
 }) {
   const { t } = useLingui();
-  const [editing, setEditing] = useState(false);
   const [answer, setAnswer] = useState("");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +64,8 @@ export function AskCard({
   const askActions = block.actions;
   const secretInput = isSecretAskBlock(block);
   const secretLabel = secretFieldLabel(block.purpose);
+  const pending = block.status !== "answered" && canAnswer;
+  const statusTone = pending ? "need" : block.status === "answered" ? "done" : "ready";
 
   async function submitAnswer(value: string) {
     if (submitting) return;
@@ -83,11 +85,8 @@ export function AskCard({
     }
   }
 
-  return (
-    <div
-      data-testid={secretInput ? "secret-ask-card" : undefined}
-      className="max-w-[74%] rounded-2xl border border-border bg-card px-5 py-4"
-    >
+  const body = (
+    <>
       <div className="text-[15.5px] leading-[1.5] text-foreground">
         <ChatMarkdown>{block.text}</ChatMarkdown>
       </div>
@@ -101,21 +100,83 @@ export function AskCard({
           {block.detail}
         </pre>
       ) : null}
+    </>
+  );
+
+  if (secretInput) {
+    return (
+      <div
+        data-testid="secret-ask-card"
+        className="max-w-[74%] rounded-2xl border border-border bg-card px-5 py-4"
+      >
+        {body}
+        {block.status === "answered" ? (
+          <div className="mt-3.5 text-[13.5px] font-medium text-success">
+            {formatAnsweredState(block.answer, false, true)}
+          </div>
+        ) : !canAnswer ? (
+          <div className="mt-3.5 text-[13.5px] font-medium text-muted-foreground">
+            <Trans>No longer active</Trans>
+          </div>
+        ) : (
+          <form
+            className="mt-3.5 flex flex-col gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitAnswer(answer);
+            }}
+          >
+            <Input
+              aria-label={secretLabel}
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={submitting}
+              value={answer}
+              onChange={(event) => setAnswer(event.target.value)}
+              placeholder={secretLabel}
+            />
+            <Button type="submit" className="self-start" disabled={answer.length === 0 || submitting}>
+              {submitting ? <Trans>Saving…</Trans> : <Trans>Save</Trans>}
+            </Button>
+          </form>
+        )}
+        {error ? <p className="mt-3 text-[13px] text-destructive">{error}</p> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      data-testid="ask-card"
+      className="w-full max-w-xl rounded-2xl border border-border bg-card px-[18px] py-4"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[14px] font-medium text-foreground">
+          <Trans>Question</Trans>
+        </span>
+        <HitlStatus tone={statusTone}>
+          {pending ? (
+            <Trans>Needs you</Trans>
+          ) : block.status === "answered" ? (
+            <Trans>Handled</Trans>
+          ) : (
+            <Trans>No longer active</Trans>
+          )}
+        </HitlStatus>
+      </div>
+      <div className="mt-3">{body}</div>
       {block.status === "answered" ? (
-        <div className="mt-3.5 text-[13.5px] font-medium text-success">
+        <div className="mt-3.5 text-[13.5px] text-muted-foreground">
           {formatAnsweredState(
             block.answer,
             Boolean(approvalActions),
-            secretInput,
+            false,
             approvalActions?.find((action) => action.id === block.answer)?.outcome,
             askActions,
           )}
         </div>
-      ) : !canAnswer ? (
-        <div className="mt-3.5 text-[13.5px] font-medium text-muted-foreground">
-          <Trans>No longer active</Trans>
-        </div>
-      ) : askActions?.length ? (
+      ) : !canAnswer ? null : askActions?.length ? (
         <div className="mt-3.5 space-y-1.5">
           {askActions.map((action) => (
             <Button
@@ -135,67 +196,34 @@ export function AskCard({
             </Button>
           ))}
         </div>
-      ) : secretInput ? (
-        <form
-          className="mt-3.5 flex flex-col gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void submitAnswer(answer);
-          }}
-        >
-          <Input
-            aria-label={secretLabel}
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            disabled={submitting}
-            value={answer}
-            onChange={(event) => setAnswer(event.target.value)}
-            placeholder={secretLabel}
-          />
-          <Button type="submit" className="self-start" disabled={answer.length === 0 || submitting}>
-            {submitting ? <Trans>Saving…</Trans> : <Trans>Save</Trans>}
-          </Button>
-        </form>
-      ) : editing ? (
-        <form
-          className="mt-3.5 flex flex-col gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void submitAnswer(answer);
-          }}
-        >
-          <Input
+      ) : (
+        <>
+          <Textarea
             aria-label={t`Answer`}
+            rows={2}
+            className="mt-3.5 min-h-16 resize-none"
             value={answer}
+            disabled={submitting}
+            placeholder={t`Type an answer`}
             onChange={(event) => setAnswer(event.target.value)}
-            placeholder={t`Type your answer`}
           />
-          <div className="flex gap-2">
-            <Button type="submit" disabled={!answer.trim() || submitting}>
-              {submitting ? <Trans>Sending…</Trans> : <Trans>Send answer</Trans>}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button disabled={submitting} onClick={() => void submitAnswer("approved")}>
+              {pendingAction === "approved" ? <Trans>Sending…</Trans> : <Trans>Approve</Trans>}
             </Button>
             <Button
               variant="outline"
-              disabled={submitting}
-              onClick={() => {
-                setAnswer("");
-                setEditing(false);
-              }}
+              disabled={!answer.trim() || submitting}
+              onClick={() => void submitAnswer(answer)}
             >
-              <Trans>Cancel</Trans>
+              {pendingAction && pendingAction !== "approved" ? (
+                <Trans>Sending…</Trans>
+              ) : (
+                <Trans>Send back</Trans>
+              )}
             </Button>
           </div>
-        </form>
-      ) : (
-        <div className="mt-3.5 flex gap-2">
-          <Button disabled={submitting} onClick={() => void submitAnswer("approved")}>
-            {submitting ? <Trans>Sending…</Trans> : <Trans>Send it</Trans>}
-          </Button>
-          <Button variant="outline" disabled={submitting} onClick={() => setEditing(true)}>
-            <Trans>Edit first</Trans>
-          </Button>
-        </div>
+        </>
       )}
       {error ? <p className="mt-3 text-[13px] text-destructive">{error}</p> : null}
     </div>
