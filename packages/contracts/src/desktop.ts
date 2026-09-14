@@ -45,6 +45,22 @@ export interface RakazoDesktop {
     state: () => Promise<{ minimized: boolean; maximized: boolean; fullScreen: boolean }>;
   };
   update: RakazoDesktopUpdate;
+  egress?: {
+    start: (spaceId: string) => Promise<void>;
+    stop: () => Promise<void>;
+    state: () => Promise<{
+      connected: boolean;
+      activeConnections: number;
+      sessionTotal: number;
+    }>;
+    onChange: (
+      listener: (state: {
+        connected: boolean;
+        activeConnections: number;
+        sessionTotal: number;
+      }) => void,
+    ) => () => void;
+  };
   oauth: {
     /**
      * Open system-browser auth. A redirect_uri must be HTTP loopback with state;

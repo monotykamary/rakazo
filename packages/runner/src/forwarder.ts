@@ -1,6 +1,6 @@
 import path from "node:path";
 import { MACHINE_OFFLINE_AFTER_MS } from "@rakazo/contracts";
-import { resolveSupervisorToken } from "@rakazo/core";
+import { officeEgressProxyUrl, resolveSupervisorToken } from "@rakazo/core";
 import { CommandRejectedError } from "./command-validation.js";
 import type { RunnerCredentials } from "./credentials.js";
 import { loadCredentials } from "./credentials.js";
@@ -8,8 +8,11 @@ import { ForwardJournal } from "./journal.js";
 import {
   type ForwardResult,
   forwardToSupervisor,
+  type SupervisorTarget,
   SupervisorUnreachableError,
 } from "./supervisor-forward.js";
+import { connectOfficeEgressClient, type OfficeEgressClient } from "./egress-client.js";
+import { type OfficeEgressMode, startOfficeEgressProxy } from "./egress-proxy.js";
 import { type MachineCommand, MachineRevokedError, TunnelClient } from "./tunnel-client.js";
 
 export interface ForwarderOptions {
@@ -89,8 +92,19 @@ export async function runForwarder(options: ForwarderOptions): Promise<void> {
   const client =
     options.client ??
     new TunnelClient({ serverUrl: options.credentials.serverUrl, fetch: options.supervisor.fetch });
-  const supervisor = { ...options.supervisor, token: options.supervisor.token ?? "" };
+  const supervisor: SupervisorTarget = { ...options.supervisor, token: options.supervisor.token ?? "" };
   if (!supervisor.token) throw new Error("The local supervisor token must be configured");
+  let egressMode: OfficeEgressMode = "direct";
+  let egressClient: OfficeEgressClient | null = null;
+  const proxy = await startOfficeEgressProxy({
+    hostname: "0.0.0.0",
+    signal: stop.signal,
+    mode: () => egressMode,
+    openTunnel(target, handlers) {
+      return egressClient?.open(target, handlers) ?? null;
+    },
+  });
+  supervisor.egressProxy = officeEgressProxyUrl(proxy.port);
 
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const longPollWaitMs = options.longPollWaitMs ?? DEFAULT_LONG_POLL_WAIT_MS;
@@ -209,7 +223,32 @@ export async function runForwarder(options: ForwarderOptions): Promise<void> {
       const now = Date.now();
       if (now >= next) {
         try {
-          await client.heartbeat(options.credentials.machineToken, stop.signal);
+          const egress = await client.heartbeat(options.credentials.machineToken, stop.signal);
+          if (!egress || !egress.enabled) {
+            egressMode = "direct";
+            egressClient?.close();
+            egressClient = null;
+          } else if (egress.hostConnected) {
+            egressMode = "desktop";
+            if (!egressClient) {
+              try {
+                egressClient = await connectOfficeEgressClient({
+                  serverUrl: options.credentials.serverUrl,
+                  token: options.credentials.machineToken,
+                  signal: stop.signal,
+                });
+              } catch (error) {
+                log(
+                  `egress client failed: ${error instanceof Error ? error.message : "unknown error"}`,
+                );
+                egressMode = "off";
+              }
+            }
+          } else {
+            egressMode = "off";
+            egressClient?.close();
+            egressClient = null;
+          }
           next = now + HEARTBEAT_INTERVAL_MS;
         } catch (error) {
           if (error instanceof MachineRevokedError) {
@@ -287,6 +326,8 @@ export async function runForwarder(options: ForwarderOptions): Promise<void> {
     stop.abort();
     await Promise.allSettled(loops);
     await Promise.allSettled([...pendingCommands]);
+    (egressClient as OfficeEgressClient | null)?.close();
+    await proxy.close();
     if (signal !== stop.signal) signal.removeEventListener("abort", onExternalAbort);
   }
   if (loopFailure !== undefined) throw loopFailure;

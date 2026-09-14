@@ -30,6 +30,7 @@ model User {
   botSections                 BotSection[]
   actionApprovalRules         ActionApprovalRule[]
   actionAutoReviewPreferences ActionAutoReviewPreference[]
+  officeEgressPreferences     OfficeEgressPreference[]
   createdSpaces               Space[]                      @relation("SpaceCreator")
   botSecrets BotSecret[]
   agentSecrets               AgentSecret[]
@@ -132,6 +133,21 @@ model ActionAutoReviewPreference {
   @@map("action_auto_review_preferences")
 }
 
+/// Opt-in: office computers egress through this user's desktop.
+model OfficeEgressPreference {
+  id        String   @id @default(cuid())
+  spaceId   String
+  space     Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  enabled   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([spaceId, userId])
+  @@map("office_egress_preferences")
+}
+
 model Member {
   id               String        @id
   organizationId   String
@@ -187,6 +203,7 @@ model Space {
   messagingIdentities         MessagingIdentity[]
   actionApprovalRules         ActionApprovalRule[]
   actionAutoReviewPreferences ActionAutoReviewPreference[]
+  officeEgressPreferences     OfficeEgressPreference[]
   memoryConfig                SpaceMemoryConfig?
   secrets                     Secret[]
   chatGroups                  ChatGroup[]

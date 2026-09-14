@@ -58,6 +58,7 @@ export * from "./installed-connectors.js";
 export * from "./job-reconciler.js";
 export * from "./keyless-http-web.js";
 export * from "./machine-agent-host.js";
+export * from "./machine-egress.js";
 export * from "./machine-assignment.js";
 export * from "./machine-relocation.js";
 export * from "./machine-routing.js";

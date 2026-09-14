@@ -158,6 +158,8 @@ export interface ComputerCreateInput {
   controlToken?: string;
   networkMode?: string;
   publishControlPort?: boolean;
+  /** HTTP CONNECT proxy the office runner exposes on the docker host. */
+  egressProxy?: string;
 }
 
 interface PointerInput {
@@ -187,6 +189,7 @@ export function containerCreateOptions(input: ComputerCreateInput) {
       "NPM_CONFIG_PREFIX=/home/rakazo/.local",
       "PIP_USER=1",
       ...(input.controlToken ? [`RAKAZO_COMPUTER_CONTROL_TOKEN=${input.controlToken}`] : []),
+      ...computerEgressProxyEnv(input.egressProxy),
     ],
     Labels: {
       "rakazo.managed": "true",
@@ -204,9 +207,62 @@ export function containerCreateOptions(input: ComputerCreateInput) {
       ReadonlyPaths: ["/usr/share/novnc"],
       AutoRemove: false,
       NetworkMode: input.networkMode ?? "bridge",
+      ...(computerEgressProxyHosts(input.egressProxy) ?? {}),
     },
     WorkingDir: "/home/rakazo",
   };
+}
+
+export function parseComputerEgressProxy(value: string | undefined): URL | undefined {
+  if (!value) return undefined;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("Unsupported office egress proxy");
+  }
+  if (url.protocol !== "http:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("Unsupported office egress proxy");
+  }
+  const port = Number(url.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("Unsupported office egress proxy");
+  }
+  if (url.hostname !== "host.docker.internal" && !isPrivateIPv4(url.hostname)) {
+    throw new Error("Unsupported office egress proxy");
+  }
+  return url;
+}
+
+export function computerEgressProxyEnv(value: string | undefined): string[] {
+  const url = parseComputerEgressProxy(value);
+  if (!url) return [];
+  const proxy = url.origin;
+  return [
+    `HTTP_PROXY=${proxy}`,
+    `HTTPS_PROXY=${proxy}`,
+    `http_proxy=${proxy}`,
+    `https_proxy=${proxy}`,
+    "NO_PROXY=localhost,127.0.0.1,::1,host.docker.internal",
+    "no_proxy=localhost,127.0.0.1,::1,host.docker.internal",
+  ];
+}
+
+function computerEgressProxyHosts(value: string | undefined): { ExtraHosts: string[] } | undefined {
+  const url = parseComputerEgressProxy(value);
+  if (url?.hostname !== "host.docker.internal") return undefined;
+  return { ExtraHosts: ["host.docker.internal:host-gateway"] };
+}
+
+function isPrivateIPv4(host: string): boolean {
+  const parts = host.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+  const [a, b] = parts;
+  if (a === 10 || a === 127) return true;
+  if (a === 192 && b === 168) return true;
+  return a === 172 && b !== undefined && b >= 16 && b <= 31;
 }
 
 export function sanitizeIdentifier(botId: string) {

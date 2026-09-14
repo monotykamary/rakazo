@@ -31,7 +31,7 @@ describe("desktop preload bridge", () => {
     const [globalName, bridge] = exposeInMainWorld.mock.calls[0] as [string, RakazoDesktop];
     expect(globalName).toBe("rakazoDesktop");
     expect(bridge.platform).toBe("linux");
-    expect(Object.keys(bridge).sort()).toEqual(["oauth", "platform", "update", "window"]);
+    expect(Object.keys(bridge).sort()).toEqual(["egress", "oauth", "platform", "update", "window"]);
     expect(Object.keys(bridge.window).sort()).toEqual([
       "close",
       "minimize",
@@ -49,6 +49,9 @@ describe("desktop preload bridge", () => {
     await bridge.update.state();
     await bridge.update.check();
     await bridge.update.download();
+    await bridge.egress?.start("space-1");
+    await bridge.egress?.stop();
+    await bridge.egress?.state();
     await bridge.update.install();
     expect(invoke.mock.calls.map(([channel]) => channel)).toEqual([
       "desktop.oauth.open",
@@ -60,6 +63,9 @@ describe("desktop preload bridge", () => {
       "desktop.update.state",
       "desktop.update.check",
       "desktop.update.download",
+      "desktop.egress.start",
+      "desktop.egress.stop",
+      "desktop.egress.state",
       "desktop.update.install",
     ]);
   });
@@ -67,7 +73,7 @@ describe("desktop preload bridge", () => {
   it("keeps setup off the app bridge so a connected server cannot re-point the app", () => {
     const { exposeInMainWorld } = runPreload("preload.cjs");
     const [, bridge] = exposeInMainWorld.mock.calls[0] as [string, Record<string, unknown>];
-    expect(Object.keys(bridge).sort()).toEqual(["oauth", "platform", "update", "window"]);
+    expect(Object.keys(bridge).sort()).toEqual(["egress", "oauth", "platform", "update", "window"]);
   });
 
   it("forwards captured codes without leaking the IPC event to the renderer", () => {

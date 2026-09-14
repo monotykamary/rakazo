@@ -19,6 +19,7 @@ import {
   stackResourceDir,
 } from "./local-stack.js";
 import { oauthCallbackFrom } from "./oauth-callback.js";
+import { createOfficeEgressHost } from "./office-egress.js";
 import {
   bundledRendererCandidates,
   contentType,
@@ -94,6 +95,12 @@ const desktopUpdater = new DesktopUpdateController(
 );
 let launchUpdateCheckScheduled = false;
 let localStack: LocalStackController;
+const officeEgress = createOfficeEgressHost();
+officeEgress.onChange((state) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("desktop.egress.change", state);
+  }
+});
 
 markOnce("rk:main:module-evaluated");
 if (PERFORMANCE_USER_DATA) {
@@ -1002,6 +1009,23 @@ app.whenReady().then(async () => {
     browserAuthAttempts.get(url)?.abort();
   });
   ipcMain.handle("desktop.platform", () => process.platform);
+  ipcMain.handle("desktop.egress.start", async (event, spaceId: unknown) => {
+    if (!fromMainWindow(event) || typeof spaceId !== "string" || spaceId.length === 0) return;
+    const win = windowFrom(event);
+    const origin = currentTargetUrl;
+    if (!win || !origin) return;
+    await officeEgress.start({ origin, spaceId, session: win.webContents.session });
+  });
+  ipcMain.handle("desktop.egress.stop", (event) => {
+    if (!fromMainWindow(event)) return;
+    officeEgress.stop();
+  });
+  ipcMain.handle("desktop.egress.state", (event) => {
+    if (!fromMainWindow(event)) {
+      return { connected: false, activeConnections: 0, sessionTotal: 0 };
+    }
+    return officeEgress.state();
+  });
   ipcMain.handle("desktop.window.close", (event) => {
     windowFrom(event)?.close();
   });

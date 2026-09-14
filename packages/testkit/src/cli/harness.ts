@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { loadRootEnv } from "@rakazo/core/node/load-root-env";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
+import { applyLocalContainerEnv, startMockerPostgres } from "../local-container.js";
 import { runProcess } from "./process.js";
 
 loadRootEnv();
@@ -41,12 +42,26 @@ if (sandboxProvider === "box" && !process.env.BOX_API_KEY) {
 }
 
 async function main() {
+  applyLocalContainerEnv(process.env);
   const mode = integration ? "integration" : "e2e";
   const reportDir = path.resolve("test-report", mode);
   await mkdir(reportDir, { recursive: true });
-  const container = await new PostgreSqlContainer("postgres:16-alpine").start();
+  const database =
+    process.platform === "darwin"
+      ? await startMockerPostgres()
+      : await (async () => {
+          const container = await new PostgreSqlContainer("postgres:16-alpine").start();
+          return {
+            connectionUri: container.getConnectionUri(),
+            name: "testcontainers",
+            getDatabase: () => container.getDatabase(),
+            getUsername: () => container.getUsername(),
+            exec: (command: string[]) => container.exec(command),
+            stop: () => container.stop(),
+          };
+        })();
   try {
-    const databaseUrl = container.getConnectionUri();
+    const databaseUrl = database.connectionUri;
     const apiPort = Number(process.env.API_PORT ?? 3110);
     const webPort = Number(process.env.WEB_PORT ?? 5180);
     const webOrigin = `http://127.0.0.1:${webPort}`;
@@ -117,12 +132,12 @@ async function main() {
       // Each app reconciles all durable work in its database, including intentionally
       // unfinished fixture runs. Clone the pristine migrated schema so one suite
       // cannot execute another suite's backlog or wait for it during shutdown.
-      const template = container.getDatabase().replaceAll('"', '""');
+      const template = database.getDatabase().replaceAll('"', '""');
       const databaseCommand = async (statement: string) => {
-        const result = await container.exec([
+        const result = await database.exec([
           "psql",
           "-U",
-          container.getUsername(),
+          database.getUsername(),
           "-d",
           "postgres",
           "-v",
@@ -290,7 +305,7 @@ async function main() {
       }
     }
   } finally {
-    await container.stop().catch(() => undefined);
+    await database.stop().catch(() => undefined);
   }
 }
 

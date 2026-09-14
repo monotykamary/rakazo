@@ -12,6 +12,8 @@ export interface SupervisorTarget {
   /** Directory the supervisor exposes as DATA_DIR; the runner shares this volume unprivileged. */
   dataDir: string;
   fetch?: typeof fetch;
+  /** Injected onto office computers so they honor the runner CONNECT proxy. */
+  egressProxy?: string;
 }
 
 export interface ForwardResult {
@@ -61,7 +63,12 @@ export async function rewriteProvisionBody(
     throw new CommandRejectedError("Provision command is missing computer identity");
   }
   const homePath = await ensureRunnerHome(target.dataDir, homeKey);
-  const rewritten = JSON.stringify({ botId: homeKey, homePath, spaceId });
+  const rewritten = JSON.stringify({
+    botId: homeKey,
+    homePath,
+    spaceId,
+    ...(target.egressProxy ? { egressProxy: target.egressProxy } : {}),
+  });
   return {
     body: new TextEncoder().encode(rewritten),
     contentType: contentType ?? "application/json",

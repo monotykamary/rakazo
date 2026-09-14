@@ -90,6 +90,21 @@ export function isMachineTunnelHeaderValue(value: string): boolean {
   return value.length <= 200 && /^[A-Za-z0-9._:-]*$/.test(value);
 }
 
+export const MACHINE_EGRESS_UPGRADE = "rakazo-egress";
+export const MACHINE_EGRESS_MAX_FRAME_BYTES = 64 * 1024;
+export const MACHINE_EGRESS_MAX_STREAMS = 32;
+export const MACHINE_EGRESS_MAX_HOST_LENGTH = 253;
+export const MACHINE_EGRESS_PROXY_PORT = 18_764;
+export const MACHINE_EGRESS_PROXY_HOST = "host.docker.internal";
+
+export const MachineEgressSnapshotSchema = z.object({
+  enabled: z.boolean(),
+  hostConnected: z.boolean(),
+  activeConnections: z.number().int().nonnegative(),
+  sessionTotal: z.number().int().nonnegative(),
+});
+export type MachineEgressSnapshot = z.infer<typeof MachineEgressSnapshotSchema>;
+
 export const MachineStatus = z.enum(["pending", "online", "offline", "revoked"]);
 export type MachineStatus = z.infer<typeof MachineStatus>;
 

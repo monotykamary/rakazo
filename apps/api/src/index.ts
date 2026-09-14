@@ -13,9 +13,17 @@ const logger = createRootLogger(SERVICE_NAMES.api);
 
 try {
   const env = loadEnv();
-  const { app, stop } = await createApp({ ...env, logger });
+  const { app, stop, handleUpgrade } = await createApp({ ...env, logger });
   const server = serve({ fetch: app.fetch, port: env.port, hostname: env.apiHost }, () => {
     logger.info("api listening", { "http.host": env.apiHost, "http.port": env.port });
+  });
+  server.on("upgrade", (request, socket, head) => {
+    void (async () => {
+      const handled = handleUpgrade ? await handleUpgrade(request, socket, head) : false;
+      if (!handled && !socket.destroyed) socket.destroy();
+    })().catch(() => {
+      if (!socket.destroyed) socket.destroy();
+    });
   });
 
   // Long-lived connections (threads.subscribe SSE streams) never end on their

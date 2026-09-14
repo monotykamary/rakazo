@@ -241,6 +241,7 @@ import { ActivityList } from "./ActivityList";
 import type { ContextMenuPosition } from "./BotContextMenu";
 import { CreateGroupForm, GroupSettings, memberName } from "./GroupPanel";
 import { HostComputerPrompt } from "./HostComputerPrompt";
+import { OfficeEgressHost } from "../components/OfficeEgressHost";
 import {
   draftFromRoutine,
   emptyRoutineDraft,
@@ -2652,7 +2653,10 @@ export function ShellPage() {
       className="relative flex h-full min-w-0 overflow-hidden bg-background text-foreground/90"
     >
       {bootstrapMe !== undefined ? (
-        <HostComputerPrompt initialMe={bootstrapMe ?? undefined} />
+        <>
+          <HostComputerPrompt initialMe={bootstrapMe ?? undefined} />
+          <OfficeEgressHost />
+        </>
       ) : null}
       <SpringButton
         type="button"

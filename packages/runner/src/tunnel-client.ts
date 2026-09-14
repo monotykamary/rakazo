@@ -181,8 +181,11 @@ export class TunnelClient {
     }
   }
 
-  async heartbeat(machineToken: string, signal?: AbortSignal): Promise<void> {
-    const { status } = await this.request(machineToken, {
+  async heartbeat(machineToken: string, signal?: AbortSignal): Promise<{
+    enabled: boolean;
+    hostConnected: boolean;
+  } | null> {
+    const { status, body } = await this.request(machineToken, {
       path: "/api/machines/runner/heartbeat",
       signal,
       body: { version: RUNNER_VERSION },
@@ -190,5 +193,18 @@ export class TunnelClient {
       timeoutMs: 15_000,
     });
     TunnelClient.checkAuthStatus(status, "/api/machines/runner/heartbeat");
+    if (status === 204 || body.length === 0) return null;
+    try {
+      const payload = JSON.parse(new TextDecoder().decode(body)) as {
+        egress?: { enabled?: boolean; hostConnected?: boolean };
+      };
+      if (!payload.egress || typeof payload.egress.enabled !== "boolean") return null;
+      return {
+        enabled: payload.egress.enabled,
+        hostConnected: Boolean(payload.egress.hostConnected),
+      };
+    } catch {
+      return null;
+    }
   }
 }

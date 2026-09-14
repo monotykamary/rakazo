@@ -164,6 +164,7 @@ app.post("/computers", async (c) => {
       botId: z.string().min(1),
       homePath: z.string().min(1),
       spaceId: z.string().min(1),
+      egressProxy: z.string().min(1).max(200).optional(),
     })
     .parse(await c.req.json());
   try {
@@ -239,6 +240,7 @@ app.post("/computers", async (c) => {
             networkMode,
             controlToken: randomUUID(),
             publishControlPort: controlViaLoopback,
+            egressProxy: body.egressProxy,
           }),
         );
         await container.start();

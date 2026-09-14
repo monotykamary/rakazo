@@ -14,6 +14,8 @@ export {
   runnerHomeFromEnv,
   saveCredentials,
 } from "./credentials.js";
+export { connectOfficeEgressClient } from "./egress-client.js";
+export { startOfficeEgressProxy } from "./egress-proxy.js";
 export { runForwarder, supervisorFromEnv } from "./forwarder.js";
 export { ForwardJournal, type JournalEntry } from "./journal.js";
 export {

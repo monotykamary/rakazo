@@ -43,6 +43,7 @@ import {
   isSandboxGoneError,
   isScratchpadStatus,
   listScratchpadItems,
+  type MachineEgressHub,
   type MachinesService,
   McpOAuthBroker,
   type MemoryProviderResolver,
@@ -457,12 +458,14 @@ function mcpAssignmentDto(row: {
 }
 
 import { inspectExecution } from "./execution.js";
+import { loadOfficeEgressSnapshot } from "./machine-egress.js";
 import { listQueue, mutateQueue } from "./queue.js";
 
 export interface RouterDeps {
   prisma: PrismaClient;
   /** Machine tunnel service; built from the Prisma store when absent. */
   machines?: MachinesService;
+  egress?: MachineEgressHub;
   events: ThreadEvents;
   auth: Auth;
   jobs: JobPublisher;
@@ -4486,6 +4489,29 @@ export function createRouter(deps: RouterDeps) {
           input,
         );
       }),
+      egress: {
+        get: authed.machines.egress.get.handler(async ({ context }) =>
+          loadOfficeEgressSnapshot(deps.prisma, deps.egress, context.actor),
+        ),
+        set: authed.machines.egress.set.handler(async ({ context, input }) => {
+          await deps.prisma.officeEgressPreference.upsert({
+            where: {
+              spaceId_userId: {
+                spaceId: context.actor.spaceId,
+                userId: context.actor.userId,
+              },
+            },
+            create: {
+              spaceId: context.actor.spaceId,
+              userId: context.actor.userId,
+              enabled: input.enabled,
+            },
+            update: { enabled: input.enabled },
+          });
+          if (!input.enabled) deps.egress?.detachHost(context.actor);
+          return loadOfficeEgressSnapshot(deps.prisma, deps.egress, context.actor);
+        }),
+      },
     },
     services: {
       list: authed.services.list.handler(async ({ context, input }) =>

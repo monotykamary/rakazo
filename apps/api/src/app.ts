@@ -21,6 +21,7 @@ import {
   createConnectorStack,
   createJobReconciler,
   createLocalOfficeModelResolver,
+  createMachineEgressHub,
   createMachineFetch,
   createMachineRouting,
   createMachinesService,
@@ -90,6 +91,7 @@ import { MarkdownMemoryStore } from "@rakazo/memory";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { type AppEnv, loadEnv } from "./env.js";
+import { handleMachineEgressUpgrade, loadOfficeEgressSnapshot } from "./machine-egress.js";
 import { mountMachineRunnerRoutes } from "./machines.js";
 import {
   createMessagingInboundHandler,
@@ -127,6 +129,11 @@ export function mountLocalPiExternalEffectBlocks(app: Hono): void {
 export interface AppHandles {
   app: Hono;
   prisma: PrismaClient;
+  handleUpgrade?: (
+    request: import("node:http").IncomingMessage,
+    socket: import("node:stream").Duplex,
+    head: Buffer,
+  ) => Promise<boolean>;
   jobs: JobPublisher;
   sandbox: SandboxProvider;
   connector: DestinationEmulator;
@@ -236,6 +243,7 @@ export async function createApp(
   const inMemoryJobs = jobKind === "memory" ? new InMemoryJobQueue() : undefined;
   const jobs = inMemoryJobs ?? new GraphileJobPublisher(env.databaseUrl);
   const machines = createMachinesService({ store: createPrismaMachineStore(prisma) });
+  const egress = createMachineEgressHub();
   const fallbackSandbox: SandboxProvider =
     sandboxOverride ??
     createRunSandbox(env.sandboxProvider, {
@@ -461,6 +469,7 @@ export async function createApp(
   const router = createRouter({
     prisma,
     machines,
+    egress,
     events,
     auth,
     jobs,
@@ -532,7 +541,10 @@ export async function createApp(
         }),
     );
   }
-  mountMachineRunnerRoutes(app, { machines });
+  mountMachineRunnerRoutes(app, {
+    machines,
+    egressSnapshot: (actor) => loadOfficeEgressSnapshot(prisma, egress, actor),
+  });
   app.on(["GET", "POST"], "/api/auth/*", async (c) => {
     const path = new URL(c.req.url).pathname.replace("/api/auth", "");
     if (blockedAuthPaths.some((blocked) => path.startsWith(blocked))) {
@@ -856,6 +868,8 @@ export async function createApp(
   return {
     app,
     prisma,
+    handleUpgrade: (request, socket, head) =>
+      handleMachineEgressUpgrade(request, socket, head, { auth, prisma, machines, egress }),
     jobs,
     sandbox,
     connector,

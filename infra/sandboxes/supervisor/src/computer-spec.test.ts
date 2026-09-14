@@ -48,6 +48,20 @@ describe("graphical computer spec", () => {
       expect(() => resolveTeamScreenLimit(value)).toThrow(/positive integer/);
   });
 
+  it("points office computers at a private HTTP CONNECT proxy", () => {
+    const options = containerCreateOptions({
+      name: "rakazo-bot-abc",
+      image: COMPUTER_IMAGE,
+      botId: "abc",
+      spaceId: "ws",
+      homePath: "/var/rakazo/homes/abc",
+      egressProxy: "http://host.docker.internal:18764",
+    });
+    expect(options.Env).toContain("HTTP_PROXY=http://host.docker.internal:18764");
+    expect(options.Env).toContain("HTTPS_PROXY=http://host.docker.internal:18764");
+    expect(options.HostConfig.ExtraHosts).toEqual(["host.docker.internal:host-gateway"]);
+  });
+
   it("creates a VNC desktop, not an alpine sleep fallback", () => {
     const options = containerCreateOptions({
       name: "rakazo-bot-abc",

@@ -14,6 +14,16 @@ contextBridge.exposeInMainWorld("rakazoDesktop", {
     download: () => ipcRenderer.invoke("desktop.update.download"),
     install: () => ipcRenderer.invoke("desktop.update.install"),
   },
+  egress: {
+    start: (spaceId) => ipcRenderer.invoke("desktop.egress.start", spaceId),
+    stop: () => ipcRenderer.invoke("desktop.egress.stop"),
+    state: () => ipcRenderer.invoke("desktop.egress.state"),
+    onChange: (listener) => {
+      const handler = (_event, state) => listener(state);
+      ipcRenderer.on("desktop.egress.change", handler);
+      return () => ipcRenderer.off("desktop.egress.change", handler);
+    },
+  },
   oauth: {
     open: (url) => ipcRenderer.invoke("desktop.oauth.open", url),
     cancel: (url) => ipcRenderer.invoke("desktop.oauth.cancel", url),

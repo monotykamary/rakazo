@@ -16,9 +16,9 @@ Usage:
   rakazo-runner pair --server <origin> --code <pairing-code> [--name <name>]
   rakazo-runner run
 
-The runner is outbound-only: it never listens on a port, points at its own
-local supervisor with its own local secret, and never forwards that secret to
-the server or a model.
+The runner is outbound-only toward the server: it never accepts public inbound
+work. A loopback/docker-internal CONNECT proxy lets office computers egress
+through the user's desktop when that option is on.
 
 Environment:
   RAKAZO_RUNNER_HOME        runner home for credentials and the crash journal

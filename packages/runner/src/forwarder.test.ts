@@ -167,7 +167,7 @@ describe("machine runner forwarder", () => {
         signal?.addEventListener("abort", () => reject(signal.reason), { once: true }),
       );
     });
-    vi.spyOn(client, "heartbeat").mockResolvedValue();
+    vi.spyOn(client, "heartbeat").mockResolvedValue(null);
     vi.spyOn(client, "postResult").mockRejectedValue(new MachineRevokedError());
     const controller = new AbortController();
     try {
@@ -300,12 +300,12 @@ describe("machine runner forwarder", () => {
       botId: string;
       homePath: string;
       spaceId: string;
+      egressProxy?: string;
     };
-    expect(sent).toEqual({
-      botId: "home-key",
-      homePath: path.join(dataDir, "homes", "home-key"),
-      spaceId: "sp1",
-    });
+    expect(sent.botId).toBe("home-key");
+    expect(sent.homePath).toBe(path.join(dataDir, "homes", "home-key"));
+    expect(sent.spaceId).toBe("sp1");
+    expect(sent.egressProxy).toMatch(/^http:\/\/host\.docker\.internal:\d+$/);
     // The runner created the home itself (unprivileged) before forwarding.
     const homeStat = await stat(path.join(dataDir, "homes", "home-key"));
     expect(homeStat.isDirectory()).toBe(true);

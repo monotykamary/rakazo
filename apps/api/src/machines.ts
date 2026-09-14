@@ -29,6 +29,10 @@ export class MachineRelocationBlockedError extends Error {
 
 export interface MachineRunnerDeps {
   machines: MachinesService;
+  egressSnapshot?: (actor: {
+    spaceId: string;
+    userId: string;
+  }) => Promise<import("@rakazo/contracts").MachineEgressSnapshot>;
 }
 
 const MACHINE_PAIR_REQUEST_BYTES = 4 * 1024;
@@ -151,7 +155,11 @@ export function mountMachineRunnerRoutes(app: Hono, deps: MachineRunnerDeps): vo
     if (!body) return c.json({ error: "Invalid JSON body." }, 400);
     if (typeof body.version === "string") version = body.version.slice(0, 80);
     await machines.heartbeat({ machineId: machine.id, version });
-    return new Response(null, { status: 204 });
+    const egress = deps.egressSnapshot
+      ? await deps.egressSnapshot({ spaceId: machine.spaceId, userId: machine.userId })
+      : undefined;
+    if (!egress) return new Response(null, { status: 204 });
+    return c.json({ egress });
   });
 }
 

@@ -154,9 +154,11 @@ Native workspace lifecycle operations never delete or automatically export the p
 ## Native and managed computers
 
 Trusted-local mode uses the existing native file/shell computer adapter. It does not
-provide a virtual graphical desktop. Apple containers run PostgreSQL; a Docker
-daemon, sandbox supervisor and isolated agent-image build are not prerequisites for
+provide a virtual graphical desktop. Mocker runs PostgreSQL on Apple containers; a Docker
+Desktop daemon, sandbox supervisor and isolated agent-image build are not prerequisites for
 this mode. Pi and its extensions can use the host's installed development tools.
+Web e2e and other Testcontainers suites on this machine use the same Mocker runtime:
+`mocker serve`, then `DOCKER_HOST=unix://$HOME/.docker/run/docker.sock`.
 
 The web and Electron renderer use the same backend. Physical mobile devices cannot
 connect directly to this loopback-only stack; use a managed deployment for that surface.

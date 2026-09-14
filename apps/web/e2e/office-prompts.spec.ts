@@ -80,3 +80,63 @@ for (const intent of ["link", "move"] as const) {
     await captureScreenshot(page, testInfo, `office-${intent}-conversation`);
   });
 }
+
+test("manage offices shows desktop egress on the office list", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    const unsupported = {
+      phase: "unsupported",
+      currentVersion: "0.1.0",
+      availableVersion: null,
+      percent: null,
+      message: null,
+      checkedAt: null,
+    };
+    (window as Window & { rakazoDesktop?: unknown }).rakazoDesktop = {
+      platform: "darwin",
+      window: {
+        close: async () => undefined,
+        minimize: async () => undefined,
+        toggleMaximize: async () => undefined,
+        state: async () => ({ minimized: false, maximized: false, fullScreen: false }),
+      },
+      update: {
+        state: async () => unsupported,
+        check: async () => unsupported,
+        download: async () => unsupported,
+        install: async () => unsupported,
+      },
+      egress: {
+        start: async () => undefined,
+        stop: async () => undefined,
+        state: async () => ({ connected: true, activeConnections: 2, sessionTotal: 2 }),
+        onChange: () => () => undefined,
+      },
+      oauth: { onCallback: () => () => undefined },
+    };
+  });
+  await page.route("**/rpc/machines/egress/get", (route) =>
+    route.fulfill({
+      json: {
+        json: {
+          enabled: true,
+          hostConnected: true,
+          activeConnections: 2,
+          sessionTotal: 2,
+        },
+      },
+    }),
+  );
+  await signup(page, `office-egress-${Date.now()}@rakazo.test`, "password12", "Office Test");
+  await completeOnboarding(page);
+  await createBotFromPicker(page);
+  await page.locator("main").getByRole("button", { name: "New Bot", exact: true }).click();
+  await page.getByRole("button", { name: "Manage offices" }).click();
+  const dialog = page.getByTestId("runs-on-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(page.getByTestId("office-egress")).toBeVisible();
+  await expect(page.getByText("Route egress through this desktop")).toBeVisible();
+  await expect(page.getByTestId("office-egress-status")).toHaveText(
+    "Connected — routing 2 connections (2 total this session).",
+  );
+  await captureScreenshot(page, testInfo, "office-egress");
+});

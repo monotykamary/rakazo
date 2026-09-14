@@ -26,6 +26,7 @@ export * from "./featured-connectors.js";
 export * from "./github-pull-request.js";
 export * from "./group-mentions.js";
 export * from "./http-response.js";
+export * from "./machine-egress.js";
 export * from "./mcp.js";
 export * from "./message-activity.js";
 export * from "./message-block-clusters.js";

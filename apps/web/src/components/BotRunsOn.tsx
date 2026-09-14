@@ -31,6 +31,7 @@ import {
 } from "@rakazo/ui-web";
 import { Copy, Ellipsis, Plus } from "lucide-react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { OfficeEgressControls } from "./OfficeEgressControls";
 import { rpc } from "../lib/rpc";
 
 const gateway: MachineGateway = {
@@ -137,6 +138,7 @@ export function BotRunsOn({
             ) : null}
             {pairing ? <PairingPanel controller={controller} pairing={pairing} /> : null}
             {pairing ? null : <MachineList controller={controller} snapshot={snapshot} />}
+            {pairing ? null : <OfficeEgressControls />}
           </PopoverContent>
         </Popover>
       </div>

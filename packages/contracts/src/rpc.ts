@@ -78,7 +78,12 @@ import {
 } from "./events.js";
 import { ExecutionInspectInputSchema, ExecutionInspectionSchema } from "./execution.js";
 import { Id, IsoDate } from "./ids.js";
-import { MachineAssignmentSchema, MachinePairingSchema, MachineSchema } from "./machines.js";
+import {
+  MachineAssignmentSchema,
+  MachineEgressSnapshotSchema,
+  MachinePairingSchema,
+  MachineSchema,
+} from "./machines.js";
 import {
   ModelRoutingGetInputSchema,
   ModelRoutingSchema,
@@ -216,6 +221,12 @@ export const appContract = {
     assign: oc
       .input(z.object({ botId: Id, machineId: z.string().nullable() }))
       .output(MachineAssignmentSchema),
+    egress: {
+      get: oc.output(MachineEgressSnapshotSchema),
+      set: oc
+        .input(z.object({ enabled: z.boolean() }))
+        .output(MachineEgressSnapshotSchema),
+    },
   },
   /** Supervised project services on a bot's computer (workbench). */
   services: {
