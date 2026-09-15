@@ -1,9 +1,16 @@
-import { MACHINE_POLL_RESPONSE_MAX_BYTES, MACHINE_POLL_WAIT_MS_MAX } from "@rakazo/contracts";
+import {
+  MACHINE_POLL_RESPONSE_MAX_BYTES,
+  MACHINE_POLL_WAIT_MS_MAX,
+  OFFICE_REPLICA_VERSION_MARK,
+  type OfficeReplicaJournalBatch,
+  type OfficeReplicaWork,
+  OfficeReplicaWorkSchema,
+} from "@rakazo/contracts";
 import { readBoundedResponseBytes } from "@rakazo/core";
 
 export { MACHINE_POLL_WAIT_MS_MAX };
 
-export const RUNNER_VERSION = "0.1.0";
+export const RUNNER_VERSION = `0.2.0+${OFFICE_REPLICA_VERSION_MARK}`;
 /** A command body's base64 plus a small JSON envelope fits one poll response. */
 const MAX_POLL_RESPONSE_BYTES = MACHINE_POLL_RESPONSE_MAX_BYTES;
 const MAX_CONTROL_RESPONSE_BYTES = 64 * 1024;
@@ -206,5 +213,52 @@ export class TunnelClient {
     } catch {
       return null;
     }
+  }
+
+  async claimReplica(machineToken: string, signal?: AbortSignal): Promise<OfficeReplicaWork | null> {
+    const { status, payload } = await this.requestJson<{ work?: unknown }>(machineToken, {
+      path: "/api/machines/runner/replicas/claim",
+      signal,
+      body: {},
+      maxResponseBytes: MAX_CONTROL_RESPONSE_BYTES * 8,
+      timeoutMs: 20_000,
+    });
+    if (status === 404) return null;
+    TunnelClient.checkAuthStatus(status, "/api/machines/runner/replicas/claim");
+    if (!payload.work) return null;
+    const parsed = OfficeReplicaWorkSchema.safeParse(payload.work);
+    return parsed.success ? parsed.data : null;
+  }
+
+  async postReplicaJournal(
+    machineToken: string,
+    batch: OfficeReplicaJournalBatch,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    const { status, payload } = await this.requestJson<{ cursor?: number }>(machineToken, {
+      path: "/api/machines/runner/replicas/journal",
+      signal,
+      body: batch,
+      maxResponseBytes: MAX_CONTROL_RESPONSE_BYTES,
+      timeoutMs: 30_000,
+    });
+    TunnelClient.checkAuthStatus(status, "/api/machines/runner/replicas/journal");
+    if (typeof payload.cursor !== "number") throw new Error("Replica journal cursor missing");
+    return payload.cursor;
+  }
+
+  async returnReplica(
+    machineToken: string,
+    body: { replicaId: string; epoch: number; outcome: "completed" | "failed" | "cancelled"; error?: string },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const { status } = await this.requestJson(machineToken, {
+      path: "/api/machines/runner/replicas/return",
+      signal,
+      body,
+      maxResponseBytes: MAX_CONTROL_RESPONSE_BYTES,
+      timeoutMs: 15_000,
+    });
+    TunnelClient.checkAuthStatus(status, "/api/machines/runner/replicas/return");
   }
 }

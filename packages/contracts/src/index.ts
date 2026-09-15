@@ -11,6 +11,7 @@ export * from "./model-routing.js";
 export * from "./model-runtime.js";
 export * from "./model-selection.js";
 export * from "./model-visibility.js";
+export * from "./office-replica.js";
 export * from "./openai-compatible-ui.js";
 export * from "./queue.js";
 export * from "./reactions.js";

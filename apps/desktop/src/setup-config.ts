@@ -275,9 +275,19 @@ function isLinkLocalHost(hostname: string) {
   return false;
 }
 
+function isTailscaleHost(hostname: string) {
+  const host = unbracketedHost(hostname);
+  if (host === "ts.net" || host.endsWith(".ts.net")) return true;
+  if (isIP(host) === 4) {
+    const [first, second] = host.split(".").map(Number);
+    return first === 100 && second !== undefined && second >= 64 && second <= 127;
+  }
+  return false;
+}
+
 function isLocalNetworkHost(hostname: string) {
   const host = unbracketedHost(hostname);
-  if (isLoopbackHost(host) || host.endsWith(".local")) return true;
+  if (isLoopbackHost(host) || host.endsWith(".local") || isTailscaleHost(host)) return true;
   if (isLinkLocalHost(host)) return false;
 
   if (isIP(host) === 4) {

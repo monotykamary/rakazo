@@ -35,7 +35,9 @@ import {
   BotSecretSubmission,
   DispatchWorkInput,
   isAttachmentImageMimeType,
+  isOfficeReplicaLeaseOwner,
   isValidServiceName,
+  machineSupportsOfficeReplica,
   ModelHiddenError,
   ModelSelectionSchema,
   OutgoingDraftFieldsSchema,
@@ -113,6 +115,7 @@ import {
   WorkScopeError,
   wakePremoveQueue,
   workRoot,
+  handoffOfficeReplica,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { parse as parseShellCommand } from "shell-quote";
@@ -988,6 +991,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
       const run = await deps.prisma.run.findUnique({ where: { id: runId } });
       if (!run) return;
       if (isTerminal(run.status as RunStatus)) return;
+      if (isOfficeReplicaLeaseOwner(run.leaseOwner)) return;
       await assertLocalPiRunAllowed(deps, run);
       const resumeCheckpoint =
         run.checkpoint === "takeover" || run.checkpoint === "takeover-skipped"
@@ -1043,6 +1047,29 @@ export function createRunExecutor(deps: ExecutorDeps) {
       if (!leaseTarget.computerId) throw new Error("Bot has no computer");
       if (leaseTarget.computerSwitching) {
         await requeueComputerRun(deps, runId, workerId, fence, resumeCheckpoint);
+        return;
+      }
+      const office = await deps.prisma.computer.findUnique({
+        where: { id: leaseTarget.computerId },
+        select: {
+          machineId: true,
+          machine: { select: { status: true, version: true } },
+        },
+      });
+      if (
+        office?.machineId &&
+        office.machine?.status === "paired" &&
+        machineSupportsOfficeReplica(office.machine.version)
+      ) {
+        await handoffOfficeReplica(deps.prisma, {
+          spaceId: run.spaceId,
+          userId: run.userId,
+          botId: run.botId,
+          threadId: run.threadId,
+          runId,
+          machineId: office.machineId,
+          leaseFence: fence,
+        });
         return;
       }
       let computerLease: ComputerExecutionLease | null = null;

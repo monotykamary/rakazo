@@ -93,6 +93,7 @@ import { cors } from "hono/cors";
 import { type AppEnv, loadEnv } from "./env.js";
 import { handleMachineEgressUpgrade, loadOfficeEgressSnapshot } from "./machine-egress.js";
 import { mountMachineRunnerRoutes } from "./machines.js";
+import { mountOfficeReplicaRoutes } from "./office-replica.js";
 import {
   createMessagingInboundHandler,
   teamChatSenderCanWakeMessageRoutines,
@@ -544,6 +545,11 @@ export async function createApp(
   mountMachineRunnerRoutes(app, {
     machines,
     egressSnapshot: (actor) => loadOfficeEgressSnapshot(prisma, egress, actor),
+  });
+  mountOfficeReplicaRoutes(app, {
+    machines,
+    prisma,
+    appendEvent: (input) => events.append(input),
   });
   app.on(["GET", "POST"], "/api/auth/*", async (c) => {
     const path = new URL(c.req.url).pathname.replace("/api/auth", "");

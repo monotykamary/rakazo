@@ -13,6 +13,8 @@ import {
 } from "./supervisor-forward.js";
 import { connectOfficeEgressClient, type OfficeEgressClient } from "./egress-client.js";
 import { type OfficeEgressMode, startOfficeEgressProxy } from "./egress-proxy.js";
+import { createOfficeReplicaDriver } from "./replica-driver.js";
+import { runReplicaLoop } from "./replica-loop.js";
 import { type MachineCommand, MachineRevokedError, TunnelClient } from "./tunnel-client.js";
 
 export interface ForwarderOptions {
@@ -318,7 +320,23 @@ export async function runForwarder(options: ForwarderOptions): Promise<void> {
     }
   })();
 
-  const loops = [pollLoop, heartbeatLoop, recoveryLoop];
+  const replicaLoop = runReplicaLoop({
+    credentials: options.credentials,
+    home: options.home,
+    client,
+    driver: createOfficeReplicaDriver({ supervisor }),
+    signal: stop.signal,
+    log,
+  }).catch((error) => {
+    if (error instanceof MachineRevokedError) {
+      loopFailure ??= error;
+      stop.abort();
+      return;
+    }
+    log(`replica loop failed: ${error instanceof Error ? error.message : "unknown error"}`);
+  });
+
+  const loops = [pollLoop, heartbeatLoop, recoveryLoop, replicaLoop];
   try {
     await Promise.all(loops);
   } finally {

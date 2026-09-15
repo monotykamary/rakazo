@@ -29,6 +29,8 @@ Ambient actors/mesh/residency, local execution runtimes and automatic worktree c
 
 ## Queue and inspection
 
+When a bot runs on a replica-capable paired machine, that office is the run owner until it returns a journal. The laptop worker will not reclaim `office:` leases. Catch-up appends verified journal seqs; gaps and hash mismatches fail closed.
+
 One shared headless queue engine owns FIFO order, lanes, holds, edit sessions, dispatch reservations, and recovery. PostgreSQL commits reservations before delivery; uncertain delivery remains held for explicit reconciliation. The native Pi queue is not reconstructed from a second editable plan.
 
 Web/Electron and mobile use the same queue and execution controllers. `extensions.manage_queue` exposes revision-checked natural-language control of the current private bot queue; external messaging runs, inbound webhooks, and children cannot read or mutate that private plan.

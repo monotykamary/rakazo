@@ -135,7 +135,8 @@ export async function manageOfficeTool(
       status: machineStatusOf({ status: "paired", lastSeenAt }, new Date()),
     })),
     capabilities: {
-      pairedComputeRequiresOriginalControlPlane: true,
+      pairedComputeRequiresOriginalControlPlane: native,
+      officeReplica: !native,
       automatedRelocation:
         !native &&
         input.action !== "inspect" &&
@@ -151,7 +152,9 @@ export async function manageOfficeTool(
         ? "Native cutover is unsupported. An independent deployment can use native Pi/Fabric host tools with a separately reviewed script; do not automatically export credentials or native state."
         : queuedIntent
           ? "Inspect the intent after this run ends. Queued means pending, not moved; active work is preserved."
-          : (models.error ??
-            "Pairing requires the existing secure manual settings flow. Managed moves require explicit approval; autonomous control-plane migration is unsupported."),
+          : native
+            ? (models.error ??
+              "Pairing requires the existing secure manual settings flow. Managed moves require explicit approval; autonomous control-plane migration is unsupported.")
+            : "A paired office keeps the run while this app sleeps, then catch-up imports the journal.",
   };
 }

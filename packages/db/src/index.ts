@@ -13,6 +13,7 @@ export * from "./messages.js";
 export * from "./messaging.js";
 export * from "./model-credentials.js";
 export * from "./model-visibility.js";
+export * from "./office-replica.js";
 export * from "./premove-queue.js";
 export * from "./repos.js";
 export * from "./runtime-placement.js";

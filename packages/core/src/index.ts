@@ -39,6 +39,7 @@ export * from "./model-oauth.js";
 export * from "./model-options.js";
 export * from "./model-probe.js";
 export * from "./model-providers.js";
+export * from "./office-replica.js";
 export * from "./peer-messages.js";
 export * from "./premove-drain.js";
 export * from "./premove-queue.js";

@@ -237,4 +237,13 @@ describe("manage_office", () => {
       "infra/compose/deploy-server.sh",
     );
   });
+  it("tells managed offices they keep the run while the app sleeps", async () => {
+    const { deps } = fixture();
+    const result = await manageOfficeTool(deps, actor, scope, { action: "inspect" });
+    expect(result.capabilities).toMatchObject({
+      pairedComputeRequiresOriginalControlPlane: false,
+      officeReplica: true,
+    });
+    expect(result.nextStep).toContain("catch-up");
+  });
 });

@@ -605,6 +605,7 @@ model Run {
   steeringMessages     SteeringMessage[]
   externalMessage      ExternalMessage?
   dispatchedWork       DispatchedWork?
+  officeReplica        OfficeReplica?
 
   @@unique([spaceId, clientNonce])
   @@index([status, leaseExpiresAt])
@@ -797,6 +798,36 @@ model OfficeMoveIntent {
   @@index([status, nextAttemptAt, id])
   @@index([spaceId, userId, botId, createdAt])
   @@map("office_move_intents")
+}
+
+/// Office-owned run replica. The paired machine journals product evidence while
+/// the laptop control plane may be asleep; import is catch-up, not replay.
+model OfficeReplica {
+  id            String    @id @default(cuid())
+  spaceId       String
+  userId        String
+  botId         String
+  threadId      String
+  runId         String    @unique
+  run           Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  machineId     String
+  machine       Machine   @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  epoch         Int       @default(0)
+  /// handing_off | owning | returning | imported | failed
+  status        String    @default("handing_off")
+  journalCursor Int       @default(-1)
+  journalHead   String    @default("")
+  leaseFence    Int       @default(0)
+  error         String?
+  handedOffAt   DateTime?
+  lastJournalAt DateTime?
+  importedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([machineId, status])
+  @@index([status, updatedAt, id])
+  @@map("office_replicas")
 }
 
 model ExternalEffect {
@@ -1415,6 +1446,7 @@ model Machine {
   updatedAt       DateTime  @updatedAt
   commands        MachineCommand[]
   computers       Computer[]
+  officeReplicas  OfficeReplica[]
 
   @@index([spaceId, userId, updatedAt])
   @@index([pairingCodeHash])

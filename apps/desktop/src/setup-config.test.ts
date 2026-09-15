@@ -124,6 +124,14 @@ describe("saved setup", () => {
 
   it("keeps the new-instance choice on this computer", () => {
     expect(parseSetupInput({ mode: "new", serverUrl: "http://192.168.1.20:3100" })).toBeNull();
+    expect(parseSetupInput({ mode: "existing", serverUrl: "http://box.tail.ts.net" })).toEqual({
+      mode: "existing",
+      serverUrl: "http://box.tail.ts.net",
+    });
+    expect(parseSetupInput({ mode: "existing", serverUrl: "http://100.64.1.8:5173" })).toEqual({
+      mode: "existing",
+      serverUrl: "http://100.64.1.8:5173",
+    });
     expect(parseSetupInput({ mode: "existing", serverUrl: "http://192.168.1.20:3100" })).toEqual({
       mode: "existing",
       serverUrl: "http://192.168.1.20:3100",
