@@ -545,11 +545,8 @@ describe("durable premove database service", () => {
 
   it("never invokes runtime for unsupported controls or foreign gates", async () => {
     for (const text of [
-      "/reload",
-      "/new",
       "/model other",
-      "/thinking high",
-      "/fabric prewalk",
+      "/thinking unsupported",
       "/fabric await foreign",
       "/fabric await",
     ]) {
@@ -564,6 +561,27 @@ describe("durable premove database service", () => {
       expect(f.state()!.view.rows).toHaveLength(1);
       expect(f.state()!.view.paused).toBe(true);
     }
+  });
+
+  it.each([
+    ["/reload", "reload"],
+    ["/new", "new"],
+    ["/thinking high", "thinking"],
+    ["/fabric prewalk", "fabric-prewalk"],
+  ])("delegates reviewed %s controls to runtime policy", async (text, kind) => {
+    const f = fixture();
+    await f.mutate({ type: "enqueue", lane: "steer", text });
+    await f.mutate({ type: "resume" });
+    const send = vi.fn();
+    const command = vi.fn(async () => ({ outcome: "completed" as const }));
+    await dispatchPremoveQueue(f.prisma, lease, "idle", { send, command });
+    expect(command).toHaveBeenCalledWith(
+      expect.objectContaining({ text }),
+      expect.objectContaining({ kind }),
+      expect.anything(),
+    );
+    expect(send).not.toHaveBeenCalled();
+    expect(f.state()!.view.rows).toHaveLength(0);
   });
 
   it("requires command completion, not transport acceptance", async () => {

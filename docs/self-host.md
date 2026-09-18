@@ -77,7 +77,7 @@ supervisor at startup naming the variable, rather than surfacing later as a fail
 
 ## Docker Compose (single machine)
 
-1. Copy `.env.example` to `.env` and set `BETTER_AUTH_SECRET`, `ENCRYPTION_KEY`, and `SCREEN_PROXY_SECRET` to independent long random strings (32+ characters; 64 hex for `ENCRYPTION_KEY`). Docker sandboxes also need a dedicated `SANDBOX_SUPERVISOR_TOKEN`. Keep existing `ENCRYPTION_KEY` values so stored credentials stay decryptable.
+1. Copy `.env.example` to `.env` and set `BETTER_AUTH_SECRET`, `ENCRYPTION_KEY`, and `SCREEN_PROXY_SECRET` to independent long random strings (32+ characters; 64 hex for `ENCRYPTION_KEY`). Docker sandboxes also need a dedicated `SANDBOX_SUPERVISOR_TOKEN`. Set `POSTGRES_PASSWORD` to a separate random hexadecimal value (for example, generate it with `openssl rand -hex 32`). Keep existing `ENCRYPTION_KEY` values so stored credentials stay decryptable.
 2. Set `OPENROUTER_API_KEY` (and `COMPOSIO_API_KEY` if you want Plugins).
 3. Build the computer image: `bun run sandbox:build` (Compose also builds it via the `computer` service).
 4. `docker compose --env-file .env -f infra/compose/docker-compose.yml up --build`
@@ -87,7 +87,13 @@ On Windows, if an older clone with `core.autocrlf=true` leaves the computer pane
 
 Compose runs Postgres, the sandbox supervisor (Docker socket), API, worker, and a Vite preview of the web app. Bot computers are sibling containers (`rakazo/computer:local`) on separate per-bot networks; only the supervisor and screen proxy join each one. The API process does not get an unrestricted Docker socket; the supervisor owns the lifecycle.
 
-Postgres is published on **loopback only** (`127.0.0.1:5433` on the host). Do not expose that port on a public VPS. Change `POSTGRES_PASSWORD` and keep Postgres on an internal network when you deploy remotely.
+Source Compose keeps Postgres network-internal by default, so bot containers cannot reach it through a host-published port. For host-side database tools only, add `-f infra/compose/docker-compose.postgres-host.yml` after the base Compose file; that overlay publishes `127.0.0.1:5433`. Set the host client's `DATABASE_URL` to the same credentials. `bun run dev` continues to provision its own local database through mocker on macOS and does not require this overlay.
+
+`POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` initialize a new volume only. Preserve the existing values when upgrading an installation, or rotate the role password explicitly before updating clients. Do not delete a database volume to apply these settings; back up existing data first.
+
+`DB_POOL_MAX` optionally caps the shared query/job pool per process (API default `4`, worker default `8`). `GRAPHILE_WORKER_CONCURRENCY` defaults to `4`. Dedicated realtime and office-handoff connections remain separate; size the database connection budget across all processes. Capacity failures back off and retry, while shutdown cancels retry waits and unrelated failures remain fatal.
+
+`SANDBOX_MAX_COMPUTERS_PER_SPACE` optionally bounds total managed Docker computers per Space, including stopped containers. Unset or `0` leaves it unlimited; existing computers can restart or be replaced at the cap. Named-volume computer homes require Docker Engine 26 or newer (API 1.45+) for volume subpaths.
 
 The Docker supervisor is not published as its own image and is not exposed on the host. It runs from
 the app image, stays on the internal Compose network, and holds the Docker socket because access to

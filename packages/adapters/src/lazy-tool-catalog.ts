@@ -36,6 +36,7 @@ export type CatalogSearchResult =
   | { group: string; names: string[]; error?: string }
   | { group: string; count: number; hint: string };
 
+/** Build catalog wrappers. MCP callers must use a non-`mcp_` prefix such as `connectors`. */
 export function lazyCatalogTools(
   prefix: string,
   connectorId: string,

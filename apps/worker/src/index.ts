@@ -55,7 +55,9 @@ import {
   createDb,
   createPrismaMachineStore,
   createThreadEvents,
+  isTooManyDatabaseConnections,
   machineScopeFromTunnelRequest,
+  parsePositiveInteger,
   sweepExpiredMachineCommands,
 } from "@rakazo/db";
 import { SERVICE_NAMES } from "@rakazo/logging";
@@ -77,7 +79,13 @@ async function main() {
   }
   const runtime =
     runtimeMode === "scripted" ? new ScriptedAgentRuntime() : new LocalPiRuntime(localPi!);
-  const { prisma, pool } = createDb(databaseUrl);
+  const shutdown = new AbortController();
+  const { prisma, pool } = createDb(databaseUrl, {
+    poolMax: parsePositiveInteger(process.env.DB_POOL_MAX, 8),
+    applicationName: "rakazo-worker",
+    signal: shutdown.signal,
+    onConnectionError: (error) => logger.error("PostgreSQL pool connection error", error),
+  });
   const officeMovePool = createOfficeMovePool(databaseUrl);
   const realtime = new PostgresRealtimeFanout({
     connectionString: process.env.REALTIME_DATABASE_URL ?? databaseUrl,
@@ -168,10 +176,16 @@ async function main() {
   const home = new LocalAgentHomeStore(dataDir);
   const artifacts = new LocalArtifactStore(dataDir);
   const inMemoryJobs = process.env.WAKEUP_DRIVER === "memory" ? new InMemoryJobQueue() : undefined;
-  const jobs: JobPublisher = inMemoryJobs ?? new GraphileJobPublisher(databaseUrl);
+  const jobs: JobPublisher = inMemoryJobs ?? new GraphileJobPublisher(pool);
   const managedDevWorker = process.env.RAKAZO_DEV_WORKER_IPC === "1" && !!process.send;
+  let reportJobHostError: (error: unknown) => void = () => undefined;
   const jobHost: JobWorkerHost =
-    inMemoryJobs ?? new GraphileJobWorkerHost(databaseUrl, { noHandleSignals: managedDevWorker });
+    inMemoryJobs ??
+    new GraphileJobWorkerHost(pool, {
+      concurrency: parsePositiveInteger(process.env.GRAPHILE_WORKER_CONCURRENCY, 4),
+      noHandleSignals: managedDevWorker,
+      onError: (error) => reportJobHostError(error),
+    });
   // One provider instance so emulator launches and polls share the same Map.
   const cloudAgent = createCloudAgentConnection();
   const executor = createRunExecutor({
@@ -229,25 +243,13 @@ async function main() {
     messaging,
     cloudAgent,
   });
-  await jobHost.start(jobHandlers);
-  const reconciler = createJobReconciler({
-    prisma,
-    jobs,
-    events,
-    leadership: createPostgresReconciliationLeadership(pool),
-    reconcileOfficeMoves: () => reconcileOfficeMoveIntents({ prisma, jobs }),
-    reconcileCloudAgents: async () => {
-      await sweepExpiredMachineCommands(prisma);
-      await reconcileCloudAgents({ prisma, jobs, cloudAgent });
-    },
-  });
-  reconciler.start();
-
+  let reconciler: ReturnType<typeof createJobReconciler> | undefined;
   let stopping: Promise<void> | undefined;
   const stop = () =>
     (stopping ??= (async () => {
+      shutdown.abort(new Error("Worker shutting down"));
       try {
-        await reconciler.stop();
+        await reconciler?.stop();
         // Graphile waits for handlers even after its helper abort timer fires.
         // dev-worker-graphile.test.ts exercises the installed runner across that timeout.
         await jobHost.stop();
@@ -263,10 +265,27 @@ async function main() {
         await logger.flush({ timeoutMs: 2_000 });
       }
     })());
+  let fatal = false;
+  const failProcess = (message: string, error: unknown) => {
+    if (fatal) return;
+    fatal = true;
+    logger.error(message, error);
+    void stop().finally(() => process.exit(1));
+  };
+  reportJobHostError = (error) => failProcess("worker job host failed", error);
+
   process.once("SIGTERM", () => void stop());
   process.once("SIGINT", () => void stop());
+  process.on("uncaughtException", (error) => failProcess("uncaughtException", error));
+  process.on("unhandledRejection", (reason) => {
+    if (isTooManyDatabaseConnections(reason)) {
+      logger.error("unhandledRejection: database capacity exhausted", reason);
+      return;
+    }
+    failProcess("unhandledRejection", reason);
+  });
 
-  // The local dev manager owns this entire host, not individual Pi children.
+  // Register drain before PostgreSQL startup retries so the dev manager can cancel them.
   if (managedDevWorker) {
     process.on("message", (message: unknown) => {
       if ((message as { type?: string })?.type === "dev-worker:drain") {
@@ -276,8 +295,24 @@ async function main() {
         );
       }
     });
-    process.send?.({ type: "dev-worker:ready" });
   }
+
+  await jobHost.start(jobHandlers);
+  if (shutdown.signal.aborted) return;
+  reconciler = createJobReconciler({
+    prisma,
+    jobs,
+    events,
+    leadership: createPostgresReconciliationLeadership(pool),
+    reconcileOfficeMoves: () => reconcileOfficeMoveIntents({ prisma, jobs }),
+    reconcileCloudAgents: async () => {
+      await sweepExpiredMachineCommands(prisma);
+      await reconcileCloudAgents({ prisma, jobs, cloudAgent });
+    },
+  });
+  reconciler.start();
+
+  if (managedDevWorker) process.send?.({ type: "dev-worker:ready" });
   logger.info("worker ready");
 }
 

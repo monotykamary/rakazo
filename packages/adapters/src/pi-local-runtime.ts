@@ -32,6 +32,7 @@ import {
 import { type JsonRecord, type PrivateDuplex, record } from "./pi-rpc-protocol.js";
 import { AsyncChannel, JsonPeer } from "./pi-rpc-transport.js";
 import {
+  billedPromptTokens,
   describeToolActivity,
   normalizeAgentToolNames,
   parametersFor,
@@ -125,10 +126,6 @@ function object(value: unknown): Record<string, unknown> | undefined {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
-}
-
-function numberValue(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function piModelSelection(value: unknown): ModelSelection | null {
@@ -1203,7 +1200,10 @@ export class LocalPiRuntime implements AgentRuntime {
           if (command.kind === "fabric-prewalk") return { outcome: "completed" };
           if (command.kind === "model" || command.kind === "thinking") {
             if (!request.resolveParticipantModel)
-              return { outcome: "rejected", error: "Worker model selection requires backend authorization" };
+              return {
+                outcome: "rejected",
+                error: "Worker model selection requires backend authorization",
+              };
             try {
               const current =
                 (await request.resolveParticipantModel(request.runId)) ?? request.model;
@@ -1562,8 +1562,7 @@ export class LocalPiRuntime implements AgentRuntime {
               const usage = object(message.usage);
               yield {
                 type: "usage",
-                inputTokens: numberValue(usage?.input),
-                outputTokens: numberValue(usage?.output),
+                ...billedPromptTokens(usage),
                 provider: stringValue(message.provider) ?? request.model.provider,
                 model: stringValue(message.model) ?? request.model.id,
               };

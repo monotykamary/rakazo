@@ -12,7 +12,11 @@ function fixture() {
   );
   const findMany = vi.fn(async (_query: unknown) => []);
   const router = createRouter({
-    prisma: { bot: { findFirst }, message: { findMany } },
+    prisma: {
+      bot: { findFirst },
+      thread: { findUnique: vi.fn(async () => ({ sessionStartedAfterSeq: null })) },
+      message: { findMany },
+    },
     env: {},
     secrets: {},
     sandbox: {},

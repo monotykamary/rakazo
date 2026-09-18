@@ -13,6 +13,7 @@ import {
 afterEach(() => vi.unstubAllGlobals());
 
 const TEST_NETWORK = {
+  fetch: (input: string | URL | Request, init?: RequestInit) => globalThis.fetch(input, init),
   resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }],
 };
 
@@ -130,7 +131,7 @@ describe("MCP transport seam", () => {
       new URL(resource),
       { allowHttpLocalhost: true, allowLocalHttpCredentials: true },
       {},
-      { fetch: fetchImpl, ...TEST_NETWORK },
+      { ...TEST_NETWORK, fetch: fetchImpl },
     );
     try {
       await expect(safeFetch(`${origin}/.well-known/oauth-protected-resource`)).rejects.toThrow(
@@ -219,13 +220,13 @@ describe("MCP transport seam", () => {
     try {
       await expect(
         (await safeFetch("https://mcp.example.test/mcp", { headers })).json(),
-      ).resolves.toEqual(headers);
+      ).resolves.toEqual({ ...headers, host: "mcp.example.test" });
       await expect(
         (await safeFetch("https://auth.example.test/discovery", { headers })).json(),
-      ).resolves.toEqual({});
+      ).resolves.toEqual({ host: "auth.example.test" });
       await expect(
         (await safeFetch("https://mcp.example.test:8443/discovery", { headers })).json(),
-      ).resolves.toEqual({});
+      ).resolves.toEqual({ host: "mcp.example.test:8443" });
     } finally {
       await safeFetch.close();
     }

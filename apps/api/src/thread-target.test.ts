@@ -174,6 +174,7 @@ describe("threadSnapshot", () => {
     ]);
     const tx = {
       $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
+      thread: { findUnique: vi.fn().mockResolvedValue({ sessionStartedAfterSeq: null }) },
       message: { findMany: vi.fn().mockResolvedValue([]) },
       event: {
         findFirst: vi.fn().mockResolvedValue({ seq: 4 }),
@@ -234,6 +235,7 @@ describe("threadSnapshot", () => {
     const findFirstRun = botRunFindFirst([run]);
     const tx = {
       $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
+      thread: { findUnique: vi.fn().mockResolvedValue({ sessionStartedAfterSeq: null }) },
       message: { findMany: vi.fn().mockResolvedValue([]) },
       event: {
         findFirst: vi.fn().mockResolvedValue(null),
@@ -319,6 +321,7 @@ describe("threadSnapshot", () => {
           $transaction: vi.fn(async (callback: (client: unknown) => unknown) =>
             callback({
               $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
+              thread: { findUnique: vi.fn().mockResolvedValue({ sessionStartedAfterSeq: null }) },
               message: { findMany: vi.fn().mockResolvedValue([]) },
               event: {
                 findFirst: vi.fn().mockResolvedValue(null),
@@ -374,6 +377,7 @@ describe("threadSnapshot", () => {
     const findFirstRun = botRunFindFirst([failed, completed]);
     const tx = {
       $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
+      thread: { findUnique: vi.fn().mockResolvedValue({ sessionStartedAfterSeq: null }) },
       message: { findMany: vi.fn().mockResolvedValue([]) },
       event: {
         findFirst: vi.fn().mockResolvedValue(null),
@@ -410,6 +414,7 @@ describe("threadSnapshot", () => {
     const findFirstRun = botRunFindFirst([]);
     const tx = {
       $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
+      thread: { findUnique: vi.fn().mockResolvedValue({ sessionStartedAfterSeq: null }) },
       message: { findMany: vi.fn().mockResolvedValue([]) },
       event: {
         findFirst: vi.fn().mockResolvedValue(null),
@@ -916,6 +921,7 @@ function groupRunFindMany(input: { active?: unknown[]; terminals?: unknown[] }) 
 function groupPrisma(findManyRuns: ReturnType<typeof groupRunFindMany>) {
   const tx = {
     $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
+    thread: { findUnique: vi.fn().mockResolvedValue({ sessionStartedAfterSeq: null }) },
     message: { findMany: vi.fn().mockResolvedValue([]) },
     event: {
       findFirst: vi.fn().mockResolvedValue(null),

@@ -1008,7 +1008,7 @@ export async function dispatchPremoveQueue(
       await flush();
       try {
         const reviewed = translateQueueControl(command, state.targets?.[row.id]);
-        if (reviewed.participantId) {
+        if ("participantId" in reviewed && reviewed.participantId) {
           await authorizeQueueTarget(
             prisma,
             key(scope),

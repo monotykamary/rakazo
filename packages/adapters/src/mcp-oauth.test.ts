@@ -2,12 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   McpOAuthBroker,
   McpReauthorizationRequiredError,
+  type OAuthMaterial,
+  oauthMaterialSecrets,
   StoredMcpOAuthProvider,
 } from "./mcp-oauth.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
 const TEST_NETWORK = {
+  fetch: (input: string | URL | Request, init?: RequestInit) => globalThis.fetch(input, init),
   resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }],
 };
 
@@ -19,6 +22,50 @@ function oauthSessionStore() {
     deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
   };
 }
+
+describe("MCP OAuth material redaction", () => {
+  it("collects OAuth, static, header, and environment credentials without config enums", () => {
+    const secrets = oauthMaterialSecrets({
+      secret: "Bearer static-token",
+      env: { API_TOKEN: "env-token", API_SECRET: "production", ACCESS_TOKEN: "123456" },
+      headers: { Cookie: "sid=x", "X-Session": "s1", "X-Env": "info" },
+      oauth: {
+        tokens: {
+          access_token: "access-token",
+          refresh_token: "refresh-token",
+          token_type: "bearer",
+        },
+        clientInformation: { client_id: "client", client_secret: "client-secret" },
+      },
+    });
+
+    expect(secrets).toEqual(
+      expect.arrayContaining([
+        "Bearer static-token",
+        "static-token",
+        "env-token",
+        "123456",
+        "sid=x",
+        "s1",
+        "access-token",
+        "refresh-token",
+        "client-secret",
+      ]),
+    );
+    expect(secrets).not.toContain("production");
+    expect(secrets).not.toContain("info");
+  });
+
+  it("reads rotated tokens from the live material object", () => {
+    const material: OAuthMaterial = {
+      oauth: { tokens: { access_token: "before-rotation", token_type: "bearer" } },
+    };
+    expect(oauthMaterialSecrets(material)).toContain("before-rotation");
+    material.oauth!.tokens!.access_token = "after-rotation";
+    expect(oauthMaterialSecrets(material)).toContain("after-rotation");
+    expect(oauthMaterialSecrets(material)).not.toContain("before-rotation");
+  });
+});
 
 describe("MCP OAuth", () => {
   it("rejects unsafe browser authorization URLs", async () => {
@@ -682,7 +729,7 @@ describe("MCP OAuth", () => {
         userId: "user-1",
         redirectUri: "http://127.0.0.1:5173/mcp/oauth/callback",
       }),
-    ).rejects.toThrow(/fetch failed|Unexpected request/);
+    ).rejects.toThrow(/Could not reach private-auth\.example\.test|Unexpected request/);
 
     expect(requests).toContain(
       "GET https://mcp.example.test/.well-known/oauth-protected-resource/mcp",

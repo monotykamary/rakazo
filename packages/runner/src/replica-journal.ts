@@ -1,10 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import {
-  type OfficeReplicaJournalEntry,
-  OfficeReplicaJournalEntrySchema,
-} from "@rakazo/contracts";
-import { sealOfficeReplicaEntry, verifyOfficeReplicaBatch } from "@rakazo/core";
+import { type OfficeReplicaJournalEntry, OfficeReplicaJournalEntrySchema } from "@rakazo/contracts";
+import { sealOfficeReplicaEntry, verifyOfficeReplicaBatch } from "@rakazo/core/node/office-replica";
 
 export class ReplicaJournal {
   private entries: OfficeReplicaJournalEntry[] = [];

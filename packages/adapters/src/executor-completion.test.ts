@@ -3,6 +3,7 @@ import {
   completionMarksUnread,
   completionMessageSegments,
   completionNotificationBody,
+  completionNotificationPreview,
   subagentMarksUnread,
 } from "./executor.js";
 
@@ -71,6 +72,13 @@ describe("completionNotificationBody", () => {
   });
 });
 
+describe("completionNotificationPreview", () => {
+  it("removes Markdown before applying the push limit", () => {
+    expect(completionNotificationPreview("Created **Project**")).toBe("Created Project");
+    expect(completionNotificationPreview(`**${"x".repeat(200)}**`)).toBe("x".repeat(180));
+    expect(completionNotificationPreview(" ** ** ")).toBe("");
+  });
+});
 describe("completionMarksUnread", () => {
   it("ignores silent routine activity but keeps routine comments and manual replies unread", () => {
     expect(completionMarksUnread("routine", "")).toBe(false);

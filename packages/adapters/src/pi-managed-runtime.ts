@@ -338,7 +338,9 @@ export class ManagedPiRuntime implements AgentRuntime {
               const commandSignal = AbortSignal.any([signal, options.signal, gateAbort.signal]);
               commandSignal.throwIfAborted();
               await authority.check();
-              const target = command.participantId ?? authority.request.runId;
+              const target =
+                ("participantId" in command ? command.participantId : undefined) ??
+                authority.request.runId;
               if (!isScopedParticipant(target))
                 return {
                   outcome: "rejected",

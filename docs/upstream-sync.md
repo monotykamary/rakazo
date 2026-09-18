@@ -1,4 +1,55 @@
-# Upstream adaptation: c288959
+# Handpicked upstream adaptation: 6d7da581
+
+This rollout adapts behavior from upstream without merging or replaying commits.
+The fork's managed Pi/Fabric runtime, office handoff and egress, remote providers,
+Bun tooling, identity, and existing navigation remain authoritative.
+
+## First batch: incorporated and checked
+
+Status reflects local verification, not upstream CI. This is the first adaptation
+batch, not a claim that every recommendation below has shipped.
+
+- [x] Tool schemas (#830, #853, #854): credential destinations, exclusive credential/connection inputs, unions, constants, nullability, closed objects, and OpenAI-compatible object envelopes. Malformed schemas fail closed. Native RPC and local dispatch retain raw arguments.
+- [x] Connector safety (#839, `b42212b3`): revoked connections are excluded; stored and refreshed OAuth material is redacted from results, call errors, failed reconnects, and discovery errors.
+- [x] MCP compatibility (#808, #876, #885, #897, #901): package-matched Undici fetch/Agent, pinned address checks, Tailscale IPv6, bounded origin fallback with caller cancellation, and `connectors_*` catalogs with legacy approval replay.
+- [x] Execution safety (#864, relevant #884 behavior, #877): effects include run/tool/call/request identity; benign dot arguments are accepted while protected shell commands remain blocked. The fork's durable occurrence cursor is retained rather than copying upstream's fresh-agent counter reset into a persisted managed session.
+- [x] Database capacity (#865): API/worker query and job pools are shared, capacity retries are bounded, worker restarts back off, shutdown clears retry timers, and run setup requeues with checkpoints and lease fencing intact. Unrelated failures still propagate.
+- [x] Computer lifecycle (#813, #818, #850, #880, #896): named-volume subpaths, browser-profile argv validation, optional serialized per-Space admission, abandoned suspend recovery, and prompt signal shutdown. Existing machine/provider and Office fencing remain authoritative.
+- [x] Source Compose safety (#821): configured database password, no default host-published Postgres port, and an explicit loopback-only development overlay. Existing-volume credential and Docker API requirements are documented in `docs/self-host.md`; Bun/mocker startup remains unchanged.
+- [x] Native reliability (#812, #888, #891): Space-generation fencing, full-capability-URL screen caching with renewal/invalidation, computer lifecycle deadlines, and caller/timeout abort reasons. No token-stripping identity shortcut was imported.
+- [x] Runtime context (part of #884): current-time instructions in root/helper requests and cached-token accounting in native/local model bridges, without another agent runtime.
+- [x] Plain-text previews (#914 proposal): one shared helper for thread listings, native snippets, and completion pushes. Markdown is removed before truncation; stored transcript content and cleared-session boundaries are preserved.
+
+### Verification and integration corrections
+
+- Offline verification covers 4,993 passing tests across the full sweep and targeted rechecks; 212 database/provider-dependent tests remain skipped. The full sweep exposed 31 failures in nine files. Session-boundary fixtures, updated Pi handshake/action/model expectations, and the desktop shutdown assertion were corrected without dropping their safety checks; missing existing Chinese labels and an omitted PostgreSQL suite registration were added. All 110 tests in those nine files then passed. Earlier queue-control and computer-lookup fixture corrections also passed their targeted checks.
+- Type checks passed for core, database, adapters, API, worker, runner, web, supervisor, updater, and mobile. Expo dependency validation was offline.
+- The new headless Chromium preview scenario passed against isolated Postgres and the scripted runtime, preserving stored Markdown and capturing the sidebar screen. Electron E2E and native device builds were not run.
+- Browser verification exposed an existing Node crypto import in the shared core barrel. Replica hashing now uses `@rakazo/core/node/office-replica`, with both server consumers updated and journal regressions passing. Two existing root-only Fabric command union-narrowing errors were also corrected without changing dispatch semantics.
+- Changed-source formatting/lint and whitespace checks passed. Structural/source review covered the security and recovery paths; graph coverage is partial and is not a correctness guarantee. No dependency upgrade, upstream merge, cherry-pick, or release change is included.
+
+## Next feature batches
+
+Not implemented merely by listing them here: screen capability lifecycle revocation
+and proxy recovery; touch keyboard/trackpad/paste and landscape; quotes; chat during
+takeover and free-text answers; section renaming; voice disconnection; model
+capability controls; mobile consent; Serenity; avatar editing; native account/version
+polish; and remaining runtime output/stream limits. These need end-to-end
+fork-specific integration and verification.
+
+UIScene (#889) is explicitly deferred: the installed Expo `57.0.21` and
+expo-modules-core `57.0.17` lack the scene delegate/factory APIs used by upstream's
+plugin. Adopt it with a compatible dependency update and native build validation,
+not an unregistered or nonfunctional plugin. The branch-only supervisor symlink
+containment work also remains a separate security-review priority.
+
+Optional proposals remain separate: task catalog, private MCP endpoint policy,
+CreateOS, Daytona snapshots, per-user quota, CGNAT deployment support, autonomy,
+voice favorites, and heuristic mail redaction. Do not copy branch-only policy,
+deployment identifiers, provider-specific environment switches, release numbers,
+or wholesale branding/catalog/runtime changes.
+
+# Previous adaptation: c288959
 
 Reviewed the 43 upstream commits after the shared base, through `c288959`.
 This is a selective adaptation, not a merge of upstream product or runtime design.

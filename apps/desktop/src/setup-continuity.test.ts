@@ -103,7 +103,10 @@ describe("desktop continuity setup", () => {
     expect(html).toContain('<details class="server-guide">');
     expect(html).toContain("infra/compose/deploy-server.sh");
     const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
-    const quit = main.slice(main.indexOf('app.on("before-quit"'));
+    const quitStart = main.indexOf('app.on("before-quit", () => {');
+    expect(quitStart).toBeGreaterThanOrEqual(0);
+    const quit = main.slice(quitStart);
+    expect(quit).toContain("localStack?.abort()");
     expect(quit).not.toContain(".stop(");
     expect(quit).not.toContain("threads.stop");
   });

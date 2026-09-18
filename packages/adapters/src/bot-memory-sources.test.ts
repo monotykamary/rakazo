@@ -51,7 +51,10 @@ function fakePrisma(
   return {
     bot: { findFirst: async (args: Query) => first(data.bots ?? [], args?.where) },
     run: { findFirst: async (args: Query) => first(data.runs ?? [], args?.where) },
-    thread: { findFirst: async (args: Query) => first(data.threads ?? [], args?.where) },
+    thread: {
+      findFirst: async (args: Query) => first(data.threads ?? [], args?.where),
+      findUnique: async (args: Query) => first(data.threads ?? [], args?.where),
+    },
     chatGroupMember: {
       findFirst: async (args: Query) => first(data.memberships ?? [], args?.where),
       findMany: async (args: Query) => {

@@ -376,11 +376,15 @@ describe("native Pi model UI", () => {
     render(Models);
     await flush();
     tree = render(Models);
-    expect(hooks.rpc).toHaveBeenLastCalledWith("models/runtime", { refresh: true });
+    expect(hooks.rpc.mock.calls).toEqual([
+      ["models/runtime", {}],
+      ["models/getVisionHandoff", {}],
+      ["models/runtime", { refresh: true }],
+      ["models/getVisionHandoff", {}],
+    ]);
     expect(text(tree)).toContain("Offline");
     expect(text(tree)).toContain("profile-id");
     expect(nodes(tree).find((node) => node.data)!.data).toHaveLength(1);
-    expect(hooks.rpc.mock.calls.every(([route]) => route === "models/runtime")).toBe(true);
   });
   it("Pi-listed thinking choices save exactly and failed validation keeps the draft", async () => {
     const { tree, factory } = await openControl();
@@ -425,7 +429,10 @@ describe("native Pi model UI", () => {
     render(Models);
     await flush();
     let tree = render(Models);
-    expect(hooks.rpc).toHaveBeenCalledExactlyOnceWith("models/runtime", {});
+    expect(hooks.rpc.mock.calls).toEqual([
+      ["models/runtime", {}],
+      ["models/getVisionHandoff", {}],
+    ]);
     expect(text(tree)).toContain("Pi profile default");
     expect(text(tree)).toContain("profile-id");
     expect(text(tree)).not.toContain("current-id");

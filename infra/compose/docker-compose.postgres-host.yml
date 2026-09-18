@@ -1,0 +1,6 @@
+# Opt-in host access for source Compose, not needed by bun run dev's managed database.
+# Add -f infra/compose/docker-compose.postgres-host.yml after docker-compose.yml.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5433:5432"

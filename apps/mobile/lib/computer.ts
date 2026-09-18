@@ -2,6 +2,11 @@ import type { ComputerMode, ComputerStatus as ContractComputerStatus } from "@ra
 import { t } from "./i18n";
 
 export const COMPUTER_HEARTBEAT_MS = 60_000;
+/**
+ * Computer lifecycle calls create, start or stop a container (booting, switching between the
+ * Team, Private, and remote Office computers); give them far more than an ordinary RPC.
+ */
+export const COMPUTER_LIFECYCLE_TIMEOUT_MS = 120_000;
 export const SCREEN_URL_OPEN_ATTEMPTS = 5;
 export const SCREEN_URL_RETRY_DELAY_MS = 400;
 

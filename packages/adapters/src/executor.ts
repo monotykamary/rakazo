@@ -37,9 +37,9 @@ import {
   isAttachmentImageMimeType,
   isOfficeReplicaLeaseOwner,
   isValidServiceName,
-  machineSupportsOfficeReplica,
   ModelHiddenError,
   ModelSelectionSchema,
+  machineSupportsOfficeReplica,
   OutgoingDraftFieldsSchema,
   parseVisionModelRef,
   ServiceChangesInputSchema,
@@ -81,10 +81,15 @@ import {
   toolRequiresApproval,
   toolRequiresExplicitApproval,
   translateQueueControl,
+  truncatedPlainText,
   unattendedTriggerToolRequiresApproval,
   userTurnBlocksForRun,
 } from "@rakazo/core";
-import { approvalEffectKey } from "@rakazo/core/node/approval-effect-key";
+import {
+  approvalEffectKey,
+  stableJsonValue,
+  toolEffectIdempotencyKey,
+} from "@rakazo/core/node/approval-effect-key";
 import { parseOutgoingDraftRequest } from "@rakazo/core/node/outgoing-message-draft";
 import {
   appendEventInTransaction,
@@ -100,8 +105,10 @@ import {
   findDefaultModelCredential,
   findModelCredential,
   getVisionHandoff,
+  handoffOfficeReplica,
   InvalidSpaceNameError,
   isPremoveGracefulPauseRequested,
+  isTooManyDatabaseConnections,
   loadRunHistoryMessages,
   type McpServer,
   type Prisma,
@@ -115,7 +122,6 @@ import {
   WorkScopeError,
   wakePremoveQueue,
   workRoot,
-  handoffOfficeReplica,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { parse as parseShellCommand } from "shell-quote";
@@ -222,6 +228,7 @@ import {
 import { observationToolResult, parseComputerActions } from "./computer-tools.js";
 import { checkpointRunComputerWorkspace } from "./computer-workspace.js";
 import { sanitizeConnectorError } from "./connector-safety.js";
+import { formatCurrentTimeInstruction } from "./current-time.js";
 import { resolveDeploymentModel } from "./deployment-model.js";
 import { canonicalComputerPath, dispatchWork } from "./dispatched-work.js";
 import { resolveExecutorModelRouting } from "./executor-model-routing.js";
@@ -443,31 +450,84 @@ function shellCFlagProgram(words: string[], interpreterIndex: number): string | 
   return undefined;
 }
 
+function preserveShellCommandBoundaries(command: string): string {
+  let quote: "'" | '"' | undefined;
+  let result = "";
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index];
+    const next = command[index + 1];
+    if (character === "\\" && quote !== "'") {
+      if (next === "\n") {
+        index += 1;
+        continue;
+      }
+      result += character;
+      if (next !== undefined) {
+        result += next;
+        index += 1;
+      }
+      continue;
+    }
+    if (character === quote) quote = undefined;
+    else if (!quote && (character === "'" || character === '"')) quote = character;
+    result += character === "\n" && !quote ? "\n;" : character;
+  }
+  return result;
+}
+
 function tokenizeProtectedShellCommand(command: string): string[] | "dynamic" {
   try {
+    // shell-quote treats newlines as whitespace; retain command positions after them.
     const parsed = parseShellCommand<{ expansion: string }>(
-      command,
+      preserveShellCommandBoundaries(command),
       (name) => STATIC_SHELL_EXPANSIONS[name] ?? { expansion: name },
       { splitUnquoted: true },
     );
     const words: string[] = [];
-    for (const entry of parsed) {
+    let commandPosition = true;
+    let redirectTarget = false;
+    for (const [index, entry] of parsed.entries()) {
       if (typeof entry === "string") {
-        // Backtick fragments are not fully tokenized; treat them as dynamic.
         if (entry.includes("`")) return "dynamic";
-        words.push(entry.toLowerCase());
+        const word = entry.toLowerCase();
+        // A dot path argument is not the executable sourcing builtin.
+        words.push(word === "." && (!commandPosition || redirectTarget) ? "./" : word);
+        if (redirectTarget) {
+          redirectTarget = false;
+          continue;
+        }
+        const next = parsed[index + 1];
+        if (
+          commandPosition &&
+          /^\d+$/.test(word) &&
+          typeof next === "object" &&
+          "op" in next &&
+          /^[<>]/.test(next.op)
+        ) {
+          // A leading file descriptor belongs to a redirect, not the command.
+        } else if (commandPosition && /^(?:then|do|else)$/.test(word)) {
+          commandPosition = true;
+        } else if (commandPosition && (word === "coproc" || word === "function")) return "dynamic";
+        else if (
+          commandPosition &&
+          (/^(?:command|builtin|exec|time|if|elif|while|until|!|\{)$/.test(word) ||
+            word.startsWith("-") ||
+            /^[a-z_][a-z0-9_]*=/.test(word))
+        ) {
+          // Prefixes and assignments leave the command word pending.
+        } else commandPosition = false;
         continue;
       }
-      if ("expansion" in entry) {
-        // Unknown expansions and command substitutions are resolved by bash
-        // after this guard runs, so their eventual value cannot be inspected.
-        return "dynamic";
-      }
+      if ("expansion" in entry) return "dynamic";
       if ("op" in entry && entry.op === "glob") {
         words.push(entry.pattern.toLowerCase());
         continue;
       }
       if ("op" in entry && SAFE_SHELL_CONTROL_OPS.has(entry.op)) {
+        if (["&&", "||", ";", "|", "&"].includes(entry.op)) {
+          commandPosition = true;
+          redirectTarget = false;
+        } else redirectTarget = true;
         continue;
       }
       return "dynamic";
@@ -488,7 +548,7 @@ export function isProtectedComputerLifecycleCommand(command: string): boolean {
   }
   // eval/source/. can hide protected commands inside an expansion string that the
   // outer tokenizer keeps as a single word (e.g. eval "pkill chromium").
-  if (commandNames.some((word) => /^(?:eval|source|\.)$/.test(word ?? ""))) {
+  if (words.includes(".") || commandNames.some((word) => /^(?:eval|source)$/.test(word ?? ""))) {
     return true;
   }
   if (
@@ -597,7 +657,7 @@ async function loadLivePluginSlugs(
   }
 }
 
-async function persistLivePluginConnections(
+export async function persistLivePluginConnections(
   prisma: PrismaClient,
   owner: { userId: string; spaceId: string },
   rows: PluginConnectionRow[],
@@ -613,6 +673,9 @@ async function persistLivePluginConnections(
       },
       data: { status: "connected" },
     });
+    for (const row of rows) {
+      if (sync.connectIds.includes(row.id)) row.status = "connected";
+    }
   }
   if (sync.revokeIds.length > 0) {
     await prisma.connection.updateMany({
@@ -623,7 +686,21 @@ async function persistLivePluginConnections(
       },
       data: { status: "revoked" },
     });
+    for (const row of rows) {
+      if (sync.revokeIds.includes(row.id)) row.status = "revoked";
+    }
   }
+}
+
+export function selectRunConnections<
+  T extends { connectorId: string; provider: string; status: string },
+>(rows: T[], connectedComposioProviders: string[]): T[] {
+  const activeKeys = new Set(connectedComposioProviders.map((provider) => `composio:${provider}`));
+  return rows.filter(
+    (row) =>
+      row.status !== "revoked" &&
+      (row.status === "connected" || activeKeys.has(`${row.connectorId}:${row.provider}`)),
+  );
 }
 
 export const APPROVED_EFFECT_REPLAY_ORDER = [{ createdAt: "asc" as const }, { id: "asc" as const }];
@@ -650,8 +727,16 @@ export function buildApprovalContinuation(
       const catalog = catalogApprovalDetails(effect.request, CATALOG_APPROVAL_TOOL);
       if (catalog) {
         const exposed = options?.exposedToolNames;
-        if (!exposed || exposed.has(catalog.toolName)) {
-          return `${catalog.toolName}: ${formatRequest(catalog.args)}`;
+        const renamedMcpWrapper = catalogExecuteToolName("mcp");
+        const wrapper =
+          exposed &&
+          catalog.toolName === "mcp_execute_tool" &&
+          !exposed.has(catalog.toolName) &&
+          exposed.has(renamedMcpWrapper)
+            ? renamedMcpWrapper
+            : catalog.toolName;
+        if (!exposed || exposed.has(wrapper)) {
+          return `${wrapper}: ${formatRequest(catalog.args)}`;
         }
         // Catalog shrank: wrapper is gone — resume as the matching direct tool.
         const innerArgs = catalogApprovalInnerArgs(catalog) ?? {};
@@ -1251,13 +1336,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
           }
         }
         const connectedComposio = mergeConnectedPlugins(composioRows, liveSlugs);
-        const activeKeys = new Set(
-          connectedComposio.map((connection) => `composio:${connection.provider}`),
-        );
-        const connectedPlugins = storedConnections.filter(
-          (connection) =>
-            connection.status === "connected" ||
-            activeKeys.has(`${connection.connectorId}:${connection.provider}`),
+        const connectedPlugins = selectRunConnections(
+          storedConnections,
+          connectedComposio.map((connection) => connection.provider),
         );
         const context = {
           operationId: runId,
@@ -2229,14 +2310,21 @@ export function createRunExecutor(deps: ExecutorDeps) {
             needsApprovalEarly ||
             requiresApprovalByDefault
               ? approvalEffectKey(runId, replayEffectToolName, args)
-              : executionId;
+              : toolEffectIdempotencyKey(runId, replayEffectToolName, executionId, args);
           // Connector read-only hints must not bypass approval, review, or replay decisions.
           const applied =
             READ_ONLY_AGENT_TOOLS.has(name) ||
             ((name === "computer_services" || name === "manage_office") &&
               !toolRequiresExplicitApproval(name, args))
               ? undefined
-              : await recordEffect(deps, run, replayEffectToolName, effectKey, effectRequest);
+              : await recordEffect(
+                  deps,
+                  run,
+                  replayEffectToolName,
+                  effectKey,
+                  effectRequest,
+                  executionId,
+                );
 
           const runAutoReview = async () => {
             if (!checker) return;
@@ -4001,7 +4089,12 @@ export function createRunExecutor(deps: ExecutorDeps) {
               memory: archiveMemory
                 ? ({ action, args, signal }) => archiveMemory(action, args, signal)
                 : undefined,
-              instructions: botRuntimeInstructions(bot.instructions, Boolean(dispatchedWork)),
+              instructions: [
+                formatCurrentTimeInstruction(),
+                botRuntimeInstructions(bot.instructions, Boolean(dispatchedWork)),
+              ]
+                .filter(Boolean)
+                .join("\n\n"),
               history: runtimeHistory,
               currentTurnImages,
               tools,
@@ -4888,11 +4981,12 @@ export function createRunExecutor(deps: ExecutorDeps) {
               botMessageOutcome.intent,
             ).catch((error) => getLogger().error("bot message result return", error));
           }
-          if (text && !completed.continuationRunId) {
+          const notificationPreview = completionNotificationPreview(text);
+          if (notificationPreview && !completed.continuationRunId) {
             await notifyRun(deps, run, {
               kind: "completion",
               title: `${bot.name} finished`,
-              body: text.slice(0, 180),
+              body: notificationPreview,
               botId: bot.id,
               threadId: thread.id,
             });
@@ -4999,8 +5093,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
           }
           return;
         }
-        const computerBusy = setupError instanceof ComputerBusyError;
-        if (!computerBusy) {
+        const setupContended =
+          setupError instanceof ComputerBusyError || isTooManyDatabaseConnections(setupError);
+        if (!setupContended) {
           // undici collapses every network failure to "fetch failed"; the cause names the
           // host and errno, which is the only part worth paging over.
           const causeMessage =
@@ -5021,7 +5116,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           where: { id: runId, status: "running", leaseOwner: workerId, leaseFence: fence },
           data: computerRunRequeueData(
             resumeCheckpoint,
-            computerBusy ? null : "Run setup failed; retrying",
+            setupContended ? null : "Run setup failed; retrying",
           ),
         });
         if (released.count === 1) {
@@ -5033,7 +5128,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               finishedAt: new Date(),
             },
           });
-          if (computerBusy) {
+          if (setupContended) {
             await deps.jobs.enqueue({
               ...runContinueJob(runId),
               availableAt: new Date(Date.now() + computerRetryDelay(fence)),
@@ -5274,6 +5369,10 @@ export function completionNotificationBody(assembled: string, blocks: MessageBlo
     .join("");
 }
 
+export function completionNotificationPreview(text: string): string {
+  return truncatedPlainText(text, 180);
+}
+
 export function completionMarksUnread(trigger: string, text: string): boolean {
   return trigger !== "routine" || Boolean(text);
 }
@@ -5412,12 +5511,29 @@ async function recordEffect(
   deps: ExecutorDeps,
   run: { id: string; spaceId: string; threadId: string; botId: string },
   kind: string,
-  executionId: string,
+  idempotencyKey: string,
   request: unknown,
+  legacyIdempotencyKey?: string,
 ) {
-  const existing = await deps.prisma.externalEffect.findUnique({
-    where: { idempotencyKey: executionId },
+  // Match the JSON representation Prisma persists, including omitted optional route fields.
+  const storedRequest: unknown = JSON.parse(JSON.stringify(request));
+  let existing = await deps.prisma.externalEffect.findUnique({
+    where: { idempotencyKey },
   });
+  // Bare provider call ids were global. Reuse old rows only for this exact operation.
+  if (!existing && legacyIdempotencyKey && legacyIdempotencyKey !== idempotencyKey) {
+    const legacy = await deps.prisma.externalEffect.findUnique({
+      where: { idempotencyKey: legacyIdempotencyKey },
+    });
+    if (
+      legacy &&
+      legacy.spaceId === run.spaceId &&
+      legacy.runId === run.id &&
+      legacy.kind === kind &&
+      stableJsonValue(legacy.request) === stableJsonValue(storedRequest)
+    )
+      existing = legacy;
+  }
   if (existing) {
     await deps.events.append({
       spaceId: run.spaceId,
@@ -5425,7 +5541,7 @@ async function recordEffect(
       botId: run.botId,
       type: "effect.reconciled",
       runId: run.id,
-      payload: { executionId, kind },
+      payload: { executionId: existing.idempotencyKey, kind },
     });
     return { duplicate: true, effect: existing };
   }
@@ -5434,9 +5550,9 @@ async function recordEffect(
       spaceId: run.spaceId,
       runId: run.id,
       kind,
-      idempotencyKey: executionId,
+      idempotencyKey,
       status: "intended",
-      request: request as never,
+      request: storedRequest as never,
     },
   });
   return { duplicate: false, effect };

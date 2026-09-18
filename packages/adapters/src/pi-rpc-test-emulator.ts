@@ -10,6 +10,7 @@ export async function createRpcHarness(
     /** Extra startup headroom for tests that launch multiple real workers. */
     runTimeoutMs?: number;
     estimateUsage?: boolean;
+    cacheReadTokens?: number;
     quiet?: boolean;
     error?: boolean;
     errorStatus?: number;
@@ -80,7 +81,7 @@ export async function createRpcHarness(
       chunk({}, "stop");
     }
     res.write(
-      `data: ${JSON.stringify({ id: "offline", choices: [], usage: { prompt_tokens: options.estimateUsage ? Math.ceil(JSON.stringify(input.messages).length / 4) : 20, completion_tokens: 8, total_tokens: options.estimateUsage ? Math.ceil(JSON.stringify(input.messages).length / 4) + 8 : 28 } })}\n\n`,
+      `data: ${JSON.stringify({ id: "offline", choices: [], usage: { prompt_tokens: options.estimateUsage ? Math.ceil(JSON.stringify(input.messages).length / 4) : 20, completion_tokens: 8, total_tokens: options.estimateUsage ? Math.ceil(JSON.stringify(input.messages).length / 4) + 8 : 28, prompt_tokens_details: { cached_tokens: options.cacheReadTokens ?? 0 } } })}\n\n`,
     );
     res.end("data: [DONE]\n\n");
   });

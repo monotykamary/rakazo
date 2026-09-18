@@ -5,14 +5,24 @@ import {
   type JobPublisher,
   type JobWorkerHost,
 } from "@rakazo/adapter-kit";
+import { isTooManyDatabaseConnections } from "@rakazo/db";
 import { runCorrelatedJob, unwrapJobPayload, wrapJobPayload } from "@rakazo/logging";
 import { makeWorkerUtils, type Runner, run, type WorkerUtils } from "graphile-worker";
+import type { Pool } from "pg";
+
+type GraphileConnection = Pool | string;
+
+function graphileConnection(
+  connection: GraphileConnection,
+): { pgPool: Pool } | { connectionString: string } {
+  return typeof connection === "string" ? { connectionString: connection } : { pgPool: connection };
+}
 
 export class GraphileJobPublisher implements JobPublisher {
   private utils: Promise<WorkerUtils> | undefined;
   private closed = false;
 
-  constructor(private readonly connectionString: string) {}
+  constructor(private readonly connection: GraphileConnection) {}
 
   async enqueue(job: BackgroundJob): Promise<void> {
     const utils = await this.getUtils();
@@ -37,25 +47,90 @@ export class GraphileJobPublisher implements JobPublisher {
 
   private getUtils(): Promise<WorkerUtils> {
     if (this.closed) throw new Error("Background job publisher is closed");
-    this.utils ??= makeWorkerUtils({ connectionString: this.connectionString });
+    this.utils ??= makeWorkerUtils(graphileConnection(this.connection));
     return this.utils;
   }
 }
 
+export function databaseCapacityBackoffMs(attempt: number): number {
+  return Math.min(30_000, 200 * 2 ** Math.min(attempt, 8));
+}
+
 export class GraphileJobWorkerHost implements JobWorkerHost {
   private runner: Runner | undefined;
+  private handlers: BackgroundJobHandlers | undefined;
+  private stopping = false;
+  private startTask: Promise<void> | undefined;
+  private superviseTask: Promise<void> | undefined;
+  private wakeSleep: (() => void) | undefined;
 
   constructor(
-    private readonly connectionString: string,
+    private readonly connection: GraphileConnection,
     private readonly options: {
       concurrency?: number;
       pollInterval?: number;
       noHandleSignals?: boolean;
+      sleep?: (ms: number) => Promise<void>;
+      onError?: (error: unknown) => void;
     } = {},
   ) {}
 
   async start(handlers: BackgroundJobHandlers): Promise<void> {
-    if (this.runner) return;
+    if (this.runner || this.superviseTask) return;
+    if (this.startTask) return this.startTask;
+    this.stopping = false;
+    this.handlers = handlers;
+    const starting = this.startUntilReady();
+    this.startTask = starting;
+    try {
+      await starting;
+    } finally {
+      if (this.startTask === starting) this.startTask = undefined;
+    }
+    if (this.stopping || !this.runner) return;
+    const supervising = this.supervise();
+    this.superviseTask = supervising;
+    void supervising.catch((error) => {
+      if (this.options.onError) this.options.onError(error);
+      else
+        queueMicrotask(() => {
+          throw error;
+        });
+    });
+  }
+
+  async stop(): Promise<void> {
+    this.stopping = true;
+    this.wakeSleep?.();
+    const runner = this.runner;
+    try {
+      await runner?.stop();
+      await this.startTask;
+    } finally {
+      await this.superviseTask?.catch(() => undefined);
+      this.runner = undefined;
+      this.startTask = undefined;
+      this.superviseTask = undefined;
+      this.handlers = undefined;
+    }
+  }
+
+  private async startUntilReady(): Promise<void> {
+    for (let attempt = 0; !this.stopping; attempt += 1) {
+      try {
+        await this.launchRunner();
+        return;
+      } catch (error) {
+        if (this.stopping) return;
+        if (!isTooManyDatabaseConnections(error)) throw error;
+        await this.delay(databaseCapacityBackoffMs(attempt));
+      }
+    }
+  }
+
+  private async launchRunner(): Promise<void> {
+    const handlers = this.handlers;
+    if (!handlers) throw new Error("Background job worker has no handlers");
     const taskList = Object.fromEntries(
       Object.keys(handlers).map((name) => [
         name,
@@ -70,19 +145,67 @@ export class GraphileJobWorkerHost implements JobWorkerHost {
         },
       ]),
     );
-    this.runner = await run({
-      connectionString: this.connectionString,
+    const runner = await run({
+      ...graphileConnection(this.connection),
       concurrency: this.options.concurrency ?? 4,
       pollInterval: this.options.pollInterval ?? 500,
       noHandleSignals: this.options.noHandleSignals,
       taskList,
     });
+    if (this.stopping) {
+      await runner.stop();
+      return;
+    }
+    this.runner = runner;
   }
 
-  async stop(): Promise<void> {
-    const runner = this.runner;
-    this.runner = undefined;
-    await runner?.stop();
+  private delay(ms: number): Promise<void> {
+    if (this.stopping) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (error?: unknown) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (this.wakeSleep === wake) this.wakeSleep = undefined;
+        if (error === undefined || this.stopping) resolve();
+        else reject(error);
+      };
+      const wake = () => finish();
+      this.wakeSleep = wake;
+      if (this.options.sleep)
+        void Promise.resolve(this.options.sleep(ms)).then(() => finish(), finish);
+      else timer = setTimeout(wake, ms);
+    });
+  }
+
+  private async supervise(): Promise<void> {
+    for (;;) {
+      const runner = this.runner;
+      if (!runner || this.stopping) return;
+      try {
+        await runner.promise;
+        if (this.runner === runner) this.runner = undefined;
+        return;
+      } catch (error) {
+        if (this.stopping) return;
+        if (this.runner === runner) this.runner = undefined;
+        if (!isTooManyDatabaseConnections(error)) throw error;
+        for (let attempt = 0; ; attempt += 1) {
+          if (this.stopping) return;
+          await this.delay(databaseCapacityBackoffMs(attempt));
+          if (this.stopping) return;
+          try {
+            await this.launchRunner();
+            if (this.stopping || !this.runner) return;
+            break;
+          } catch (startError) {
+            if (!isTooManyDatabaseConnections(startError)) throw startError;
+          }
+        }
+      }
+    }
   }
 }
 

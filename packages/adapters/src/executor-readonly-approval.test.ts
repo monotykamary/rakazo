@@ -35,6 +35,8 @@ vi.mock("./auto-review.js", async (importOriginal) => ({
 }));
 
 type Effect = {
+  runId?: string;
+  spaceId?: string;
   id: string;
   kind: string;
   idempotencyKey: string;
@@ -105,6 +107,7 @@ function fixture({
   };
   const prisma = {
     user: { findUnique: vi.fn(async () => ({ modelVisibility: { hide: [] } })) },
+    computer: { findUnique: vi.fn(async () => ({ machineId: null })) },
     dispatchedWork: { count: vi.fn(async () => 0) },
     premoveQueue: { findUnique: vi.fn(async () => null) },
     run: {
@@ -211,6 +214,9 @@ function fixture({
     runtimeRun,
     renewLease: prisma.run.updateMany,
     pauseRunForInput,
+    setRunId(id: string) {
+      run.id = id;
+    },
     setCalls(next: typeof calls) {
       calls = next;
     },
@@ -233,6 +239,51 @@ describe("connector read-only metadata and approval enforcement", () => {
     runtimeSave.mockClear();
   });
 
+  it("scopes reused provider call ids to the run and request", async () => {
+    const f = fixture();
+    f.setCalls([
+      { args: { id: "item-1" }, executionId: "call-0" },
+      { args: { id: "item-2" }, executionId: "call-0" },
+    ]);
+    await f.run();
+    expect(f.execute).toHaveBeenCalledTimes(2);
+    expect(new Set(f.effects.map((effect) => effect.idempotencyKey)).size).toBe(2);
+    f.setRunId("run-2");
+    await f.run();
+    expect(f.execute).toHaveBeenCalledTimes(4);
+    expect(new Set(f.effects.map((effect) => effect.idempotencyKey)).size).toBe(4);
+  });
+
+  it("preserves distinct later calls after a managed continuation", async () => {
+    const f = fixture({ managed: true });
+    await f.run();
+    f.setCalls([{ args: { id: "item-1" }, executionId: "later-call" }]);
+    await f.run();
+    expect(f.execute).toHaveBeenCalledTimes(2);
+    expect(f.effects).toHaveLength(2);
+    expect(f.runtimeRun.mock.calls[0]?.[0].instructions).toContain("Current date and time:");
+  });
+
+  it.each(["run", "tool", "request", "space"])(
+    "does not attach a legacy effect from a different %s",
+    async (difference) => {
+      const f = fixture();
+      f.effects.push({
+        id: "legacy",
+        idempotencyKey: "call-1",
+        status: "completed",
+        result: { item: "wrong" },
+        runId: difference === "run" ? "another-run" : "run-1",
+        spaceId: difference === "space" ? "another-space" : "space-1",
+        kind: difference === "tool" ? "another-tool" : "demo_get_item",
+        request: { id: difference === "request" ? "different" : "item-1" },
+      });
+      await f.run();
+      expect(f.execute).toHaveBeenCalledOnce();
+      expect(f.results.at(-1)).toEqual({ item: "item-1" });
+      expect(f.effects).toHaveLength(2);
+    },
+  );
   it("allows only fenced checkpoint publication while an approval is pending", async () => {
     const f = fixture({
       managed: true,

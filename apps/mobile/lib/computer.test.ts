@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
+  COMPUTER_LIFECYCLE_TIMEOUT_MS,
   type ComputerStatus,
   controlLabel,
   embeddableScreenUrl,
@@ -158,7 +159,27 @@ describe("readScreenUrl", () => {
   });
 });
 
+describe("computer lifecycle timeout", () => {
+  it("allows container startup and switching to outlive an ordinary RPC", () => {
+    expect(COMPUTER_LIFECYCLE_TIMEOUT_MS).toBe(120_000);
+  });
+});
+
 describe("mobile computer screen", () => {
+  it("uses the lifecycle deadline for boot and both computer-mode switch surfaces", () => {
+    const computerSrc = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "../app/computer.tsx"),
+      "utf8",
+    );
+    const settingsSrc = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "../app/bot-settings.tsx"),
+      "utf8",
+    );
+
+    expect(computerSrc.match(/timeoutMs: COMPUTER_LIFECYCLE_TIMEOUT_MS/g)).toHaveLength(2);
+    expect(settingsSrc.match(/timeoutMs: COMPUTER_LIFECYCLE_TIMEOUT_MS/g)).toHaveLength(1);
+  });
+
   it("boots, takes over, heartbeats, and releases like web", () => {
     const src = readFileSync(
       path.join(path.dirname(fileURLToPath(import.meta.url)), "../app/computer.tsx"),
@@ -175,5 +196,8 @@ describe("mobile computer screen", () => {
     expect(src).toContain("SafeAreaProvider");
     expect(src).toContain("readScreenUrl");
     expect(src).toContain("SCREEN_URL_OPEN_ATTEMPTS");
+    expect(src).toContain("COMPUTER_LIFECYCLE_TIMEOUT_MS");
+    expect(src).toContain("invalidateScreen");
+    expect(src).toContain("keyboardDisplayRequiresUserAction={false}");
   });
 });

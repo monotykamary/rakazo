@@ -176,6 +176,11 @@ export class DockerSandboxProvider implements SandboxProvider {
     });
     if (!res.ok) {
       const detail = await safeBody(res, context.signal);
+      // Match the bounded safeBody text rather than parsing an untrusted response as JSON.
+      const limitError = detail.match(/Computer limit reached for space \(max: \d+\)/i)?.[0];
+      if (res.status === 429 && limitError) {
+        throw new Error(limitError);
+      }
       throw new Error(`sandbox provision failed: ${res.status} ${detail}`.trim());
     }
     const body = await readSandboxJson<{ id: string; resumed?: boolean }>(res, context.signal);

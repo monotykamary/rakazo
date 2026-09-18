@@ -24,6 +24,11 @@ const ASSIGNMENT = {
   server: SERVER,
 };
 
+const TEST_NETWORK = {
+  fetch: (input: string | URL | Request, init?: RequestInit) => globalThis.fetch(input, init),
+  resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }],
+};
+
 function mcpFetch(
   state: {
     failNext: boolean;
@@ -31,6 +36,8 @@ function mcpFetch(
     headers?: Record<string, string>[];
     tools?: Array<{ name: string; description?: string; inputSchema: Record<string, unknown> }>;
     calls?: string[];
+    resultText?: string;
+    failureText?: string;
   },
   expectedUrl = "https://mcp.example.test/mcp",
 ) {
@@ -40,7 +47,7 @@ function mcpFetch(
     if (new URL(request.url).href !== expectedUrl)
       throw new Error(`Unexpected request: ${request.url}`);
     if (request.method !== "POST") return new Response(null, { status: 405 });
-    if (state.failNext) return new Response("boom", { status: 500 });
+    if (state.failNext) return new Response(state.failureText ?? "boom", { status: 500 });
     const message = JSON.parse(await request.text()) as {
       id?: number;
       method?: string;
@@ -72,7 +79,7 @@ function mcpFetch(
       return Response.json({
         jsonrpc: "2.0",
         id: message.id,
-        result: { content: [{ type: "text", text: "ok" }] },
+        result: { content: [{ type: "text", text: state.resultText ?? "ok" }] },
       });
     }
     return new Response(null, { status: 202 });
@@ -102,7 +109,7 @@ describe("MCP connector session cache", () => {
       },
     };
     const connector = new McpConnector(prisma as never, {} as never, {
-      network: { resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }] },
+      network: TEST_NETWORK,
     });
     const context = {
       spaceId: "w1",
@@ -115,9 +122,9 @@ describe("MCP connector session cache", () => {
 
     expect(tools).toHaveLength(3);
     expect(tools.map((tool) => tool.name)).toEqual([
-      "mcp_search_tools",
-      "mcp_load_tool",
-      "mcp_execute_tool",
+      "connectors_search_tools",
+      "connectors_load_tool",
+      "connectors_execute_tool",
     ]);
     expect(JSON.stringify(tools)).not.toContain("schema-marker");
     await connector.close();
@@ -148,7 +155,7 @@ describe("MCP connector session cache", () => {
           },
         } as never,
         {} as never,
-        { network: { resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }] } },
+        { network: TEST_NETWORK },
       );
       const tools = await connector.discoverTools(context);
       if (count === 20) {
@@ -156,9 +163,9 @@ describe("MCP connector session cache", () => {
         expect(tools[0]?.name).toMatch(/^mcp__demo__/);
       } else {
         expect(tools.map((tool) => tool.name)).toEqual([
-          "mcp_search_tools",
-          "mcp_load_tool",
-          "mcp_execute_tool",
+          "connectors_search_tools",
+          "connectors_load_tool",
+          "connectors_execute_tool",
         ]);
       }
       await connector.close();
@@ -205,7 +212,7 @@ describe("MCP connector session cache", () => {
       },
     };
     const connector = new McpConnector(prisma as never, {} as never, {
-      network: { resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }] },
+      network: TEST_NETWORK,
     });
     const context = {
       spaceId: "w1",
@@ -385,7 +392,7 @@ describe("MCP connector session cache", () => {
       },
     };
     const connector = new McpConnector(prisma as never, {} as never, {
-      network: { resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }] },
+      network: TEST_NETWORK,
     });
     const context = {
       spaceId: "w1",
@@ -548,6 +555,69 @@ describe("MCP connector session cache", () => {
     await connector.close();
   });
 
+  it("redacts stored MCP credentials from model-visible results and errors", async () => {
+    const staticToken = "static-mcp-secret";
+    const accessToken = "oauth-access-secret";
+    const clientSecret = "oauth-client-secret";
+    const state = {
+      failNext: false,
+      initializations: 0,
+      resultText: `${staticToken} ${accessToken} ${clientSecret}`,
+      failureText: `${staticToken} ${accessToken} ${clientSecret}`,
+    };
+    vi.stubGlobal("fetch", mcpFetch(state));
+    const server = { ...SERVER, secretId: "secret-1" };
+    const assignment = { ...ASSIGNMENT, server };
+    const prisma = {
+      botMcpServer: {
+        findMany: vi.fn().mockResolvedValue([assignment]),
+        findFirst: vi.fn().mockResolvedValue(assignment),
+      },
+      secret: { findFirst: vi.fn().mockResolvedValue({ id: "secret-1", ciphertext: "encrypted" }) },
+    };
+    const secrets = {
+      load: vi.fn().mockReturnValue(
+        JSON.stringify({
+          secret: staticToken,
+          oauth: {
+            tokens: { access_token: accessToken, token_type: "bearer" },
+            clientInformation: { client_id: "client", client_secret: clientSecret },
+          },
+        }),
+      ),
+    };
+    const connector = new McpConnector(prisma as never, secrets as never, {
+      network: TEST_NETWORK,
+    });
+    const context = {
+      spaceId: "w1",
+      userId: "u1",
+      botId: "bot-1",
+      signal: new AbortController().signal,
+    } as never;
+    const call = {
+      tool: "mcp__demo__echo",
+      args: {},
+      route: { connectorId: "mcp", resourceId: "server-1", toolName: "echo" },
+    } as never;
+
+    await connector.discoverTools(context);
+    const visible: unknown[] = [];
+    for await (const event of connector.execute(call, context)) visible.push(event);
+    state.failNext = true;
+    for await (const event of connector.execute(call, context)) visible.push(event);
+    // The evicted session must also redact a failed reconnect, before it can be cached.
+    for await (const event of connector.execute(call, context)) visible.push(event);
+    expect(visible).toMatchObject([{ type: "result" }, { type: "error" }, { type: "error" }]);
+
+    const serialized = JSON.stringify(visible);
+    expect(serialized).not.toContain(staticToken);
+    expect(serialized).not.toContain(accessToken);
+    expect(serialized).not.toContain(clientSecret);
+    expect(serialized).toContain("[redacted]");
+    await connector.close();
+  });
+
   it("evicts a session after a failed call so the next call reconnects instead of reusing a dead session", async () => {
     const state = { failNext: false, initializations: 0 };
     vi.stubGlobal("fetch", mcpFetch(state));
@@ -558,9 +628,7 @@ describe("MCP connector session cache", () => {
       },
     };
     const connector = new McpConnector(prisma as never, {} as never, {
-      network: {
-        resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }],
-      },
+      network: TEST_NETWORK,
     });
     const context = {
       spaceId: "w1",
@@ -602,7 +670,7 @@ describe("MCP connector session cache", () => {
       },
     };
     const connector = new McpConnector(prisma as never, {} as never, {
-      network: { resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }] },
+      network: TEST_NETWORK,
     });
     const contextFor = (spaceId: string, userId: string) =>
       ({ spaceId, userId, botId: "bot-1", signal: new AbortController().signal }) as never;

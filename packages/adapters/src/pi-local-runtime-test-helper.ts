@@ -120,10 +120,17 @@ async function finishPrompt(command) {
       },
     });
   }
+  const usage = scenario.usage ?? {
+    input: 5,
+    output: 2,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 7,
+  };
   for (const delta of scenario.textChunks ?? ["Offline answer."]) {
     send({
       type: "message_update",
-      usage: { input: 5, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 7 },
+      usage,
       assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
     });
   }
@@ -134,7 +141,10 @@ async function finishPrompt(command) {
       content: [{ type: "text", text: (scenario.textChunks ?? ["Offline answer."]).join("") }],
       provider: scenario.provider ?? "offline",
       model: scenario.model ?? "offline-model",
-      usage: { input: 5, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 7, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      usage: {
+        ...usage,
+        cost: usage.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
       stopReason: scenario.stopReason ?? "stop",
       ...(scenario.errorMessage ? { errorMessage: scenario.errorMessage } : {}),
       timestamp: Date.now(),

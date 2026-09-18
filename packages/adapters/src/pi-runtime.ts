@@ -12,6 +12,10 @@ import {
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { AgentRunRequest, ConnectorTool } from "@rakazo/adapter-kit";
 import { getLogger } from "@rakazo/logging";
+import {
+  normalizeOpenAiToolParameters,
+  openAiToolParametersNeedNormalization,
+} from "./openai-tool-parameters.js";
 import { PiRuntimeCredentialStore, toOAuthCredential } from "./pi-credentials.js";
 import { registerLocalProvider } from "./pi-local-provider.js";
 import {
@@ -55,6 +59,28 @@ export function maxToolCallsPerTurn(env: NodeJS.ProcessEnv = process.env): numbe
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return 0;
   return Math.floor(parsed);
+}
+
+/** Provider-billed prompt tokens: uncached input plus cache reads and cache writes. */
+export function billedPromptTokens(usage: unknown): {
+  inputTokens: number;
+  outputTokens: number;
+} {
+  const value =
+    usage && typeof usage === "object" && !Array.isArray(usage)
+      ? (usage as Record<string, unknown>)
+      : {};
+  return {
+    inputTokens:
+      nonNegativeCount(value.input) +
+      nonNegativeCount(value.cacheRead) +
+      nonNegativeCount(value.cacheWrite),
+    outputTokens: nonNegativeCount(value.output),
+  };
+}
+
+function nonNegativeCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
 export { ManagedPiRuntime as PiAgentRuntime } from "./pi-managed-runtime.js";
@@ -219,18 +245,17 @@ function stableToolNameHash(name: string): string {
   return (hash >>> 0).toString(36);
 }
 
-export function parametersFor(tool: ConnectorTool) {
-  return builtinParameters(tool) ?? safeJsonSchemaParameters(tool);
-}
-
-/** A remote MCP server controls its own schemas, so a shape TypeBox cannot express must
- * degrade to a permissive object instead of failing every turn for the whole bot. */
-function safeJsonSchemaParameters(tool: ConnectorTool) {
+export function parametersFor(tool: ConnectorTool): ReturnType<typeof Type.Object> {
   try {
-    return jsonSchemaParameters(tool.inputSchema);
+    const schema = builtinParameters(tool) ?? jsonSchemaParameters(tool.inputSchema);
+    if (!openAiToolParametersNeedNormalization(schema)) return schema;
+    return Type.Unsafe(
+      normalizeOpenAiToolParameters(JSON.parse(JSON.stringify(schema))),
+    ) as unknown as ReturnType<typeof Type.Object>;
   } catch (error) {
+    // Invalid remote schemas must not take down a run or become permissive.
     getLogger().error(`unsupported input schema for tool ${tool.name}`, error);
-    return Type.Object({});
+    return Type.Object({}, { additionalProperties: false });
   }
 }
 
@@ -247,13 +272,6 @@ function builtinParameters(tool: ConnectorTool) {
   }
   if (tool.name === "request_takeover") {
     return Type.Object({ reason: Type.String() });
-  }
-  if (tool.name === "request_secret") {
-    return Type.Object({
-      label: Type.String(),
-      purpose: Type.Union([Type.Literal("otp"), Type.Literal("password"), Type.Literal("api_key")]),
-      connectionId: Type.Optional(Type.String()),
-    });
   }
   if (tool.name === "ask_user") {
     return Type.Object({
@@ -346,9 +364,32 @@ function isComputerScreenshotMessage(
   );
 }
 
-export function jsonSchemaParameters(schema: Record<string, unknown>) {
-  const properties = (schema.properties ?? {}) as Record<string, unknown>;
-  const required = new Set(Array.isArray(schema.required) ? schema.required.map(String) : []);
+export function jsonSchemaParameters(
+  schema: Record<string, unknown>,
+): ReturnType<typeof Type.Object> {
+  const alternatives = Array.isArray(schema.oneOf)
+    ? schema.oneOf
+    : Array.isArray(schema.anyOf)
+      ? schema.anyOf
+      : undefined;
+  if (alternatives?.length && schema.properties == null) {
+    return Type.Union(
+      alternatives.map((variant) => jsonSchemaParameters(schemaObject(variant))),
+    ) as unknown as ReturnType<typeof Type.Object>;
+  }
+
+  const properties = schema.properties == null ? {} : schemaObject(schema.properties);
+  if (schema.required != null && !Array.isArray(schema.required)) {
+    throw new Error("required must be an array");
+  }
+  const required = new Set(
+    Array.isArray(schema.required)
+      ? schema.required.map((name) => {
+          if (typeof name !== "string") throw new Error("required entries must be strings");
+          return name;
+        })
+      : [],
+  );
   const fields: Record<string, ReturnType<typeof Type.Optional>> = {};
   for (const [key, spec] of Object.entries(properties)) {
     const field = jsonField(spec);
@@ -356,11 +397,21 @@ export function jsonSchemaParameters(schema: Record<string, unknown>) {
       typeof Type.Optional
     >;
   }
-  return Type.Object(fields);
+  const options = {
+    ...(schema.additionalProperties === false ? { additionalProperties: false } : {}),
+    ...(typeof schema.description === "string" ? { description: schema.description } : {}),
+  };
+  return Type.Object(fields, options);
 }
 
-/** TypeBox only builds literals from primitives; anything else throws while the tool list is
- * being assembled, which would take down the whole turn. */
+function schemaObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("schema must be an object");
+  }
+  return value as Record<string, unknown>;
+}
+
+/** TypeBox only builds literals from primitives. */
 function enumUnion(values: readonly unknown[]) {
   const members = values.map((value) =>
     value === null
@@ -372,28 +423,62 @@ function enumUnion(values: readonly unknown[]) {
   return members.every((member) => member !== undefined) ? Type.Union(members) : undefined;
 }
 
-function jsonField(spec: unknown): ReturnType<typeof Type.String> {
-  const definition = spec && typeof spec === "object" ? (spec as Record<string, unknown>) : {};
+export function jsonField(spec: unknown): ReturnType<typeof Type.String> {
+  const definition = schemaObject(spec);
   if (Array.isArray(definition.enum) && definition.enum.length > 0) {
     const union = enumUnion(definition.enum);
     if (union) return union as never;
   }
-  const type = "type" in definition ? String(definition.type) : "string";
-  if (type === "number" || type === "integer") return Type.Number() as never;
-  if (type === "boolean") return Type.Boolean() as never;
+  if ("const" in definition) {
+    const literal = enumUnion([definition.const]);
+    if (!literal) throw new Error("const must be a JSON primitive");
+    return literal as never;
+  }
+  const variants = Array.isArray(definition.oneOf)
+    ? definition.oneOf
+    : Array.isArray(definition.anyOf)
+      ? definition.anyOf
+      : undefined;
+  if (variants?.length) return Type.Union(variants.map((variant) => jsonField(variant))) as never;
+  if (Array.isArray(definition.type)) {
+    if (!definition.type.length) throw new Error("type union must not be empty");
+    return Type.Union(definition.type.map((type) => jsonField({ ...definition, type }))) as never;
+  }
+
+  const type = definition.type == null ? "string" : String(definition.type);
+  const description =
+    typeof definition.description === "string" ? { description: definition.description } : {};
+  if (type === "null") return Type.Null(description) as never;
+  if (type === "number" || type === "integer") {
+    const options = {
+      ...description,
+      ...(typeof definition.minimum === "number" ? { minimum: definition.minimum } : {}),
+      ...(typeof definition.maximum === "number" ? { maximum: definition.maximum } : {}),
+    };
+    return (type === "integer" ? Type.Integer(options) : Type.Number(options)) as never;
+  }
+  if (type === "boolean") return Type.Boolean(description) as never;
   if (type === "array") {
-    const options: {
-      minItems?: number;
-      maxItems?: number;
-      uniqueItems?: boolean;
-    } = {};
-    if (typeof definition.minItems === "number") options.minItems = definition.minItems;
-    if (typeof definition.maxItems === "number") options.maxItems = definition.maxItems;
-    if (definition.uniqueItems === true) options.uniqueItems = true;
+    const options = {
+      ...description,
+      ...(typeof definition.minItems === "number" ? { minItems: definition.minItems } : {}),
+      ...(typeof definition.maxItems === "number" ? { maxItems: definition.maxItems } : {}),
+      ...(definition.uniqueItems === true ? { uniqueItems: true } : {}),
+    };
     return Type.Array(jsonField(definition.items), options) as never;
   }
   if (type === "object") return jsonSchemaParameters(definition) as never;
-  return Type.String();
+  if (type === "string") {
+    const options = {
+      ...description,
+      ...(typeof definition.minLength === "number" ? { minLength: definition.minLength } : {}),
+      ...(typeof definition.maxLength === "number" ? { maxLength: definition.maxLength } : {}),
+      ...(typeof definition.pattern === "string" ? { pattern: definition.pattern } : {}),
+      ...(typeof definition.format === "string" ? { format: definition.format } : {}),
+    };
+    return Type.String(options);
+  }
+  throw new Error(`unsupported schema type: ${type}`);
 }
 
 function sanitizeSensitiveText(message: string) {
@@ -434,8 +519,7 @@ export function conversationSessionId(
   agentId?: string,
   generation = 0,
 ): string {
-  const root =
-    generation > 0 ? `${threadId}:${botId}:g${generation}` : `${threadId}:${botId}`;
+  const root = generation > 0 ? `${threadId}:${botId}:g${generation}` : `${threadId}:${botId}`;
   return agentId ? `${root}:${agentId}` : root;
 }
 

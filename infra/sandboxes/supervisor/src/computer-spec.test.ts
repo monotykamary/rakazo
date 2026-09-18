@@ -10,14 +10,18 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type Docker from "dockerode";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  assertVolumeSubpathSupport,
   COMPUTER_IMAGE,
+  computerHomeStorage,
   computerNetworkNameFor,
   computerNetworkNamesForCleanup,
   containerCreateOptions,
   containerNameFor,
   controlPortPublicationMatches,
+  homeVolumeMatches,
   hostComputerUser,
   legacyNetworkOwnedSolelyBy,
   parseMemoryBytes,
@@ -25,6 +29,7 @@ import {
   resolveComputerControlEndpoint,
   resolveScreenNetworkMode,
   resolveScreenPublishTarget,
+  resolveSpaceComputerLimit,
   resolveTeamScreenLimit,
   screenPorts,
   screenUrlFor,
@@ -46,6 +51,15 @@ describe("graphical computer spec", () => {
     expect(resolveTeamScreenLimit("4")).toBe(4);
     for (const value of ["-1", "1.5", "not-a-number"])
       expect(() => resolveTeamScreenLimit(value)).toThrow(/positive integer/);
+  });
+
+  it("validates the optional space computer limit", () => {
+    expect(resolveSpaceComputerLimit(undefined)).toBe(0);
+    expect(resolveSpaceComputerLimit("0")).toBe(0);
+    expect(resolveSpaceComputerLimit("none")).toBe(0);
+    expect(resolveSpaceComputerLimit("10")).toBe(10);
+    for (const value of ["-1", "1.5", "not-a-number"])
+      expect(() => resolveSpaceComputerLimit(value)).toThrow(/positive integer/);
   });
 
   it("points office computers at a private HTTP CONNECT proxy", () => {
@@ -732,5 +746,74 @@ describe("computer resource limits", () => {
 
   it("parses byte counts without a unit suffix", () => {
     expect(parseMemoryBytes("X", "1073741824")).toBe(1024 ** 3);
+  });
+});
+
+describe("computer home storage", () => {
+  const runtime = (mount: object) => ({ Mounts: [mount] }) as Docker.ContainerInspectInfo;
+
+  it("keeps named volumes native and exposes only the bot subdirectory", () => {
+    const storage = computerHomeStorage(
+      "/data/homes/bot",
+      "/data",
+      runtime({ Type: "volume", Name: "example_appdata", Destination: "/data" }),
+    );
+    const options = containerCreateOptions({
+      name: "bot",
+      image: "computer",
+      botId: "bot",
+      spaceId: "space",
+      ...storage,
+    });
+    expect(options.HostConfig.Binds).toBeUndefined();
+    expect(options.HostConfig.Mounts).toEqual([
+      {
+        Type: "volume",
+        Source: "example_appdata",
+        Target: "/home/rakazo",
+        VolumeOptions: { NoCopy: true, Subpath: "homes/bot" },
+      },
+    ]);
+    expect(homeVolumeMatches(options.HostConfig.Mounts, storage.homeVolume!)).toBe(true);
+  });
+
+  it("preserves native host paths and translates supervisor bind mounts", () => {
+    expect(computerHomeStorage("/data/homes/bot", "/data", undefined)).toEqual({
+      homePath: "/data/homes/bot",
+    });
+    expect(
+      computerHomeStorage(
+        "/data/homes/bot",
+        "/data",
+        runtime({ Type: "bind", Source: "/srv/data", Destination: "/data" }),
+      ),
+    ).toEqual({ homePath: "/srv/data/homes/bot" });
+  });
+
+  it("rejects invalid homes and unsupported Docker APIs", () => {
+    for (const home of ["/data", "/other", "/data/../other"])
+      expect(() => computerHomeStorage(home, "/data", undefined)).toThrow();
+    expect(() =>
+      computerHomeStorage(
+        "/data/homes/bot",
+        "/data",
+        runtime({ Type: "volume", Destination: "/data" }),
+      ),
+    ).toThrow(/no name/);
+    for (const version of ["1.44", "", "invalid", "0.99"])
+      expect(() => assertVolumeSubpathSupport(version)).toThrow(/Docker Engine 26/);
+    for (const version of ["1.45", "1.46", "2.0"])
+      expect(() => assertVolumeSubpathSupport(version)).not.toThrow();
+  });
+
+  it("installs SIGTERM handling before children and waits directly on Xvfb", () => {
+    const root = path.resolve(import.meta.dirname, "../../computer");
+    const start = readFileSync(path.join(root, "start.sh"), "utf8");
+    expect(start).toMatch(/trap shutdown TERM INT/);
+    expect(start).toMatch(/kill -TERM "\$XVFB_PID"/);
+    expect(start).not.toMatch(/while kill -0 "\$XVFB_PID"/);
+    expect(start.indexOf("trap shutdown TERM INT")).toBeLessThan(start.search(/^[^#\n]*&\s*$/m));
+    expect(start).toMatch(/^XVFB_PID=""$/m);
+    expect(start).toMatch(/^wait "\$XVFB_PID"$/m);
   });
 });

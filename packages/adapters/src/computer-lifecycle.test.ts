@@ -1460,6 +1460,28 @@ describe("computer execution leases", () => {
     expect(screenLeaseIdForRun(null, "run-1", 0)).toBe("run-1:0");
   });
 
+  it("acquires a team lease on an abandoned suspending computer", async () => {
+    const prisma = leasePrisma({ scope: "team" });
+    prisma.findUniqueOrThrow.mockResolvedValue({
+      scope: "team",
+      state: "suspending",
+      updatedAt: new Date("2024-01-01T00:00:00.000Z"),
+    });
+
+    await expect(
+      acquireComputerExecutionLease(prisma.client, {
+        computerId: "computer-1",
+        runId: "run-1",
+        botId: "bot-1",
+      }),
+    ).resolves.toEqual({
+      computerId: "computer-1",
+      botId: "bot-1",
+      runId: "run-1",
+      fence: 1,
+    });
+  });
+
   it("rolls back a lease that races with computer suspension", async () => {
     const prisma = leasePrisma({ scope: "team" });
     prisma.findUniqueOrThrow
@@ -2246,14 +2268,18 @@ describe("computer replacement", () => {
       1,
       expect.objectContaining({
         where: expect.objectContaining({ id: "computer-1", state: "stopped" }),
-        data: { state: "suspending" },
+        data: expect.objectContaining({ state: "suspending", updatedAt: expect.any(Date) }),
       }),
     );
     expect(updateMany).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        where: { id: "computer-1", state: "suspending" },
-        data: { state: "stopped" },
+        where: expect.objectContaining({
+          id: "computer-1",
+          state: "suspending",
+          updatedAt: expect.any(Date),
+        }),
+        data: expect.objectContaining({ state: "stopped", updatedAt: expect.any(Date) }),
       }),
     );
   });
@@ -2299,14 +2325,18 @@ describe("computer replacement", () => {
       1,
       expect.objectContaining({
         where: expect.objectContaining({ id: "computer-1", state: "suspended" }),
-        data: { state: "suspending" },
+        data: expect.objectContaining({ state: "suspending", updatedAt: expect.any(Date) }),
       }),
     );
     expect(updateMany).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        where: { id: "computer-1", state: "suspending" },
-        data: { state: "suspended" },
+        where: expect.objectContaining({
+          id: "computer-1",
+          state: "suspending",
+          updatedAt: expect.any(Date),
+        }),
+        data: expect.objectContaining({ state: "suspended", updatedAt: expect.any(Date) }),
       }),
     );
   });
@@ -2365,7 +2395,7 @@ describe("computer replacement", () => {
         1,
         expect.objectContaining({
           where: expect.objectContaining({ id: "computer-1", state: "stopped" }),
-          data: { state: "suspending" },
+          data: expect.objectContaining({ state: "suspending", updatedAt: expect.any(Date) }),
         }),
       );
     } finally {
@@ -2519,6 +2549,7 @@ describe("computer replacement", () => {
         where: {
           id: "computer-1",
           state: "suspending",
+          updatedAt: expect.any(Date),
           providerRef: "fake-bot-1",
           kind: "fake",
           machineId: null,

@@ -51,7 +51,9 @@ export function approvedCatalogReplay(
   // Only the catalog execute wrapper may consume the wrapper envelope. After a catalog
   // shrink, matching direct tools resume via the FIFO path with inner arguments.
   if (!onCatalogExecuteRoute) return {};
-  if (pending.toolName !== toolName) {
+  const renamedMcpWrapper =
+    pending.toolName === "mcp_execute_tool" && toolName === catalogExecuteToolName("mcp");
+  if (pending.toolName !== toolName && !renamedMcpWrapper) {
     return { error: `Approved request ${pending.toolName} must be replayed before ${toolName}.` };
   }
   return { args: pending.args };
@@ -245,8 +247,13 @@ export function approvalReplayResourceError(
   return undefined;
 }
 
+/** Claude Code OAuth rejects tool names starting with `mcp_`; keep MCP wrappers on `connectors`. */
+export function catalogToolPrefix(connectorId: string): string {
+  return connectorId === "mcp" ? "connectors" : connectorId;
+}
+
 export function catalogExecuteToolName(connectorId: string): string {
-  return `${connectorId}_execute_tool`;
+  return `${catalogToolPrefix(connectorId)}_execute_tool`;
 }
 
 export function catalogIdForRoute(route: BoundApprovalRoute): string {
@@ -271,9 +278,10 @@ export function parseCatalogApprovalTarget(
 }
 
 export function catalogApprovalConnectorId(wrapperToolName: string): string {
-  return wrapperToolName.endsWith("_execute_tool")
+  const prefix = wrapperToolName.endsWith("_execute_tool")
     ? wrapperToolName.slice(0, -"_execute_tool".length)
     : wrapperToolName;
+  return prefix === "connectors" ? "mcp" : prefix;
 }
 
 export function catalogApprovalMatchesLiveRoute(

@@ -355,6 +355,83 @@ describe("mobile API authentication", () => {
     await expect(rpc("bots/get", { botId: "missing" })).rejects.toThrow("Bot does not exist");
   });
 
+  it("reports an rpc that hit its timeout as a timeout, not as a canceled fetch", async () => {
+    vi.useFakeTimers();
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValue("session-token");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_input: unknown, init?: { signal?: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new Error("fetch failed: FetchRequestCanceledException")),
+            );
+          }),
+      ),
+    );
+
+    const pending = rpc("computer/status", { botId: "bot" });
+    const rejection = expect(pending).rejects.toThrow("Request timed out");
+    await vi.advanceTimersByTimeAsync(8_000);
+    await rejection;
+  });
+
+  it("reports a stalled rpc response body as a timeout", async () => {
+    vi.useFakeTimers();
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValue("session-token");
+    const cancel = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new ReadableStream({ cancel }))),
+    );
+
+    const pending = rpc("computer/status", { botId: "bot" });
+    const rejection = expect(pending).rejects.toThrow("Request timed out");
+    await vi.advanceTimersByTimeAsync(8_000);
+    await rejection;
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("reports a caller's cancellation with the caller's reason", async () => {
+    vi.useFakeTimers();
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValue("session-token");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_input: unknown, init?: { signal?: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new Error("fetch failed: FetchRequestCanceledException")),
+            );
+          }),
+      ),
+    );
+
+    const external = new AbortController();
+    const pending = rpc("computer/status", { botId: "bot" }, { signal: external.signal });
+    const rejection = expect(pending).rejects.toThrow("screen closed");
+    await vi.advanceTimersByTimeAsync(0);
+    external.abort(new Error("screen closed"));
+    await rejection;
+  });
+
+  it("lets a call opt into a longer timeout", async () => {
+    vi.useFakeTimers();
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValue("session-token");
+    const fetchMock = vi.fn(
+      (_input: unknown, init?: { signal?: AbortSignal }) =>
+        new Promise<Response>((resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+          setTimeout(() => resolve(jsonResponse({ json: { ok: true } })), 20_000);
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = rpc<{ ok: boolean }>("computer/boot", { botId: "bot" }, { timeoutMs: 120_000 });
+    await vi.advanceTimersByTimeAsync(20_000);
+    await expect(pending).resolves.toEqual({ ok: true });
+  });
+
   it("rejects an oversized RPC response before parsing it", async () => {
     vi.stubGlobal(
       "fetch",
@@ -1640,6 +1717,80 @@ describe("mobile Space selection recovery", () => {
     expect(fetchMock.mock.calls[0]![1].headers["x-rakazo-space-id"]).toBe("space-deleted");
     expect(String(fetchMock.mock.calls[1]![0])).toContain("/rpc/spaces/list");
     expect(fetchMock.mock.calls[1]![1].headers["x-rakazo-space-id"]).toBeUndefined();
+  });
+
+  it("keeps a later A claim when an earlier A→B→A persist fails", async () => {
+    const storage = memoryStore([["rakazo.space_id", "space-support"]]);
+    let firstAWriteCount = 0;
+    let rejectFirstA!: (reason: Error) => void;
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      if (key === "rakazo.space_id" && value === "space-a") {
+        firstAWriteCount += 1;
+        if (firstAWriteCount === 1) {
+          await new Promise<never>((_, reject) => {
+            rejectFirstA = reject;
+          });
+        }
+      }
+      storage.set(key, value);
+    });
+    const api = await freshApi();
+    await api.loadApiBase();
+
+    const pendingFirstA = api.selectSpace("space-a");
+    await vi.waitFor(() => expect(api.selectedSpaceId()).toBe("space-a"));
+    await expect(api.selectSpace("space-b")).resolves.toBe(true);
+    await expect(api.selectSpace("space-a")).resolves.toBe(true);
+    expect(storage.get("rakazo.space_id")).toBe("space-a");
+    rejectFirstA(new Error("device locked"));
+
+    await expect(pendingFirstA).resolves.toBe(false);
+    expect(api.selectedSpaceId()).toBe("space-a");
+    expect(storage.get("rakazo.space_id")).toBe("space-a");
+  });
+
+  it("does not let auth cleanup overwrite a newer selection with a stale snapshot", async () => {
+    const storage = memoryStore([["rakazo.space_id", "space-deleted"]]);
+    let injected = false;
+    let holdCleanupReconcile = false;
+    let releaseCleanupWrite!: () => void;
+    const cleanupWriteHeld = new Promise<void>((resolve) => {
+      releaseCleanupWrite = resolve;
+    });
+    let api: Awaited<ReturnType<typeof freshApi>>;
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      if (key === "rakazo.space_id" && !injected) {
+        injected = true;
+        await expect(api.selectSpace("space-b")).resolves.toBe(true);
+        holdCleanupReconcile = true;
+      }
+      storage.delete(key);
+    });
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      if (key === "rakazo.space_id" && value === "space-b" && holdCleanupReconcile) {
+        holdCleanupReconcile = false;
+        await cleanupWriteHeld;
+      }
+      storage.set(key, value);
+    });
+    api = await freshApi();
+    await api.loadApiBase();
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Unauthorized" } }, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ json: { spaces: [] } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pendingRpc = api.rpc("spaces/list");
+    await vi.waitFor(() => expect(api.selectedSpaceId()).toBe("space-b"));
+    await expect(api.selectSpace("space-c")).resolves.toBe(true);
+    expect(storage.get("rakazo.space_id")).toBe("space-c");
+    releaseCleanupWrite();
+
+    await expect(pendingRpc).resolves.toEqual({ spaces: [] });
+    expect(api.selectedSpaceId()).toBe("space-c");
+    expect(storage.get("rakazo.space_id")).toBe("space-c");
   });
 
   it("re-persists a Space selected while recovery cleanup is in flight", async () => {

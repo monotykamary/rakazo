@@ -1,3 +1,5 @@
+import dns from "node:dns";
+import { fetch as undiciFetch } from "undici";
 import { describe, expect, it } from "vitest";
 import {
   assertSafeRemoteUrl,
@@ -59,6 +61,25 @@ describe("remote MCP URL policy", () => {
     expect(result).toEqual({ address: "100.119.57.55", family: 4 });
   });
 
+  it("allows the IPv6 half of a MagicDNS answer", async () => {
+    const magicDns = "https://box.tail12345.ts.net/mcp";
+    const addresses = [
+      { address: "fd7a:115c:a1e0:ab12:4843:cd96:6265:6667", family: 6 as const },
+      { address: "100.64.1.2", family: 4 as const },
+    ];
+    await expect(assertSafeRemoteUrl(magicDns, async () => addresses)).resolves.toEqual(
+      new URL(magicDns),
+    );
+  });
+
+  it("rejects non-Tailscale IPv6 private ranges for MagicDNS hosts", async () => {
+    await expect(
+      assertSafeRemoteUrl("https://box.tail12345.ts.net/mcp", async () => [
+        { address: "fd00:1234::1", family: 6 as const },
+      ]),
+    ).rejects.toThrow("private address");
+  });
+
   it("still rejects raw Tailscale CGNAT IP literals", async () => {
     await expect(
       assertSafeRemoteUrl("https://100.64.1.2/openapi.json", publicResolver),
@@ -107,6 +128,50 @@ describe("remote MCP URL policy", () => {
       });
     });
     expect(result).toEqual({ address: "203.0.113.10", family: 4 });
+  });
+
+  it("drives the guarded dispatcher with the matching package fetch", async () => {
+    expect(undiciFetch).not.toBe(globalThis.fetch);
+    let resolutions = 0;
+    const safeFetch = createSafeRemoteFetch(undefined, async () => {
+      resolutions += 1;
+      if (resolutions > 1) throw new Error("lookup reached");
+      return [{ address: "203.0.113.10", family: 4 as const }];
+    });
+    try {
+      await expect(safeFetch("https://connectors.example.test/mcp")).rejects.toThrow(
+        "Could not reach connectors.example.test: lookup reached",
+      );
+    } finally {
+      await safeFetch.close();
+    }
+  });
+
+  it("pins an injected fetch to the validated address", async () => {
+    let lookup: { address: string; family?: number } | undefined;
+    let host: string | null = null;
+    const injected: typeof globalThis.fetch = async (input, init) => {
+      host = new Headers(init?.headers).get("host");
+      const hostname = new URL(String(input)).hostname;
+      lookup = await new Promise((resolve, reject) => {
+        dns.lookup(hostname, { family: 4 }, (error, address, family) => {
+          if (error) reject(error);
+          else resolve({ address: String(address), family });
+        });
+      });
+      return new Response(null, { status: 204 });
+    };
+    const safeFetch = createSafeRemoteFetch(injected, publicResolver);
+    try {
+      await expect(safeFetch("https://connectors.example.test/mcp")).resolves.toHaveProperty(
+        "status",
+        204,
+      );
+      expect(host).toBe("connectors.example.test");
+      expect(lookup).toEqual({ address: "203.0.113.10", family: 4 });
+    } finally {
+      await safeFetch.close();
+    }
   });
 
   it("rejects Request inputs instead of silently dropping their method and body", async () => {

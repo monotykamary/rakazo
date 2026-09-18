@@ -17,6 +17,7 @@ import { ComputerModePicker } from "../components/computer-mode-picker";
 import { ModelSelectionControl } from "../components/ModelSelectionControl";
 import { RunsOnPicker } from "../components/runs-on-picker";
 import { currentApiBase, type MobileBot, rpc } from "../lib/api";
+import { COMPUTER_LIFECYCLE_TIMEOUT_MS } from "../lib/computer";
 import { cancelFocusPrompt } from "../lib/focus-prompt";
 import { useI18n } from "../lib/i18n";
 import { useMobileTokens } from "../lib/native";
@@ -109,7 +110,11 @@ export default function BotSettingsScreen() {
       }
       if (color !== bot.color) input.color = color;
       if (computerMode !== bot.computerMode) {
-        await rpc("bots/setComputer", { botId, mode: computerMode });
+        await rpc(
+          "bots/setComputer",
+          { botId, mode: computerMode },
+          { timeoutMs: COMPUTER_LIFECYCLE_TIMEOUT_MS },
+        );
       }
       // Use key presence so clearing title/description to "" still persists.
       if (Object.keys(input).length > 1) {

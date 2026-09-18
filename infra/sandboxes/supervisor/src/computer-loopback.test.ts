@@ -3,10 +3,11 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { resolveSupervisorToken } from "@rakazo/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { computerNetworkNameFor, hostComputerUser } from "./computer-spec.js";
+import { COMPUTER_IMAGE, computerNetworkNameFor, hostComputerUser } from "./computer-spec.js";
 
 const mocks = vi.hoisted(() => ({
   docker: {
+    version: vi.fn(),
     getImage: vi.fn(),
     getContainer: vi.fn(),
     listContainers: vi.fn(),
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("dockerode", () => ({
   default: class {
+    version = mocks.docker.version;
     getImage = mocks.docker.getImage;
     getContainer = mocks.docker.getContainer;
     listContainers = mocks.docker.listContainers;
@@ -286,6 +288,49 @@ describe("provisioning network rollback", () => {
     });
   }
 
+  it.each(["1.44", "1.45"])(
+    "provisions named-volume homes only with subpath support (%s)",
+    async (apiVersion) => {
+      fixture();
+      vi.stubEnv("SANDBOX_SCREEN_NETWORK", "internal");
+      vi.stubEnv("HOSTNAME", "supervisor");
+      mocks.docker.version.mockResolvedValue({ ApiVersion: apiVersion });
+      mocks.docker.getContainer.mockReturnValue({
+        inspect: vi.fn().mockResolvedValue({
+          NetworkSettings: { Networks: { shared: {} } },
+          Mounts: [
+            {
+              Type: "volume",
+              Name: "example_appdata",
+              Destination: process.env.DATA_DIR,
+            },
+          ],
+        }),
+      });
+      const response = await provision();
+      if (apiVersion === "1.44") {
+        expect(response.status).toBe(500);
+        expect(mocks.docker.createContainer).not.toHaveBeenCalled();
+      } else {
+        expect(response.status).toBe(200);
+        expect(mocks.docker.createContainer).toHaveBeenCalledWith(
+          expect.objectContaining({
+            HostConfig: expect.objectContaining({
+              Binds: undefined,
+              Mounts: [
+                expect.objectContaining({
+                  Source: "example_appdata",
+                  Target: "/home/rakazo",
+                  VolumeOptions: { NoCopy: true, Subpath: "homes/bot" },
+                }),
+              ],
+            }),
+          }),
+        );
+      }
+    },
+  );
+
   it("does not allocate a network for an invalid home", async () => {
     fixture();
     expect((await provision("/invalid-home")).status).toBe(500);
@@ -386,5 +431,83 @@ describe("provisioning network rollback", () => {
     expect(await response.json()).toEqual({ error: "container creation failed" });
     expect(mocks.docker.createContainer).toHaveBeenCalledOnce();
     expect(mocks.docker.createNetwork).not.toHaveBeenCalled();
+  });
+});
+
+describe("space computer limit enforcement", () => {
+  function setupContainerFixture() {
+    const network = { remove: vi.fn().mockResolvedValue(undefined) };
+    const container = {
+      id: "new-container-id",
+      start: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+    };
+    mocks.docker.getImage.mockReturnValue({ inspect: vi.fn().mockResolvedValue({ Id: "image" }) });
+    mocks.docker.createNetwork.mockResolvedValue(network);
+    mocks.docker.createContainer.mockResolvedValue(container);
+    return { network, container };
+  }
+
+  async function provisionBot(botId: string, spaceId = "space-1") {
+    const { supervisorApp } = await import("./index.js");
+    return supervisorApp.request("/computers", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${resolveSupervisorToken(process.env)}`,
+        "content-type": "application/json",
+        "x-rakazo-bot-id": botId,
+        "x-rakazo-space-id": spaceId,
+      },
+      body: JSON.stringify({
+        botId,
+        spaceId,
+        homePath: path.join(process.env.DATA_DIR!, "homes", botId),
+      }),
+    });
+  }
+
+  it("counts legacy workspaceId computer containers toward the cap", async () => {
+    setupContainerFixture();
+    vi.stubEnv("SANDBOX_MAX_COMPUTERS_PER_SPACE", "1");
+    mocks.docker.listContainers.mockImplementation(async (options?: { filters?: object }) =>
+      options?.filters
+        ? []
+        : [
+            {
+              Id: "legacy",
+              Image: COMPUTER_IMAGE,
+              Labels: { "rakazo.workspaceId": "space-1", "rakazo.botId": "legacy-bot" },
+            },
+          ],
+    );
+
+    const response = await provisionBot("bot-new");
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({
+      error: "Computer limit reached for space (max: 1)",
+    });
+    expect(mocks.docker.createContainer).not.toHaveBeenCalled();
+  });
+
+  it("serializes concurrent count and create for different bots in one space", async () => {
+    const { container } = setupContainerFixture();
+    vi.stubEnv("SANDBOX_MAX_COMPUTERS_PER_SPACE", "1");
+    let created = 0;
+    mocks.docker.listContainers.mockImplementation(async (options?: { filters?: object }) => {
+      if (options?.filters) return [];
+      return Array.from({ length: created }, (_, index) => ({
+        Id: `c${index}`,
+        Labels: { "rakazo.managed": "true", "rakazo.spaceId": "space-1" },
+      }));
+    });
+    mocks.docker.createContainer.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      created += 1;
+      return { ...container, id: `new-container-${created}` };
+    });
+
+    const [first, second] = await Promise.all([provisionBot("bot-a"), provisionBot("bot-b")]);
+    expect([first.status, second.status].sort((a, b) => a - b)).toEqual([200, 429]);
+    expect(mocks.docker.createContainer).toHaveBeenCalledOnce();
   });
 });

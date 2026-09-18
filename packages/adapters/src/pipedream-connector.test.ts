@@ -329,6 +329,72 @@ describe("PipedreamConnector", () => {
     });
   });
 
+  it("redacts access tokens and client secrets from MCP results and errors", async () => {
+    const accessToken = "pipedream-access-secret";
+    const clientSecret = "pipedream-client-secret";
+    let failCall = false;
+    const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.endsWith("/v1/oauth/token")) {
+        return Response.json({ access_token: accessToken, expires_in: 3_600 });
+      }
+      if (request.url.startsWith("https://remote.mcp.pipedream.net/")) {
+        if (request.method !== "POST") return new Response(null, { status: 405 });
+        const message = JSON.parse(await request.text()) as { id?: number; method?: string };
+        if (message.method === "initialize") {
+          return Response.json({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              protocolVersion: "2025-11-25",
+              capabilities: { tools: {} },
+              serverInfo: { name: "test", version: "1" },
+            },
+          });
+        }
+        if (message.method === "tools/call") {
+          if (failCall) throw new Error(`denied ${accessToken} ${clientSecret}`);
+          return Response.json({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: { content: [{ type: "text", text: `${accessToken} ${clientSecret}` }] },
+          });
+        }
+        return new Response(null, { status: 202 });
+      }
+      throw new Error(`Unexpected request ${request.url}`);
+    });
+    const connector = new PipedreamConnector(
+      {
+        clientId: "fake-client-id",
+        clientSecret,
+        projectId: "fake-project-id",
+        environment: "development",
+        identitySecret: "fake-identity-secret",
+      },
+      {
+        fetch,
+        resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }],
+      },
+    );
+    const call = {
+      tool: "notes.write",
+      args: {},
+      executionId: "pipedream-redaction",
+      route: { connectorId: "pipedream", resourceId: "notes", toolName: "notes.write" },
+    };
+
+    const visible: unknown[] = [];
+    for await (const event of connector.execute(call, context)) visible.push(event);
+    failCall = true;
+    for await (const event of connector.execute(call, context)) visible.push(event);
+
+    const serialized = JSON.stringify(visible);
+    expect(serialized).not.toContain(accessToken);
+    expect(serialized).not.toContain(clientSecret);
+    expect(serialized).toContain("[redacted]");
+  });
+
   it("runs catalog, connection, discovery, execution, and revoke against the protocol emulator", async () => {
     const emulator = new ThirdPartyConnectorEmulator();
     const connector = new PipedreamConnector(

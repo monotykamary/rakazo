@@ -20,7 +20,7 @@ import {
 } from "./computer-control.js";
 import { toComputerRef } from "./computer-support.js";
 import {
-  checkpointAndRecordComputerWorkspace,
+  checkpointComputerWorkspace,
   ensureComputerWorkspaceLayout,
   restoreComputerWorkspace,
 } from "./computer-workspace.js";
@@ -37,6 +37,18 @@ const BOOT_WAIT_MS = 250;
  * past this window stay protected while their run worker lease still heartbeats.
  */
 const BOOT_CLAIM_STALE_MS = EXECUTION_LEASE_MS;
+
+/** Booting and suspending claims older than a worker lease are abandoned. */
+function isAbandonedLifecycleClaim(updatedAt: Date | null | undefined, now = Date.now()): boolean {
+  return updatedAt instanceof Date && now - updatedAt.getTime() >= BOOT_CLAIM_STALE_MS;
+}
+
+function isLiveSuspending(
+  computer: { state: string; updatedAt?: Date | null },
+  now = Date.now(),
+): boolean {
+  return computer.state === "suspending" && !isAbandonedLifecycleClaim(computer.updatedAt, now);
+}
 
 /**
  * "Nobody but us holds this computer."
@@ -156,8 +168,11 @@ export async function provisionComputer(
   // and roll back their sandbox. Live team boots with an execution lease are already blocked
   // by heldByNobodyElse; this guards the lease-less path (and expired-lease gaps).
   const reclaimStamp = existing.state === "booting" ? existing.updatedAt : null;
-  const bootClaimIsStale =
-    reclaimStamp !== null && Date.now() - reclaimStamp.getTime() >= BOOT_CLAIM_STALE_MS;
+  const bootClaimIsStale = reclaimStamp !== null && isAbandonedLifecycleClaim(reclaimStamp);
+  // A live suspend may age while checkpointing or waiting on its provider. Only reclaim a
+  // stamp that was already abandoned when first observed, just like booting recovery.
+  const suspendStamp = existing.state === "suspending" ? existing.updatedAt : null;
+  const suspendClaimIsStale = suspendStamp !== null && isAbandonedLifecycleClaim(suspendStamp);
   // A fresh booting claim (or one whose run lease is still live) cannot be reclaimed after
   // the wait either, so do not block workers for the full boot-wait window. Shared Postgres
   // journeys previously hung createApp stop() while continueRun sat in that wait against a
@@ -174,8 +189,16 @@ export async function provisionComputer(
   if (existing.state === "booting" || existing.state === "suspending") {
     existing = await waitForComputerReady(deps.prisma, computerId, context);
   }
-  // A booting row whose holder is gone is reclaimable; suspending is not.
-  if (!["running", "stopped", "suspended", "error", "booting"].includes(existing.state)) {
+  // A suspending row is reclaimable only when its claim was already stale on first
+  // observation and no other live run still owns the transition.
+  const staleSuspending =
+    existing.state === "suspending" &&
+    suspendClaimIsStale &&
+    !(await hasLiveForeignRunLease(deps.prisma, computerId, context.runId));
+  if (
+    !staleSuspending &&
+    !["running", "stopped", "suspended", "error", "booting"].includes(existing.state)
+  ) {
     throw new ComputerBusyError();
   }
   // Waited for suspending (or similar) and landed on booting we never stamped: another
@@ -198,20 +221,23 @@ export async function provisionComputer(
     throw new ComputerBusyError();
   }
 
-  const reconnecting = existing.state === "running" && Boolean(existing.providerRef);
+  const reconnecting =
+    Boolean(existing.providerRef) &&
+    (existing.state === "running" || existing.state === "suspending");
   // Reconnect can allocate a replacement too. Claim it before any provider call,
   // and compare the observed reference so a delayed caller cannot replace a winner.
   // An abandoned "booting" row is claimed only when no other live execution lease remains,
   // and only when we observed "booting" (never as an OR arm on a running/stopped claim).
   const previousRef = { providerRef: existing.providerRef, kind: existing.kind };
   const bootLease = context.screenLeaseId ? parseScreenLeaseId(context.screenLeaseId) : null;
-  // Reclaim "booting" only when we observed it. Always ORing a booting arm lets a second
-  // caller match after the first claimed running/stopped/… → booting and double-provision.
+  // Reclaim only states observed at entry. Stale suspending uses the same stamp and lease
+  // fences as booting so two recovery workers cannot both provision.
   const claimWhere =
-    existing.state === "booting"
+    existing.state === "booting" || existing.state === "suspending"
       ? {
-          state: "booting" as const,
-          updatedAt: reclaimStamp!,
+          state: existing.state,
+          updatedAt: existing.state === "booting" ? reclaimStamp! : suspendStamp!,
+          ...(existing.state === "suspending" ? previousRef : {}),
           ...heldByNobodyElse(bootLease),
         }
       : {
@@ -223,7 +249,7 @@ export async function provisionComputer(
   // Advance past the observed stamp even when Date.now() equals it (same ms or clock skew);
   // otherwise a booting self-transition would leave the CAS token unchanged and a second
   // worker that observed the same stamp could also claim and provision.
-  const observedStamp = reclaimStamp ?? existing.updatedAt;
+  const observedStamp = reclaimStamp ?? suspendStamp ?? existing.updatedAt;
   const claimStamp = new Date(Math.max(Date.now(), observedStamp.getTime() + 1));
   const claimed = await deps.prisma.computer.updateMany({
     where: {
@@ -399,7 +425,7 @@ export async function acquireComputerExecutionLease(
 ): Promise<ComputerExecutionLease | null> {
   const computer = await prisma.computer.findUniqueOrThrow({ where: { id: input.computerId } });
   // Per-bot liveness also protects temporary workers sharing a dedicated computer.
-  if (computer.state === "suspending") throw new ComputerBusyError();
+  if (isLiveSuspending(computer)) throw new ComputerBusyError();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + EXECUTION_LEASE_MS);
   const [reclaimed] = await prisma.computerExecutionLease.updateManyAndReturn({
@@ -452,9 +478,9 @@ async function validateAcquiredComputerLease(
 ): Promise<ComputerExecutionLease> {
   const computer = await prisma.computer.findUniqueOrThrow({
     where: { id: lease.computerId },
-    select: { state: true },
+    select: { state: true, updatedAt: true },
   });
-  if (computer.state !== "suspending") return lease;
+  if (!isLiveSuspending(computer)) return lease;
   await releaseComputerExecutionLease(prisma, lease);
   throw new ComputerBusyError();
 }
@@ -563,20 +589,21 @@ export async function replaceComputer(
   if (hasActiveComputerControl(existing)) {
     throw new ComputerBusyError();
   }
-  if (existing.state === "suspending") {
+  // Reset is the explicit recovery path for a hung suspend; Recover and Update still refuse.
+  if (existing.state === "suspending" && mode !== "reset") {
     throw new ComputerBusyError();
   }
-  // Allow Reset on a stale "booting" row unless another bot still holds a live lease.
+  // Allow Reset on a stale "booting" or "suspending" row unless another bot holds a lease.
   // Dedicated computers never create an execution-lease row, so the foreign-lease check alone
   // cannot see an in-flight dedicated boot. Refuse claim stamps younger than an execution-lease
   // TTL (not merely the boot-wait poll) so a slow dedicated provision is not destroyed mid-flight.
   // Also refuse while a run still uses the computer — before claiming suspending — so rollback
   // cannot bump @updatedAt under an in-flight boot's activation fence.
-  if (existing.state === "booting") {
+  if (existing.state === "booting" || existing.state === "suspending") {
     if (await hasForeignExecutionLease(deps.prisma, computerId, botId)) {
       throw new ComputerBusyError();
     }
-    if (Date.now() - existing.updatedAt.getTime() < BOOT_CLAIM_STALE_MS) {
+    if (!isAbandonedLifecycleClaim(existing.updatedAt)) {
       throw new ComputerBusyError();
     }
     const activeBootRun = await deps.prisma.run.findFirst({
@@ -591,12 +618,15 @@ export async function replaceComputer(
 
   const previousState = existing.state;
   const now = new Date();
+  const claimStamp = new Date(Math.max(now.getTime(), existing.updatedAt.getTime() + 1));
   const claimed = await deps.prisma.computer.updateMany({
     where: {
       id: computerId,
       state: previousState,
-      // CAS the booting stamp so a concurrent live claim cannot be overwritten by Reset.
-      ...(previousState === "booting" ? { updatedAt: existing.updatedAt } : {}),
+      // CAS transition stamps so a concurrent live owner cannot be overwritten by Reset.
+      ...(previousState === "booting" || previousState === "suspending"
+        ? { updatedAt: existing.updatedAt }
+        : {}),
       executionLeases: { none: { botId: { not: botId }, expiresAt: { gt: now } } },
       OR: [
         { controlHolder: { not: "user" } },
@@ -605,7 +635,7 @@ export async function replaceComputer(
         { controlLeaseExpiresAt: { lte: now } },
       ],
     },
-    data: { state: "suspending" },
+    data: { state: "suspending", updatedAt: claimStamp },
   });
   if (claimed.count !== 1) throw new ComputerBusyError();
   // Re-check after the claim in case a run started between the pre-check and CAS.
@@ -618,20 +648,26 @@ export async function replaceComputer(
   });
   if (activeRun) {
     await deps.prisma.computer.updateMany({
-      where: { id: computerId, state: "suspending" },
-      data: { state: previousState },
+      where: {
+        id: computerId,
+        state: "suspending",
+        updatedAt: claimStamp,
+        providerRef: existing.providerRef,
+        kind: existing.kind,
+        machineId: existing.machineId ?? null,
+      },
+      data: { state: previousState, updatedAt: claimStamp },
     });
     throw new ComputerBusyError();
   }
 
   const oldRef = existing.providerRef ? toComputerRef(existing) : null;
-  // The suspending claim is the ownership token. Teardown writes must CAS on the identity
-  // observed at entry so a concurrent boot/reconcile that legitimately moved the row is
-  // never clobbered. Not updatedAt: checkpointAndRecordComputerWorkspace advances the stamp
-  // mid-replacement, so an entry-stamp fence would false-fail our own write.
+  // The claim stamp and provider identity are both ownership tokens. Preserve the fork's
+  // machine placement fence while preventing stale stop/error writes from clobbering a winner.
   const suspendingOwnership = {
     id: computerId,
     state: "suspending",
+    updatedAt: claimStamp,
     providerRef: existing.providerRef,
     kind: existing.kind,
     machineId: existing.machineId ?? null,
@@ -640,9 +676,20 @@ export async function replaceComputer(
     // Retry the checkpoint even after an earlier update left the row in error.
     if (oldRef && (mode === "update" || (existing.state === "running" && mode === "recover"))) {
       try {
-        await checkpointAndRecordComputerWorkspace(deps, existing, oldRef, context);
+        const revision = await checkpointComputerWorkspace(
+          deps.home,
+          deps.sandbox,
+          existing.homeKey,
+          oldRef,
+          context,
+        );
+        const recorded = await deps.prisma.computer.updateMany({
+          where: suspendingOwnership,
+          data: { homeRevision: revision, updatedAt: claimStamp },
+        });
+        if (recorded.count !== 1) throw new ComputerBusyError();
       } catch (error) {
-        if (mode !== "recover") throw error;
+        if (mode !== "recover" || error instanceof ComputerBusyError) throw error;
       }
     }
     if (oldRef) {
@@ -663,6 +710,7 @@ export async function replaceComputer(
         controlLeaseExpiresAt: null,
         controlBotId: null,
         controlRunId: null,
+        updatedAt: claimStamp,
       },
     });
     if (stopped.count !== 1) throw new ComputerBusyError();

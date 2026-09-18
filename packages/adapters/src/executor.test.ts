@@ -978,6 +978,7 @@ description: Prepare standup notes
           updateMany: vi.fn(async () => ({ count: 1 })),
         },
         computer: {
+          findUnique: vi.fn(async () => null),
           findUniqueOrThrow: vi.fn(async () => ({ scope: "private", state: "running" })),
         },
         attempt: {

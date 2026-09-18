@@ -104,6 +104,9 @@ export async function selectSpace(id: string) {
   const previousSpaceId = cachedSpaceId;
   cachedSpaceId = id;
   bumpSpaceSelectionGeneration();
+  // Generation ownership distinguishes A→B→A from "we still own this claim":
+  // an ID-only check would treat a later same-id selection as ours.
+  const claimGeneration = spaceSelectionGeneration;
   try {
     await SecureStore.setItemAsync(SPACE_KEY, id);
     // Our write may have landed stale behind a newer overlapping selection's
@@ -120,7 +123,7 @@ export async function selectSpace(id: string) {
     // have persisted the rolled-back id after reading it, which would leave
     // restart opening a Space the live session is not using. A newer
     // overlapping selection owns both by now, so only heal a claim we hold.
-    if (cachedSpaceId === id) {
+    if (cachedSpaceId === id && spaceSelectionGeneration === claimGeneration) {
       cachedSpaceId = previousSpaceId;
       bumpSpaceSelectionGeneration();
       if (previousSpaceId) await writeStoredValue(SPACE_KEY, previousSpaceId);
@@ -555,12 +558,21 @@ export async function rpc<T>(
     skipSpaceAuthRecovery?: boolean;
   } = {},
 ): Promise<T> {
+  // Abort with an explicit reason so every consumer of the signal (the fetch, the bounded body
+  // read, and nested recovery calls that share this signal) reports the same cause.
   const controller = new AbortController();
-  const abort = () => controller.abort();
-  if (options.signal?.aborted) abort();
-  else options.signal?.addEventListener("abort", abort, { once: true });
+  const cancel = () => controller.abort(options.signal?.reason ?? new Error("Request canceled"));
+  if (options.signal?.aborted) cancel();
+  else options.signal?.addEventListener("abort", cancel, { once: true });
   const timer =
-    options.timeoutMs === null ? undefined : setTimeout(abort, options.timeoutMs ?? RPC_TIMEOUT_MS);
+    options.timeoutMs === null
+      ? undefined
+      : setTimeout(
+          () => controller.abort(new Error("Request timed out")),
+          options.timeoutMs ?? RPC_TIMEOUT_MS,
+        );
+  const abortReason = (error: unknown) =>
+    controller.signal.aborted ? (controller.signal.reason ?? error) : error;
   // Bind recovery to the Space + selection epoch this request was sent with:
   // a 401 arriving after the user switched Spaces — including A → B → A —
   // belongs to a stale request and must not touch the current selection.
@@ -568,21 +580,30 @@ export async function rpc<T>(
   const requestHeaders = options.requestContext?.headers ?? (await authHeaders());
   const requestSpaceId = requestHeaders["x-rakazo-space-id"];
   try {
-    const res = await fetch(`${options.requestContext?.apiBase ?? currentApiBase()}/rpc/${proc}`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        origin: "rakazo://",
-        ...requestHeaders,
-      },
-      body: JSON.stringify({ json: body }),
-      signal: controller.signal,
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${options.requestContext?.apiBase ?? currentApiBase()}/rpc/${proc}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "rakazo://",
+          ...requestHeaders,
+        },
+        body: JSON.stringify({ json: body }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      // Native fetch exposes implementation details for aborts; report the deadline or caller's
+      // cancellation reason instead.
+      throw abortReason(error);
+    }
     const parsed = await readBoundedJsonResponse<{ json?: T; error?: { message?: string } }>(
       res,
       MAX_MOBILE_RPC_RESPONSE_BYTES,
       controller.signal,
-    );
+    ).catch((error: unknown) => {
+      throw abortReason(error);
+    });
     if (!res.ok || parsed.error) {
       const message = parsed.error?.message ?? `rpc ${proc} failed`;
       const unauthorized = res.status === 401 || /unauthorized/i.test(message);
@@ -601,7 +622,15 @@ export async function rpc<T>(
         await clearStoredValue(SPACE_KEY);
         await clearStoredValue(SPACE_ROLLBACK_KEY);
         const reselected = selectedSpaceId();
-        if (reselected) await writeStoredValue(SPACE_KEY, reselected);
+        if (!reselected) return;
+        // Own the reconcile write by generation: a newer selection that persists between snapshot
+        // and write must not be overwritten by this stale id, and a stale landing heals to live.
+        const writeGeneration = spaceSelectionGeneration;
+        await writeStoredValue(SPACE_KEY, reselected);
+        if (spaceSelectionGeneration !== writeGeneration) {
+          const live = selectedSpaceId();
+          if (live) await writeStoredValue(SPACE_KEY, live);
+        }
       };
       if (
         unauthorized &&
@@ -647,7 +676,7 @@ export async function rpc<T>(
     return parsed.json as T;
   } finally {
     if (timer) clearTimeout(timer);
-    options.signal?.removeEventListener("abort", abort);
+    options.signal?.removeEventListener("abort", cancel);
   }
 }
 

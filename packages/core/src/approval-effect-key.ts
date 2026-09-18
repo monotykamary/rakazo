@@ -44,6 +44,19 @@ export function stableJsonValue(value: unknown): string {
   return serialize(value);
 }
 
+/** Scope an invocation to its run, tool and arguments without collapsing later identical calls.
+ * Managed Pi sessions resume their persisted history; an occurrence counter reset on every
+ * continuation would incorrectly reuse effects from earlier turns. */
+export function toolEffectIdempotencyKey(
+  runId: string,
+  toolName: string,
+  executionId: string,
+  args: Record<string, unknown>,
+): string {
+  const digest = createHash("sha256").update(stableJsonValue(args)).digest("hex");
+  return `${runId}:${toolName}:${executionId}:${digest}`;
+}
+
 export function approvalEffectKey(
   runId: string,
   toolName: string,

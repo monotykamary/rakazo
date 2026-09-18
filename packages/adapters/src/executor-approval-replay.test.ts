@@ -91,6 +91,29 @@ describe("executor approval replay", () => {
     expect(continuation).not.toContain("__rakazoCatalogTool");
   });
 
+  it("continues a legacy MCP approval through the renamed exposed wrapper", () => {
+    const continuation = buildApprovalContinuation(
+      [
+        {
+          kind: "mcp__demo__send_message",
+          request: catalogApprovalRequest(
+            "mcp_execute_tool",
+            {
+              id: "server-1:send_message",
+              arguments: { text: "approved exactly" },
+            },
+            "__rakazoCatalogTool",
+          ),
+        },
+      ],
+      JSON.stringify,
+      { exposedToolNames: new Set(["connectors_execute_tool"]) },
+    );
+    expect(continuation).toContain(
+      'connectors_execute_tool: {"id":"server-1:send_message","arguments":{"text":"approved exactly"}}',
+    );
+    expect(continuation).not.toContain("mcp_execute_tool:");
+  });
   it("renders a direct tool continuation when a catalog approval's wrapper is no longer exposed", () => {
     const request = catalogApprovalRequest(
       "installed_execute_tool",

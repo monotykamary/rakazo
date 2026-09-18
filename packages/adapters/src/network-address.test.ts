@@ -1,5 +1,12 @@
+import dns from "node:dns";
 import { describe, expect, it } from "vitest";
-import { isCloudMetadataAddress, isLinkLocalAddress, isPrivateAddress } from "./network-address.js";
+import {
+  isCloudMetadataAddress,
+  isLinkLocalAddress,
+  isPrivateAddress,
+  isTailscaleAddress,
+  withPinnedDnsLookup,
+} from "./network-address.js";
 
 describe("network address classification", () => {
   it.each([
@@ -71,4 +78,44 @@ describe("network address classification", () => {
       expect(isCloudMetadataAddress(address)).toBe(false);
     },
   );
+
+  it.each(["100.64.0.1", "100.127.255.254", "fd7a:115c:a1e0::1"])(
+    "classifies %s as a Tailscale address",
+    (address) => expect(isTailscaleAddress(address)).toBe(true),
+  );
+
+  it.each(["100.63.255.255", "100.128.0.1", "fd7a:115c:a1df::1", "fd00::1"])(
+    "does not classify %s as a Tailscale address",
+    (address) => expect(isTailscaleAddress(address)).toBe(false),
+  );
+});
+
+describe("pinned dns lookup", () => {
+  it("keeps concurrent hostname pins isolated", async () => {
+    const lookup = async (hostname: string) => dns.promises.lookup(hostname);
+    const [first, second] = await Promise.all([
+      withPinnedDnsLookup("first.example.test", [{ address: "203.0.113.10", family: 4 }], () =>
+        lookup("first.example.test"),
+      ),
+      withPinnedDnsLookup(
+        "second.example.test",
+        [{ address: "2606:4700:4700::1111", family: 6 }],
+        () => lookup("second.example.test"),
+      ),
+    ]);
+    expect(first).toEqual({ address: "203.0.113.10", family: 4 });
+    expect(second).toEqual({ address: "2606:4700:4700::1111", family: 6 });
+  });
+
+  it("fails a requested family that was not validated", async () => {
+    await withPinnedDnsLookup(
+      "connectors.example.test",
+      [{ address: "203.0.113.10", family: 4 }],
+      async () => {
+        await expect(dns.promises.lookup("connectors.example.test", { family: 6 })).rejects.toThrow(
+          "Endpoint did not resolve to an address",
+        );
+      },
+    );
+  });
 });

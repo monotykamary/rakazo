@@ -68,12 +68,14 @@ import {
 } from "@rakazo/adapters";
 import { blockedAuthPaths, createAuth } from "@rakazo/auth";
 import { signupPolicyFromEnv } from "@rakazo/core";
+import type { Pool, PrismaClient } from "@rakazo/db";
 import {
   createDb,
+  createPool,
   createPrismaMachineStore,
   createThreadEvents,
   machineScopeFromTunnelRequest,
-  type PrismaClient,
+  parsePositiveInteger,
   provisionMessagingIdentity,
   requireMembership,
   sweepExpiredMachineCommands,
@@ -93,13 +95,13 @@ import { cors } from "hono/cors";
 import { type AppEnv, loadEnv } from "./env.js";
 import { handleMachineEgressUpgrade, loadOfficeEgressSnapshot } from "./machine-egress.js";
 import { mountMachineRunnerRoutes } from "./machines.js";
-import { mountOfficeReplicaRoutes } from "./office-replica.js";
 import {
   createMessagingInboundHandler,
   teamChatSenderCanWakeMessageRoutines,
   wakeMessageRoutines,
 } from "./messaging-inbound.js";
 import { mountMessagingWebhookRoutes } from "./messaging-webhook.js";
+import { mountOfficeReplicaRoutes } from "./office-replica.js";
 import { mountApiRequestBodyLimits } from "./request-body-limit.js";
 import { createRouter } from "./router.js";
 import { mountServicePreviewRoutes } from "./services.js";
@@ -199,10 +201,13 @@ export async function createApp(
   installLogger(logger);
   const created = prismaOverride
     ? { prisma: prismaOverride, pool: undefined }
-    : createDb(env.databaseUrl);
+    : createDb(env.databaseUrl, {
+        poolMax: parsePositiveInteger(process.env.DB_POOL_MAX, 4),
+        applicationName: "rakazo-api",
+        onConnectionError: (error) => logger.error("PostgreSQL pool connection error", error),
+      });
   const { prisma } = created;
   const officeMovePool = created.pool ? createOfficeMovePool(env.databaseUrl) : undefined;
-  created.pool?.on("error", () => undefined);
   const realtime =
     realtimeOverride ??
     (created.pool
@@ -242,7 +247,23 @@ export async function createApp(
 
   const jobKind = env.wakeupDriver;
   const inMemoryJobs = jobKind === "memory" ? new InMemoryJobQueue() : undefined;
-  const jobs = inMemoryJobs ?? new GraphileJobPublisher(env.databaseUrl);
+  let ownedJobPool: Pool | undefined;
+  if (!inMemoryJobs && !created.pool) {
+    ownedJobPool = createPool(env.databaseUrl, {
+      poolMax: parsePositiveInteger(process.env.DB_POOL_MAX, 4),
+      applicationName: "rakazo-api-jobs",
+      onConnectionError: (error) => logger.error("PostgreSQL job pool connection error", error),
+    });
+  }
+  const jobPool = created.pool ?? ownedJobPool;
+  const jobs = inMemoryJobs
+    ? inMemoryJobs
+    : new GraphileJobPublisher(
+        jobPool ??
+          (() => {
+            throw new Error("Graphile job publisher requires a PostgreSQL pool");
+          })(),
+      );
   const machines = createMachinesService({ store: createPrismaMachineStore(prisma) });
   const egress = createMachineEgressHub();
   const fallbackSandbox: SandboxProvider =
@@ -913,6 +934,7 @@ export async function createApp(
       await piModels?.close?.().catch(() => undefined);
       await prisma.$disconnect().catch(() => undefined);
       await created.pool?.end().catch(() => undefined);
+      await ownedJobPool?.end().catch(() => undefined);
       await logger.flush({ timeoutMs: 2_000 });
     },
   };

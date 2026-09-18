@@ -7,8 +7,12 @@ import {
   approvedCatalogReplay,
   approvedReplayArgs,
   boundDirectApprovalRequest,
+  catalogApprovalConnectorId,
   catalogApprovalDetails,
+  catalogApprovalMatchesLiveRoute,
   catalogApprovalRequest,
+  catalogExecuteToolName,
+  catalogToolPrefix,
   claimApprovedEffect,
   claimIntendedEffect,
   completeExternalEffect,
@@ -111,6 +115,20 @@ describe("approved effect replay", () => {
     expect(approvedCatalogReplay(queue, "installed_execute_tool", marker, false)).toEqual({});
     expect(approvedCatalogReplay(queue, "installed_execute_tool", marker, true)).toEqual({
       args: { id: "install-A:installed_execute_tool", arguments: { text: "approved" } },
+    });
+  });
+
+  it("replays a persisted legacy MCP wrapper through the renamed wrapper", () => {
+    const marker = "__rakazoCatalogTool";
+    const approved = catalogApprovalRequest(
+      "mcp_execute_tool",
+      { id: "server-1:send", arguments: { text: "approved" } },
+      marker,
+    );
+    const queue = createApprovedEffectReplayQueue([{ kind: "mcp__demo__send", request: approved }]);
+
+    expect(approvedCatalogReplay(queue, "connectors_execute_tool", marker, true)).toEqual({
+      args: { id: "server-1:send", arguments: { text: "approved" } },
     });
   });
 
@@ -246,6 +264,29 @@ describe("approved effect replay", () => {
       text: "approved exactly",
       mode: "fast",
     });
+  });
+});
+
+describe("catalog wrapper names", () => {
+  it("maps only MCP wrappers to connectors", () => {
+    expect(catalogToolPrefix("mcp")).toBe("connectors");
+    expect(catalogToolPrefix("installed")).toBe("installed");
+    expect(catalogExecuteToolName("mcp")).toBe("connectors_execute_tool");
+    expect(catalogExecuteToolName("installed")).toBe("installed_execute_tool");
+    expect(catalogApprovalConnectorId("connectors_execute_tool")).toBe("mcp");
+    expect(catalogApprovalConnectorId("mcp_execute_tool")).toBe("mcp");
+  });
+
+  it("matches the renamed wrapper to its live MCP route", () => {
+    expect(
+      catalogApprovalMatchesLiveRoute(
+        {
+          toolName: "connectors_execute_tool",
+          args: { id: "server-1:send", arguments: { text: "approved" } },
+        },
+        { connectorId: "mcp", resourceId: "server-1", toolName: "send" },
+      ),
+    ).toBe(true);
   });
 });
 

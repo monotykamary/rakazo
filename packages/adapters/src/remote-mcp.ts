@@ -1,5 +1,6 @@
 import { lookup } from "node:dns/promises";
-import { isIP, type LookupFunction } from "node:net";
+import type { LookupFunction } from "node:net";
+import { isIP } from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { ConnectorTool } from "@rakazo/adapter-kit";
@@ -9,9 +10,12 @@ import {
   createAddressCheckedLookup,
   isCloudMetadataAddress,
   isPrivateAddress,
+  isTailscaleAddress,
   type ResolvedAddress,
   type ResolveHostname,
+  withPinnedDnsLookup,
 } from "./network-address.js";
+import { dispatcherFetch } from "./undici-fetch.js";
 
 const MAX_MCP_TOOLS = 250;
 const MAX_MCP_PAGES = 20;
@@ -93,7 +97,7 @@ async function withRemoteMcpClient<T>(
   );
   const signal = combineSignals(options.signal, AbortSignal.timeout(MCP_TIMEOUT_MS));
   const safeFetch = createSafeRemoteFetch(
-    options.fetch ?? globalThis.fetch,
+    options.fetch,
     options.resolveHostname ?? resolveHostname,
   );
   const transport = new StreamableHTTPClientTransport(endpoint, {
@@ -118,6 +122,13 @@ export async function assertSafeRemoteUrl(
   value: string,
   resolve: ResolveHostname = resolveHostname,
 ): Promise<URL> {
+  return (await inspectSafeRemoteUrl(value, resolve)).url;
+}
+
+async function inspectSafeRemoteUrl(
+  value: string,
+  resolve: ResolveHostname,
+): Promise<{ url: URL; addresses: ResolvedAddress[] }> {
   let url: URL;
   try {
     url = new URL(value);
@@ -129,25 +140,48 @@ export async function assertSafeRemoteUrl(
   if (url.hash) throw new Error("Connector URL must not contain a fragment");
   const hostname = url.hostname.replace(/^\[|\]$/g, "");
   if (isPrivateHostname(hostname)) throw new Error("Connector URL targets a private host");
-  assertPublicAddresses(await resolve(hostname), hostname);
-  return url;
+  const addresses = await resolve(hostname);
+  assertPublicAddresses(addresses, hostname);
+  return { url, addresses };
+}
+
+const nodeFetch = globalThis.fetch;
+
+function requestInitWithHost(url: URL, init: RequestInit): RequestInit {
+  const headers = new Headers(init.headers);
+  headers.set("host", url.host);
+  return { ...init, headers };
 }
 
 export function createSafeRemoteFetch(
-  baseFetch: typeof globalThis.fetch = globalThis.fetch,
+  baseFetch?: typeof globalThis.fetch,
   resolve: ResolveHostname = resolveHostname,
 ): SafeRemoteFetch {
   const dispatcher = new Agent({ connect: { lookup: createSafeLookup(resolve) } });
+  const usePackageFetch =
+    baseFetch == null || baseFetch === nodeFetch || baseFetch === dispatcherFetch;
   const safeFetch = async (input: string | URL | Request, init?: RequestInit) => {
     if (typeof input !== "string" && !(input instanceof URL)) {
       throw new Error("Connector fetch requires a URL, not a Request");
     }
-    const url = await assertSafeRemoteUrl(String(input), resolve);
-    const response = await baseFetch(url, {
-      ...init,
-      redirect: "manual",
-      dispatcher,
-    } as RequestInit & { dispatcher: Agent });
+    const { url, addresses } = await inspectSafeRemoteUrl(String(input), resolve);
+    let response: Response;
+    try {
+      const requestInit = { ...init, redirect: "manual" as const };
+      response = usePackageFetch
+        ? await dispatcherFetch(url, {
+            ...requestInit,
+            dispatcher,
+          } as RequestInit & { dispatcher: Agent })
+        : await withPinnedDnsLookup(url.hostname, addresses, () =>
+            baseFetch!(url, requestInitWithHost(url, requestInit)),
+          );
+    } catch (error) {
+      const detail = transportFailureDetail(error);
+      throw new Error(`Could not reach ${url.host}${detail ? `: ${detail}` : ""}`, {
+        cause: error,
+      });
+    }
     if (response.status >= 300 && response.status < 400) {
       throw new Error("Connector redirects are not allowed");
     }
@@ -158,6 +192,22 @@ export function createSafeRemoteFetch(
   return result;
 }
 
+const MAX_CAUSE_DEPTH = 5;
+
+function transportFailureDetail(error: unknown, depth = 0): string | undefined {
+  if (depth >= MAX_CAUSE_DEPTH || !(error instanceof Error)) return undefined;
+  if (error instanceof AggregateError) {
+    for (const inner of error.errors) {
+      const detail = transportFailureDetail(inner, depth + 1);
+      if (detail) return detail;
+    }
+  }
+  return (
+    transportFailureDetail(error.cause, depth + 1) ??
+    (error.message === "fetch failed" ? undefined : error.message)
+  );
+}
+
 export function createSafeLookup(resolve: ResolveHostname = resolveHostname): LookupFunction {
   return createAddressCheckedLookup(resolve, assertPublicAddresses);
 }
@@ -166,16 +216,6 @@ export function createSafeLookup(resolve: ResolveHostname = resolveHostname): Lo
 function isTailscaleMagicDnsHostname(hostname: string): boolean {
   const normalized = hostname.toLowerCase().replace(/\.$/, "");
   return normalized === "ts.net" || normalized.endsWith(".ts.net");
-}
-
-/** Tailscale assigns CGNAT 100.64.0.0/10; MagicDNS may resolve there. */
-function isTailscaleCgnatAddress(address: string): boolean {
-  const value = address.toLowerCase().replace(/^\[|\]$/g, "");
-  const mapped = value.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
-  const ipv4 = mapped ?? (isIP(value) === 4 ? value : undefined);
-  if (!ipv4) return false;
-  const [a, b] = ipv4.split(".").map(Number);
-  return a === 100 && b != null && b >= 64 && b <= 127;
 }
 
 function isPrivateHostname(hostname: string): boolean {
@@ -200,8 +240,8 @@ function assertPublicAddresses(addresses: ResolvedAddress[], hostname?: string):
     addresses.some((entry) => {
       if (isCloudMetadataAddress(entry.address)) return true;
       if (!isPrivateAddress(entry.address)) return false;
-      // Allow only Tailscale CGNAT for MagicDNS; keep other private ranges blocked.
-      return !(magicDns && isTailscaleCgnatAddress(entry.address));
+      // Allow only Tailscale ranges for MagicDNS; keep other private ranges blocked.
+      return !(magicDns && isTailscaleAddress(entry.address));
     })
   ) {
     throw new Error("Connector URL resolves to a private address");

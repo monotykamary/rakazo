@@ -1,13 +1,70 @@
-import { isIP, type LookupFunction } from "node:net";
+import { AsyncLocalStorage } from "node:async_hooks";
+import dns from "node:dns";
+import type { LookupFunction } from "node:net";
+import { isIP } from "node:net";
 
 export type ResolvedAddress = { address: string; family: number };
 export type ResolveHostname = (hostname: string) => Promise<ResolvedAddress[]>;
+
+type PinnedDns = { hostname: string; addresses: ResolvedAddress[] };
+
+const pinnedDns = new AsyncLocalStorage<PinnedDns>();
+let dnsPinInstalled = false;
 
 const CLOUD_METADATA_IPV4 = new Set([
   ipv4ToNumber("169.254.169.254"),
   ipv4ToNumber("100.100.100.200"),
 ]);
 const AWS_IMDS_IPV6 = 0xfd000ec2000000000000000000000254n;
+/** fd7a:115c:a1e0::/48 — the Tailscale IPv6 range. */
+const TAILSCALE_ULA_PREFIX = 0xfd7a115ca1e0n;
+
+function normalizeLookupHostname(hostname: string): string {
+  return hostname.replace(/^\[|\]$/g, "").toLowerCase();
+}
+
+function familyNumber(family: unknown): number | undefined {
+  if (family === "IPv4") return 4;
+  if (family === "IPv6") return 6;
+  return typeof family === "number" ? family : undefined;
+}
+
+function lookupOptions(options: unknown): { all?: boolean; family?: number } {
+  if (options == null || typeof options === "function") return {};
+  if (typeof options === "number") return { family: options };
+  if (typeof options === "object") {
+    const record = options as { all?: boolean; family?: unknown };
+    return { all: record.all, family: familyNumber(record.family) };
+  }
+  return {};
+}
+
+function selectLookupAddress(
+  addresses: ResolvedAddress[],
+  options: { all?: boolean; family?: number },
+): { all: true; addresses: ResolvedAddress[] } | { all: false; address: string; family: number } {
+  const requestedFamily = typeof options.family === "number" ? options.family : 0;
+  const candidates = addresses.filter(
+    (entry) => requestedFamily === 0 || entry.family === requestedFamily,
+  );
+  if (options.all) {
+    if (candidates.length === 0) throw new Error("Endpoint did not resolve to an address");
+    return { all: true, addresses: candidates };
+  }
+  const selected = candidates[0];
+  if (!selected) throw new Error("Endpoint did not resolve to an address");
+  return { all: false, address: selected.address, family: selected.family };
+}
+
+function deliverLookup(
+  addresses: ResolvedAddress[],
+  options: { all?: boolean; family?: number },
+  callback: (error: Error | null, address: string | ResolvedAddress[], family?: number) => void,
+): void {
+  const result = selectLookupAddress(addresses, options);
+  if (result.all) callback(null, result.addresses);
+  else callback(null, result.address, result.family);
+}
 
 export function createAddressCheckedLookup(
   resolve: ResolveHostname,
@@ -17,21 +74,64 @@ export function createAddressCheckedLookup(
     void resolve(hostname)
       .then((addresses) => {
         validate(addresses, hostname);
-        if (options.all) {
-          callback(null, addresses);
-          return;
-        }
-        const requestedFamily = typeof options.family === "number" ? options.family : 0;
-        const selected =
-          addresses.find((entry) => requestedFamily === 0 || entry.family === requestedFamily) ??
-          addresses[0];
-        if (!selected) throw new Error("Endpoint did not resolve to an address");
-        callback(null, selected.address, selected.family);
+        deliverLookup(addresses, lookupOptions(options), callback);
       })
       .catch((error: unknown) =>
         callback(error instanceof Error ? error : new Error(String(error)), "", 0),
       );
   };
+}
+
+function pinnedAddressesFor(hostname: string): ResolvedAddress[] | undefined {
+  const pin = pinnedDns.getStore();
+  if (!pin) return undefined;
+  if (normalizeLookupHostname(hostname) !== normalizeLookupHostname(pin.hostname)) return undefined;
+  return pin.addresses;
+}
+
+function installDnsPin(): void {
+  if (dnsPinInstalled) return;
+  dnsPinInstalled = true;
+  const originalLookup = dns.lookup.bind(dns);
+  const originalPromisesLookup = dns.promises.lookup.bind(dns.promises);
+
+  dns.lookup = ((hostname: string, options: unknown, callback?: unknown) => {
+    const cb = typeof options === "function" ? options : callback;
+    const pinned = pinnedAddressesFor(hostname);
+    if (pinned && typeof cb === "function") {
+      try {
+        deliverLookup(
+          pinned,
+          lookupOptions(options),
+          cb as (error: Error | null, address: string | ResolvedAddress[], family?: number) => void,
+        );
+      } catch (error) {
+        cb(error instanceof Error ? error : new Error(String(error)), "", 0);
+      }
+      return;
+    }
+    return originalLookup(hostname, options as never, callback as never);
+  }) as typeof dns.lookup;
+
+  dns.promises.lookup = (async (hostname: string, options?: unknown) => {
+    const pinned = pinnedAddressesFor(hostname);
+    if (pinned) {
+      const result = selectLookupAddress(pinned, lookupOptions(options));
+      return result.all ? result.addresses : { address: result.address, family: result.family };
+    }
+    return originalPromisesLookup(hostname, options as never);
+  }) as typeof dns.promises.lookup;
+}
+
+/** Pin DNS within one async context so injected fetches retain TLS/SNI while dialing only an
+ * already validated address. Concurrent calls and unrelated hostnames keep their own lookup. */
+export async function withPinnedDnsLookup<T>(
+  hostname: string,
+  addresses: ResolvedAddress[],
+  run: () => Promise<T>,
+): Promise<T> {
+  installDnsPin();
+  return pinnedDns.run({ hostname, addresses }, run);
 }
 
 export function isPrivateAddress(address: string): boolean {
@@ -78,6 +178,19 @@ export function isCloudMetadataAddress(address: string): boolean {
   if (ipv6 === AWS_IMDS_IPV6) return true;
   const embeddedIpv4 = getEmbeddedIpv4Number(ipv6);
   return embeddedIpv4 !== undefined && isCloudMetadataIpv4Number(embeddedIpv4);
+}
+
+/** Tailscale CGNAT 100.64.0.0/10 and ULA fd7a:115c:a1e0::/48. */
+export function isTailscaleAddress(address: string): boolean {
+  const value = address.toLowerCase().replace(/^\[|\]$/g, "");
+  const mapped = value.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
+  const ipv4 = mapped ?? (isIP(value) === 4 ? value : undefined);
+  if (ipv4) {
+    const [a, b] = ipv4.split(".").map(Number);
+    return a === 100 && b != null && b >= 64 && b <= 127;
+  }
+  const ipv6 = parseIpv6(value);
+  return ipv6 !== undefined && ipv6 >> 80n === TAILSCALE_ULA_PREFIX;
 }
 
 export function isLinkLocalAddress(address: string): boolean {

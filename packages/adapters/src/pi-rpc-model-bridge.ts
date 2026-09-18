@@ -4,7 +4,12 @@ import { ModelRoutingBroker } from "./model-routing-broker.js";
 import { record, string } from "./pi-rpc-protocol.js";
 import type { RunAuthority } from "./pi-rpc-tool-bridge.js";
 import type { JsonPeer } from "./pi-rpc-transport.js";
-import { conversationSessionId, modelsForRequest, reliableStreamOptions } from "./pi-runtime.js";
+import {
+  billedPromptTokens,
+  conversationSessionId,
+  modelsForRequest,
+  reliableStreamOptions,
+} from "./pi-runtime.js";
 
 export class ModelBridge {
   private readonly active = new Map<string, AbortController>();
@@ -124,8 +129,7 @@ export class ModelBridge {
           if (event.type === "done" && event.message.usage) {
             this.emit({
               type: "usage",
-              inputTokens: event.message.usage.input,
-              outputTokens: event.message.usage.output,
+              ...billedPromptTokens(event.message.usage),
               provider: vision.model.provider,
               model: vision.model.id,
             });
@@ -143,8 +147,7 @@ export class ModelBridge {
           if (usage)
             this.emit({
               type: "usage",
-              inputTokens: usage.input,
-              outputTokens: usage.output,
+              ...billedPromptTokens(usage),
               provider: target.provider,
               model: target.modelId,
             });

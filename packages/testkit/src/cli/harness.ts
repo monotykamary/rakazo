@@ -103,6 +103,7 @@ async function main() {
       const suites = [
         "packages/testkit/src/pi-offline.postgres.test.ts",
         "packages/testkit/src/atomic-file-edit.postgres.test.ts",
+        "packages/testkit/src/inline-drafts.postgres.test.ts",
         "packages/testkit/src/executor-runtime.postgres.test.ts",
         "packages/testkit/src/dispatched-work.postgres.test.ts",
         "packages/db/src/premove-queue.postgres.test.ts",

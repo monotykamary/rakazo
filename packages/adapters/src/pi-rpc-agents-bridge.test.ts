@@ -13,9 +13,9 @@ describe("private native agents dispatcher", () => {
     await expect(bridge.invoke({ ...input, callId: "two", callerId: "foreign" })).rejects.toThrow(
       "Invalid",
     );
-    await expect(bridge.invoke({ ...input, callId: "three", action: "create" })).rejects.toThrow(
-      "Unsupported",
-    );
+    await expect(
+      bridge.invoke({ ...input, callId: "three", action: "unsupported-action" }),
+    ).rejects.toThrow("Unsupported");
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 

@@ -1,9 +1,12 @@
 import {
   type OfficeReplicaJournalEntry,
-  officeReplicaLeaseOwner,
   OfficeReplicaStatusSchema,
+  officeReplicaLeaseOwner,
 } from "@rakazo/contracts";
-import { OfficeReplicaJournalError, verifyOfficeReplicaBatch } from "@rakazo/core";
+import {
+  OfficeReplicaJournalError,
+  verifyOfficeReplicaBatch,
+} from "@rakazo/core/node/office-replica";
 import type { PrismaClient } from "./client.js";
 import { withTransactionRetry } from "./transaction-retry.js";
 
@@ -21,32 +24,34 @@ export async function handoffOfficeReplica(
     leaseFence: number;
   },
 ) {
-  return withTransactionRetry(() => prisma.$transaction(async (tx) => {
-    const existing = await tx.officeReplica.findUnique({ where: { runId: input.runId } });
-    if (existing) {
-      if (existing.machineId !== input.machineId) {
-        throw new OfficeReplicaJournalError("Run already handed to another office");
+  return withTransactionRetry(() =>
+    prisma.$transaction(async (tx) => {
+      const existing = await tx.officeReplica.findUnique({ where: { runId: input.runId } });
+      if (existing) {
+        if (existing.machineId !== input.machineId) {
+          throw new OfficeReplicaJournalError("Run already handed to another office");
+        }
+        return existing;
       }
-      return existing;
-    }
-    const replica = await tx.officeReplica.create({
-      data: {
-        ...input,
-        status: "handing_off",
-        handedOffAt: new Date(),
-      },
-    });
-    await tx.run.updateMany({
-      where: { id: input.runId, spaceId: input.spaceId },
-      data: {
-        status: "running",
-        leaseOwner: officeReplicaLeaseOwner(replica.id),
-        leaseFence: input.leaseFence,
-        leaseExpiresAt: null,
-      },
-    });
-    return replica;
-  }));
+      const replica = await tx.officeReplica.create({
+        data: {
+          ...input,
+          status: "handing_off",
+          handedOffAt: new Date(),
+        },
+      });
+      await tx.run.updateMany({
+        where: { id: input.runId, spaceId: input.spaceId },
+        data: {
+          status: "running",
+          leaseOwner: officeReplicaLeaseOwner(replica.id),
+          leaseFence: input.leaseFence,
+          leaseExpiresAt: null,
+        },
+      });
+      return replica;
+    }),
+  );
 }
 
 export async function claimOfficeReplica(
@@ -88,10 +93,18 @@ export async function importOfficeReplicaJournal(
   if (replica.epoch !== input.epoch) {
     throw new OfficeReplicaJournalError("Office replica epoch mismatch");
   }
-  if (replica.status !== "owning" && replica.status !== "handing_off" && replica.status !== "returning") {
+  if (
+    replica.status !== "owning" &&
+    replica.status !== "handing_off" &&
+    replica.status !== "returning"
+  ) {
     throw new OfficeReplicaJournalError("Office replica is not accepting journal");
   }
-  const verified = verifyOfficeReplicaBatch(replica.journalHead, replica.journalCursor, input.entries);
+  const verified = verifyOfficeReplicaBatch(
+    replica.journalHead,
+    replica.journalCursor,
+    input.entries,
+  );
   for (const entry of input.entries) {
     if (entry.type === "event" || entry.type === "run_status" || entry.type === "effect") {
       await input.appendEvent(entry);
@@ -121,32 +134,38 @@ export async function returnOfficeReplica(
     error?: string;
   },
 ) {
-  return withTransactionRetry(() => prisma.$transaction(async (tx) => {
-    const replica = await tx.officeReplica.findFirst({
-      where: { id: input.replicaId, machineId: input.machineId, epoch: input.epoch },
-    });
-    if (!replica) throw new OfficeReplicaJournalError("Office replica not found");
-    const status = input.outcome === "completed" ? "imported" : "failed";
-    await tx.officeReplica.updateMany({
-      where: { id: replica.id },
-      data: {
-        status,
-        error: input.error ?? null,
-        importedAt: new Date(),
-      },
-    });
-    const runStatus =
-      input.outcome === "completed" ? "completed" : input.outcome === "cancelled" ? "cancelled" : "failed";
-    await tx.run.updateMany({
-      where: { id: replica.runId, leaseOwner: officeReplicaLeaseOwner(replica.id) },
-      data: {
-        status: runStatus,
-        leaseOwner: null,
-        leaseExpiresAt: null,
-        completedAt: new Date(),
-        ...(input.error ? { error: input.error } : {}),
-      },
-    });
-    return { status, runId: replica.runId };
-  }));
+  return withTransactionRetry(() =>
+    prisma.$transaction(async (tx) => {
+      const replica = await tx.officeReplica.findFirst({
+        where: { id: input.replicaId, machineId: input.machineId, epoch: input.epoch },
+      });
+      if (!replica) throw new OfficeReplicaJournalError("Office replica not found");
+      const status = input.outcome === "completed" ? "imported" : "failed";
+      await tx.officeReplica.updateMany({
+        where: { id: replica.id },
+        data: {
+          status,
+          error: input.error ?? null,
+          importedAt: new Date(),
+        },
+      });
+      const runStatus =
+        input.outcome === "completed"
+          ? "completed"
+          : input.outcome === "cancelled"
+            ? "cancelled"
+            : "failed";
+      await tx.run.updateMany({
+        where: { id: replica.runId, leaseOwner: officeReplicaLeaseOwner(replica.id) },
+        data: {
+          status: runStatus,
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          completedAt: new Date(),
+          ...(input.error ? { error: input.error } : {}),
+        },
+      });
+      return { status, runId: replica.runId };
+    }),
+  );
 }

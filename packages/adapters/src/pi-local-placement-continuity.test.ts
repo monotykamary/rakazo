@@ -162,7 +162,8 @@ describe("local Pi between-run placement continuity", () => {
     const command = await writeLocalPiEmulator(target);
     runtime = new LocalPiRuntime({ command, cwd: target, sessionDir: join(root, "sessions") });
     await expect(run(".", saved)).rejects.toThrow();
-    expect(await readLocalPiEmulatorLog(target)).toEqual([]);
+    // Compatibility probing is allowed, but no session or prompt may start.
+    expect(await readLocalPiEmulatorLog(target)).toEqual([{ type: "version" }]);
   });
 
   it("refuses a previous cwd replaced by a symlink", async () => {

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRunRequest, AgentRuntimeEvent } from "@rakazo/adapter-kit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { builtinAgentTools } from "./builtin-tools.js";
 import { LocalPiRuntime } from "./pi-local-runtime.js";
 import {
   readLocalPiEmulatorLog,
@@ -229,6 +230,7 @@ describe("LocalPiRuntime", () => {
     }));
     await writeLocalPiScenario(cwd, {
       tool: { name: "attach_file", args: { path: "report.txt" } },
+      usage: { input: 5, output: 2, cacheRead: 11, cacheWrite: 3, totalTokens: 21 },
     });
     const runtime = new LocalPiRuntime({ command, cwd, sessionDir });
     const events = await collect(
@@ -276,7 +278,7 @@ describe("LocalPiRuntime", () => {
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "usage",
-        inputTokens: 5,
+        inputTokens: 19,
         outputTokens: 2,
         provider: "offline",
         model: "offline-model",
@@ -320,6 +322,34 @@ describe("LocalPiRuntime", () => {
         parentExecutionId: expect.stringMatching(/fabric-run:/),
         status: "completed",
       }),
+    );
+  });
+
+  it("preserves request_secret credential and replace through local dispatch", async () => {
+    const tool = builtinAgentTools.find((entry) => entry.name === "request_secret");
+    if (!tool) throw new Error("missing request_secret");
+    const args = {
+      label: "Example token",
+      purpose: "api_key",
+      credential: {
+        name: "example_token",
+        origin: "https://api.example.test",
+        auth: { type: "header", name: "X-Api-Key" },
+      },
+      replace: true,
+    };
+    await writeLocalPiScenario(cwd, { tool: { name: "request_secret", args } });
+    const executeTool = vi.fn(async () => ({ ok: true }));
+    await collect(
+      new LocalPiRuntime({ command, cwd, sessionDir }),
+      request({ tools: [tool], executeTool }),
+    );
+    expect(executeTool).toHaveBeenCalledWith(
+      "request_secret",
+      args,
+      "run:tool-call-1",
+      undefined,
+      expect.any(AbortSignal),
     );
   });
 

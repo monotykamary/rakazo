@@ -9,6 +9,23 @@ export NPM_CONFIG_PREFIX="$AGENT_HOME/.local"
 export PIP_USER=1
 cd "$AGENT_HOME"
 
+# This script is PID 1. Without a handler, PID 1 ignores SIGTERM and `docker stop` waits its
+# full grace period before killing the container. Install the handler before any child starts
+# so stops during startup are honoured too: forward SIGTERM and exit promptly.
+XVFB_PID=""
+shutdown() {
+  trap - TERM INT
+  if [[ -n "$XVFB_PID" ]]; then
+    kill -TERM "$XVFB_PID" 2>/dev/null || true
+  fi
+  kill -TERM -- -1 2>/dev/null || true
+  if [[ -n "$XVFB_PID" ]]; then
+    wait "$XVFB_PID" 2>/dev/null || true
+  fi
+  exit 0
+}
+trap shutdown TERM INT
+
 if [[ -n "${RAKAZO_COMPUTER_CONTROL_TOKEN:-}" ]]; then
   /usr/local/bin/rakazo-computer-control >/tmp/rakazo/control.log 2>&1 &
 fi
@@ -98,8 +115,6 @@ if [[ ! -f "$NOVNC_ROOT/clipboard-bridge.js" ]]; then
 fi
 websockify --heartbeat=30 --web="$NOVNC_ROOT" --token-plugin=TokenFile --token-source=/tmp/rakazo/view-target-1 0.0.0.0:6080 >/tmp/rakazo/novnc.log 2>&1 &
 
-while kill -0 "$XVFB_PID" 2>/dev/null; do
-  sleep 2
-done
+wait "$XVFB_PID"
 echo "Xvfb exited" >&2
 exit 1
