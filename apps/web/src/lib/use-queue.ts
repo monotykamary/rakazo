@@ -87,12 +87,7 @@ export function useExecution(client: ExecutionClient, runId: string) {
 
 export { createQueueStore, type QueueClient, queueRows } from "@rakazo/core";
 
-export function useQueue(
-  client: QueueClient,
-  threadId: string,
-  botId: string,
-  pollMs = 2000,
-) {
+export function useQueue(client: QueueClient, threadId: string, botId: string, pollMs = 2000) {
   const clientRef = useRef(client);
   clientRef.current = client;
   const store = useMemo(

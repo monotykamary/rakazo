@@ -6,7 +6,11 @@ export interface ReplicaSink {
 }
 
 export interface ReplicaDriver {
-  run(work: OfficeReplicaWork, sink: ReplicaSink, signal: AbortSignal): Promise<"completed" | "failed" | "cancelled">;
+  run(
+    work: OfficeReplicaWork,
+    sink: ReplicaSink,
+    signal: AbortSignal,
+  ): Promise<"completed" | "failed" | "cancelled">;
 }
 
 /**
@@ -15,7 +19,11 @@ export interface ReplicaDriver {
  */
 export function createOfficeReplicaDriver(options: {
   supervisor: { baseUrl: string; token: string; fetch?: typeof fetch };
-  complete?: (work: OfficeReplicaWork, sink: ReplicaSink, signal: AbortSignal) => Promise<"completed" | "failed" | "cancelled">;
+  complete?: (
+    work: OfficeReplicaWork,
+    sink: ReplicaSink,
+    signal: AbortSignal,
+  ) => Promise<"completed" | "failed" | "cancelled">;
 }): ReplicaDriver {
   const http = options.supervisor.fetch ?? fetch;
   const base = options.supervisor.baseUrl.replace(/\/$/, "");
@@ -110,7 +118,12 @@ async function completeWithModel(
     });
     if (!response.ok) throw new Error(`Office model request failed (${response.status})`);
     const body = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string | null; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> } }>;
+      choices?: Array<{
+        message?: {
+          content?: string | null;
+          tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
+        };
+      }>;
     };
     const message = body.choices?.[0]?.message;
     if (!message) throw new Error("Office model returned no message");

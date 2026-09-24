@@ -4,17 +4,17 @@ import { officeEgressProxyUrl, resolveSupervisorToken } from "@rakazo/core";
 import { CommandRejectedError } from "./command-validation.js";
 import type { RunnerCredentials } from "./credentials.js";
 import { loadCredentials } from "./credentials.js";
+import { connectOfficeEgressClient, type OfficeEgressClient } from "./egress-client.js";
+import { type OfficeEgressMode, startOfficeEgressProxy } from "./egress-proxy.js";
 import { ForwardJournal } from "./journal.js";
+import { createOfficeReplicaDriver } from "./replica-driver.js";
+import { runReplicaLoop } from "./replica-loop.js";
 import {
   type ForwardResult,
   forwardToSupervisor,
   type SupervisorTarget,
   SupervisorUnreachableError,
 } from "./supervisor-forward.js";
-import { connectOfficeEgressClient, type OfficeEgressClient } from "./egress-client.js";
-import { type OfficeEgressMode, startOfficeEgressProxy } from "./egress-proxy.js";
-import { createOfficeReplicaDriver } from "./replica-driver.js";
-import { runReplicaLoop } from "./replica-loop.js";
 import { type MachineCommand, MachineRevokedError, TunnelClient } from "./tunnel-client.js";
 
 export interface ForwarderOptions {
@@ -94,7 +94,10 @@ export async function runForwarder(options: ForwarderOptions): Promise<void> {
   const client =
     options.client ??
     new TunnelClient({ serverUrl: options.credentials.serverUrl, fetch: options.supervisor.fetch });
-  const supervisor: SupervisorTarget = { ...options.supervisor, token: options.supervisor.token ?? "" };
+  const supervisor: SupervisorTarget = {
+    ...options.supervisor,
+    token: options.supervisor.token ?? "",
+  };
   if (!supervisor.token) throw new Error("The local supervisor token must be configured");
   let egressMode: OfficeEgressMode = "direct";
   let egressClient: OfficeEgressClient | null = null;

@@ -1,6 +1,6 @@
 import { Trans, useLingui } from "@lingui/react/macro";
-import { queueTurnsForParticipant } from "@rakazo/core";
 import type { ThreadMessage } from "@rakazo/contracts";
+import { queueTurnsForParticipant } from "@rakazo/core";
 import { BotAvatar, Button } from "@rakazo/ui-web";
 import { Menu, X } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";

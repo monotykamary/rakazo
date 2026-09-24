@@ -184,65 +184,65 @@ export const QueueStrip = forwardRef<
             >
               <MoreHorizontal aria-hidden className="size-3.5" />
             </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem
-              disabled={
-                disabled ||
-                Boolean(selected) ||
-                (resuming &&
-                  (locked || Boolean(snapshot?.compaction || snapshot?.gracefulPausePending)))
-              }
-              onClick={() =>
-                resuming && snapshot?.uncertainRowIds.length
-                  ? setConfirmResume(true)
-                  : void mutate({ type: resuming ? "resume" : "pause" })
-              }
-            >
-              {resuming ? <Play /> : <Pause />}
-              {resuming ? t`Resume` : t`Pause`}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={
-                disabled ||
-                Boolean(selected) ||
-                locked ||
-                !rows.length ||
-                Boolean(
-                  snapshot?.errorHold || snapshot?.compaction || snapshot?.gracefulPausePending,
-                ) ||
-                Boolean(rows[0]?.paused) ||
-                !rows[0]?.placement ||
-                rows[0]?.placement?.kind === "unbound" ||
-                Boolean(snapshot?.uncertainRowIds.length)
-              }
-              onClick={() => void mutate({ type: "drain" })}
-            >
-              <FastForward />
-              {t`Drain all`}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              data-testid="queue-graceful-pause"
-              disabled={
-                disabled ||
-                Boolean(snapshot?.gracefulPausePending) ||
-                Boolean(snapshot?.compaction) ||
-                Boolean(selected)
-              }
-              onClick={() => void mutate({ type: "graceful-pause" })}
-            >
-              <CirclePause />
-              {snapshot?.gracefulPausePending ? t`Pause pending` : t`Pause`}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              data-testid="queue-cancel-gate"
-              disabled={disabled || !gatePending || Boolean(selected)}
-              onClick={() => void mutate({ type: "cancel-gate" })}
-            >
-              <CircleAlert />
-              {t`Cancel wait`}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                disabled={
+                  disabled ||
+                  Boolean(selected) ||
+                  (resuming &&
+                    (locked || Boolean(snapshot?.compaction || snapshot?.gracefulPausePending)))
+                }
+                onClick={() =>
+                  resuming && snapshot?.uncertainRowIds.length
+                    ? setConfirmResume(true)
+                    : void mutate({ type: resuming ? "resume" : "pause" })
+                }
+              >
+                {resuming ? <Play /> : <Pause />}
+                {resuming ? t`Resume` : t`Pause`}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={
+                  disabled ||
+                  Boolean(selected) ||
+                  locked ||
+                  !rows.length ||
+                  Boolean(
+                    snapshot?.errorHold || snapshot?.compaction || snapshot?.gracefulPausePending,
+                  ) ||
+                  Boolean(rows[0]?.paused) ||
+                  !rows[0]?.placement ||
+                  rows[0]?.placement?.kind === "unbound" ||
+                  Boolean(snapshot?.uncertainRowIds.length)
+                }
+                onClick={() => void mutate({ type: "drain" })}
+              >
+                <FastForward />
+                {t`Drain all`}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                data-testid="queue-graceful-pause"
+                disabled={
+                  disabled ||
+                  Boolean(snapshot?.gracefulPausePending) ||
+                  Boolean(snapshot?.compaction) ||
+                  Boolean(selected)
+                }
+                onClick={() => void mutate({ type: "graceful-pause" })}
+              >
+                <CirclePause />
+                {snapshot?.gracefulPausePending ? t`Pause pending` : t`Pause`}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                data-testid="queue-cancel-gate"
+                disabled={disabled || !gatePending || Boolean(selected)}
+                onClick={() => void mutate({ type: "cancel-gate" })}
+              >
+                <CircleAlert />
+                {t`Cancel wait`}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
       {error ? (
@@ -391,74 +391,74 @@ export const QueueStrip = forwardRef<
                     >
                       <MoreHorizontal aria-hidden className="size-3.5" />
                     </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      disabled={
-                        rowDisabled ||
-                        Boolean(selected) ||
-                        !rows.slice(0, index).some((item) => item.lane === row.lane)
-                      }
-                      onClick={() => void mutate({ type: "reorder", id: row.id, direction: -1 })}
-                    >
-                      <ArrowUp /> {t`Move up`}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={
-                        rowDisabled ||
-                        Boolean(selected) ||
-                        !rows.slice(index + 1).some((item) => item.lane === row.lane)
-                      }
-                      onClick={() => void mutate({ type: "reorder", id: row.id, direction: 1 })}
-                    >
-                      <ArrowDown /> {t`Move down`}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={rowDisabled}
-                      onClick={() => {
-                        const lane = row.lane === "steer" ? "followUp" : "steer";
-                        void mutate(
-                          selected === row.id
-                            ? { type: "edit-patch", patch: { lane } }
-                            : { type: "lane", id: row.id, lane },
-                        );
-                      }}
-                    >
-                      {row.lane === "steer" ? t`Move to follow-up` : t`Move to steer`}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={rowDisabled}
-                      onClick={() =>
-                        void mutate(
-                          selected === row.id
-                            ? { type: "edit-patch", patch: { paused: !row.paused } }
-                            : { type: "hold", id: row.id, paused: !row.paused },
-                        )
-                      }
-                    >
-                      {row.paused ? t`Release hold` : t`Hold`}
-                    </DropdownMenuItem>
-                    {row.placement?.kind === "unbound" ? (
+                    <DropdownMenuContent align="end">
                       <DropdownMenuItem
-                        disabled={disabled || Boolean(snapshot?.editing) || locked}
-                        onClick={() => void mutate({ type: "bind-placement", id: row.id })}
+                        disabled={
+                          rowDisabled ||
+                          Boolean(selected) ||
+                          !rows.slice(0, index).some((item) => item.lane === row.lane)
+                        }
+                        onClick={() => void mutate({ type: "reorder", id: row.id, direction: -1 })}
                       >
-                        {t`Use current project`}
+                        <ArrowUp /> {t`Move up`}
                       </DropdownMenuItem>
-                    ) : null}
-                    <DropdownMenuItem
-                      variant="destructive"
-                      disabled={rowDisabled}
-                      onClick={() =>
-                        void mutate(
-                          selected === row.id
-                            ? { type: "edit-patch", patch: { removed: !removed } }
-                            : { type: "remove", id: row.id },
-                        )
-                      }
-                    >
-                      {removed ? t`Restore` : t`Remove`}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
+                      <DropdownMenuItem
+                        disabled={
+                          rowDisabled ||
+                          Boolean(selected) ||
+                          !rows.slice(index + 1).some((item) => item.lane === row.lane)
+                        }
+                        onClick={() => void mutate({ type: "reorder", id: row.id, direction: 1 })}
+                      >
+                        <ArrowDown /> {t`Move down`}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        disabled={rowDisabled}
+                        onClick={() => {
+                          const lane = row.lane === "steer" ? "followUp" : "steer";
+                          void mutate(
+                            selected === row.id
+                              ? { type: "edit-patch", patch: { lane } }
+                              : { type: "lane", id: row.id, lane },
+                          );
+                        }}
+                      >
+                        {row.lane === "steer" ? t`Move to follow-up` : t`Move to steer`}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        disabled={rowDisabled}
+                        onClick={() =>
+                          void mutate(
+                            selected === row.id
+                              ? { type: "edit-patch", patch: { paused: !row.paused } }
+                              : { type: "hold", id: row.id, paused: !row.paused },
+                          )
+                        }
+                      >
+                        {row.paused ? t`Release hold` : t`Hold`}
+                      </DropdownMenuItem>
+                      {row.placement?.kind === "unbound" ? (
+                        <DropdownMenuItem
+                          disabled={disabled || Boolean(snapshot?.editing) || locked}
+                          onClick={() => void mutate({ type: "bind-placement", id: row.id })}
+                        >
+                          {t`Use current project`}
+                        </DropdownMenuItem>
+                      ) : null}
+                      <DropdownMenuItem
+                        variant="destructive"
+                        disabled={rowDisabled}
+                        onClick={() =>
+                          void mutate(
+                            selected === row.id
+                              ? { type: "edit-patch", patch: { removed: !removed } }
+                              : { type: "remove", id: row.id },
+                          )
+                        }
+                      >
+                        {removed ? t`Restore` : t`Remove`}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
               </li>

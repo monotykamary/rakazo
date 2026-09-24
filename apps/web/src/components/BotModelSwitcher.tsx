@@ -48,7 +48,8 @@ function ScopedBotModelSwitcher({ botId, desired, onChanged }: BotModelSwitcherP
           previous.current?.thinkingLevel === next.current?.thinkingLevel &&
           previous.selection?.requested?.provider === next.selection?.requested?.provider &&
           previous.selection?.requested?.modelId === next.selection?.requested?.modelId &&
-          previous.selection?.requested?.thinkingLevel === next.selection?.requested?.thinkingLevel &&
+          previous.selection?.requested?.thinkingLevel ===
+            next.selection?.requested?.thinkingLevel &&
           previous.catalog.length === next.catalog.length
             ? previous
             : next,
@@ -76,7 +77,13 @@ function ScopedBotModelSwitcher({ botId, desired, onChanged }: BotModelSwitcherP
   }, [open, runtime, busy, loading, error, refresh]);
 
   async function save(next: ModelSelection | null) {
-    if (saving.current || loading || error || !runtime || runtime.availability.status !== "available")
+    if (
+      saving.current ||
+      loading ||
+      error ||
+      !runtime ||
+      runtime.availability.status !== "available"
+    )
       return;
     if (next) {
       const entry = runtime.catalog.find(

@@ -1,13 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { captureScreenshot } from "./helpers";
 
-test("quiet activity reveals retained Fabric, Fovea, compaction and worker controls", async ({
+test("quiet activity reveals retained Fabric, Fovea, compaction and queue controls", async ({
   page,
 }, testInfo) => {
-  const effective = { provider: "local", modelId: "small", thinkingLevel: null };
-  await page.route("**/rpc/models/getVisibility", (route) =>
-    route.fulfill({ json: { json: { hide: [] } } }),
-  );
   await page.route("**/rpc/queue/list", (route) =>
     route.fulfill({
       json: {
@@ -63,41 +59,6 @@ test("quiet activity reveals retained Fabric, Fovea, compaction and worker contr
       },
     }),
   );
-  await page.route("**/rpc/models/credentials", (route) =>
-    route.fulfill({
-      json: {
-        json: [{ id: "local", provider: "local", label: "Local", hasKey: false, isDefault: true }],
-      },
-    }),
-  );
-  await page.route("**/rpc/models/list", (route) =>
-    route.fulfill({
-      json: {
-        json: [
-          {
-            provider: "local",
-            id: "small",
-            label: "Small",
-            billing: "local",
-            thinkingLevels: ["low", "high"],
-          },
-        ],
-      },
-    }),
-  );
-  await page.route("**/rpc/models/getSelection", (route) =>
-    route.fulfill({
-      json: { json: { requested: effective, effective, status: "applied", error: null } },
-    }),
-  );
-  const selections: unknown[] = [];
-  await page.route("**/rpc/models/setWorkerSelection", (route) => {
-    const input = route.request().postDataJSON().json;
-    selections.push(input);
-    return route.fulfill({
-      json: { json: { requested: input.selection, effective, status: "pending", error: null } },
-    });
-  });
   await page.goto("/e2e/fixtures/message-activity.html");
   await expect(page.getByRole("button", { name: /^Queue ·/ })).toHaveCount(0);
   await expect(page.getByText("Paused", { exact: true })).toHaveCount(0);
@@ -106,30 +67,16 @@ test("quiet activity reveals retained Fabric, Fovea, compaction and worker contr
   await page.getByRole("button", { name: "Execution", exact: true }).click();
   const inspector = page.getByRole("dialog", { name: "Execution", exact: true });
   await expect(inspector).toBeVisible();
-  const events = inspector.getByRole("list", { name: "Retained events" });
-  await events.getByText("fabric_exec").click();
+  const retainedEvents = inspector.getByRole("list", { name: "Retained events" });
+  await retainedEvents.getByRole("button", { name: /Tool Fabric program/ }).click();
   await expect(
     inspector.getByText('"code": "return await tools.catalog()"', { exact: false }),
   ).toBeVisible();
-  await events.getByText("fovea_focus").click();
+  await retainedEvents.getByText("fovea_focus").click();
   await expect(inspector.getByText('"query": "ReviewPatch"', { exact: false })).toBeVisible();
-  await events.getByText("compaction").click();
+  await retainedEvents.getByText("compaction").click();
   await expect(inspector.getByText("Retained review context", { exact: false })).toBeVisible();
-  await inspector.getByRole("button", { name: "Model", exact: true }).click();
-  await expect(inspector.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(
-    "local::small",
-  );
-  await inspector.getByRole("combobox", { name: "Thinking", exact: true }).selectOption("high");
-  await inspector.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(inspector.getByText("Pending · Effective: small", { exact: true })).toBeVisible();
-  expect(selections).toEqual([
-    {
-      botId: "bot",
-      threadId: "thread",
-      participantId: "worker",
-      selection: { provider: "local", modelId: "small", thinkingLevel: "high" },
-    },
-  ]);
+  await expect(inspector.getByRole("button", { name: "Model", exact: true })).toHaveCount(0);
   await captureScreenshot(page, testInfo, "contextual-execution-details");
   await page.setViewportSize({ width: 390, height: 844 });
   await captureScreenshot(page, testInfo, "contextual-execution-mobile-web");
@@ -138,6 +85,7 @@ test("quiet activity reveals retained Fabric, Fovea, compaction and worker contr
   await page.locator("summary").filter({ hasText: "Advanced" }).click();
   await page.getByRole("button", { name: "Queue", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Queue", exact: true })).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "Queued message", exact: true })).toBeVisible();
+  await expect(page.getByTestId("composer-queue")).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Queued message", exact: true })).toHaveCount(0);
   await captureScreenshot(page, testInfo, "manual-empty-queue");
 });

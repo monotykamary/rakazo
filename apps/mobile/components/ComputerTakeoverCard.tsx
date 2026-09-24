@@ -1,5 +1,5 @@
-import { useRouter } from "expo-router";
 import type { MessageBlock } from "@rakazo/contracts";
+import { useRouter } from "expo-router";
 import { Pressable, Text, View } from "react-native";
 import { useI18n } from "../lib/i18n";
 import { useMobileTokens } from "../lib/native";
@@ -29,8 +29,17 @@ export function ComputerTakeoverCard({
         gap: 10,
       }}
     >
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <Text style={{ color: tokens.foreground, fontSize: 14, fontWeight: "600" }}>{t("Take over")}</Text>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+        }}
+      >
+        <Text style={{ color: tokens.foreground, fontSize: 14, fontWeight: "600" }}>
+          {t("Take over")}
+        </Text>
         <View
           style={{
             flexDirection: "row",
@@ -71,7 +80,9 @@ export function ComputerTakeoverCard({
             paddingVertical: 8,
           }}
         >
-          <Text style={{ color: tokens.primaryForeground, fontWeight: "600" }}>{t("Open computer")}</Text>
+          <Text style={{ color: tokens.primaryForeground, fontWeight: "600" }}>
+            {t("Open computer")}
+          </Text>
         </Pressable>
       ) : null}
     </View>

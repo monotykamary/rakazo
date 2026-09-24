@@ -85,19 +85,21 @@ export class NativeAgents {
             deliver: ({ id, operation, message, signal }) =>
               authority.request.agentTopology!.deliver({ id, operation, message, signal }),
             create: authority.request.agentTopology.create
-              ? (request) => authority.request.agentTopology!.create!({
-                  name: request.name,
-                  ...(request.instructions ? { instructions: request.instructions } : {}),
-                  ...(request.task ? { task: request.task } : {}),
-                  ...(request.signal ? { signal: request.signal } : {}),
-                })
+              ? (request) =>
+                  authority.request.agentTopology!.create!({
+                    name: request.name,
+                    ...(request.instructions ? { instructions: request.instructions } : {}),
+                    ...(request.task ? { task: request.task } : {}),
+                    ...(request.signal ? { signal: request.signal } : {}),
+                  })
               : undefined,
             remove: authority.request.agentTopology.remove
-              ? (request) => authority.request.agentTopology!.remove!({
-                  id: request.id,
-                  ...(request.name ? { name: request.name } : {}),
-                  ...(request.signal ? { signal: request.signal } : {}),
-                })
+              ? (request) =>
+                  authority.request.agentTopology!.remove!({
+                    id: request.id,
+                    ...(request.name ? { name: request.name } : {}),
+                    ...(request.signal ? { signal: request.signal } : {}),
+                  })
               : undefined,
             dispatch: authority.request.agentTopology.dispatch
               ? (request) =>

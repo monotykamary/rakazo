@@ -17,7 +17,10 @@ export function ToolStepsRow({
   const [open, setOpen] = useState(false);
   const summary = summarizeToolSteps(steps) ?? {
     title: steps[0]?.label || t`Work`,
-    count: Math.max(1, steps.reduce((sum, step) => sum + step.count, 0)),
+    count: Math.max(
+      1,
+      steps.reduce((sum, step) => sum + step.count, 0),
+    ),
     latest: steps.at(-1)?.label || steps[0]?.label || t`Work`,
   };
   const countLabel = summary.count === 1 ? t`1 step` : t`${summary.count} steps`;
@@ -34,7 +37,8 @@ export function ToolStepsRow({
         <span className="min-w-0 flex-1 truncate">
           <span className="font-medium text-foreground">{summary.title}</span>
           <span>
-            {" "}· {countLabel} · {summary.latest}
+            {" "}
+            · {countLabel} · {summary.latest}
           </span>
         </span>
         <ChevronDown

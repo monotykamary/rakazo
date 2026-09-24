@@ -2,11 +2,7 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { Socket } from "node:net";
 import { MACHINE_EGRESS_UPGRADE } from "@rakazo/contracts";
-import {
-  createEgressFrameReader,
-  encodeEgressPacket,
-  type EgressFrame,
-} from "@rakazo/core";
+import { createEgressFrameReader, type EgressFrame, encodeEgressPacket } from "@rakazo/core";
 import type { EgressTunnel } from "./egress-proxy.js";
 
 export interface OfficeEgressClientOptions {
@@ -22,10 +18,7 @@ type StreamHandlers = {
 };
 
 export type OfficeEgressClient = {
-  open(
-    target: { host: string; port: number },
-    handlers: StreamHandlers,
-  ): EgressTunnel | null;
+  open(target: { host: string; port: number }, handlers: StreamHandlers): EgressTunnel | null;
   close(): void;
 };
 
@@ -54,7 +47,9 @@ export async function connectOfficeEgressClient(
       "abort",
       () => {
         req.destroy();
-        reject(options.signal?.reason instanceof Error ? options.signal.reason : new Error("Aborted"));
+        reject(
+          options.signal?.reason instanceof Error ? options.signal.reason : new Error("Aborted"),
+        );
       },
       { once: true },
     );

@@ -223,9 +223,7 @@ export const appContract = {
       .output(MachineAssignmentSchema),
     egress: {
       get: oc.output(MachineEgressSnapshotSchema),
-      set: oc
-        .input(z.object({ enabled: z.boolean() }))
-        .output(MachineEgressSnapshotSchema),
+      set: oc.input(z.object({ enabled: z.boolean() })).output(MachineEgressSnapshotSchema),
     },
   },
   /** Supervised project services on a bot's computer (workbench). */

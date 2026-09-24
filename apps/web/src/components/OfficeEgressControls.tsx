@@ -62,14 +62,21 @@ export function OfficeEgressControls() {
           <div className="text-[14px] text-foreground">
             <Trans>Egress</Trans>
           </div>
-          <Label htmlFor={switchId} className="mt-1 block text-[13px] font-normal text-foreground/80">
+          <Label
+            htmlFor={switchId}
+            className="mt-1 block text-[13px] font-normal text-foreground/80"
+          >
             <Trans>Route egress through this desktop</Trans>
           </Label>
           {snapshot.enabled ? (
-            <p className="mt-1 text-[12px] text-muted-foreground" data-testid="office-egress-status">
+            <p
+              className="mt-1 text-[12px] text-muted-foreground"
+              data-testid="office-egress-status"
+            >
               {snapshot.hostConnected ? (
                 <Trans>
-                  Connected — routing {snapshot.activeConnections} connections ({snapshot.sessionTotal} total this session).
+                  Connected — routing {snapshot.activeConnections} connections (
+                  {snapshot.sessionTotal} total this session).
                 </Trans>
               ) : (
                 <Trans>Disconnected</Trans>

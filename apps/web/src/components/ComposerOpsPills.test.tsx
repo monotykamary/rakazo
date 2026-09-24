@@ -15,9 +15,7 @@ i18n.activate("en");
 describe("composer ops pills", () => {
   it("adds no chrome when nothing is live", () => {
     expect(
-      renderToString(
-        <ComposerOpsPills ops={{ working: [], pullRequests: [], listening: [] }} />,
-      ),
+      renderToString(<ComposerOpsPills ops={{ working: [], pullRequests: [], listening: [] }} />),
     ).toBe("");
   });
 

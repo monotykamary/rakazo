@@ -354,7 +354,12 @@ describe("LocalPiModelRuntimeService", () => {
     const { service } = await fixture({
       thinkingLevels: ["off", "high"],
       availableModels: [
-        { provider: "extension-provider", id: "extension-model", name: "Extension", reasoning: true },
+        {
+          provider: "extension-provider",
+          id: "extension-model",
+          name: "Extension",
+          reasoning: true,
+        },
       ],
     });
 

@@ -60,11 +60,7 @@ const egress = {
 const originalFetch = window.fetch.bind(window);
 window.fetch = async (input, init) => {
   const url =
-    typeof input === "string"
-      ? input
-      : input instanceof Request
-        ? input.url
-        : String(input);
+    typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
   const json = (body: unknown) =>
     new Response(JSON.stringify({ json: body }), {
       headers: { "content-type": "application/json" },
@@ -184,8 +180,7 @@ function Fixture() {
       h(
         "header",
         {
-          className:
-            "flex h-12 shrink-0 items-center border-b border-border px-4 text-[15px]",
+          className: "flex h-12 shrink-0 items-center border-b border-border px-4 text-[15px]",
         },
         bot.name,
       ),
@@ -196,10 +191,14 @@ function Fixture() {
       h(
         "div",
         { className: "border-t border-border px-4 py-3" },
-        h("div", {
-          className:
-            "rounded-md border border-border px-3 py-2 text-[14px] text-muted-foreground",
-        }, `Message ${bot.name}`),
+        h(
+          "div",
+          {
+            className:
+              "rounded-md border border-border px-3 py-2 text-[14px] text-muted-foreground",
+          },
+          `Message ${bot.name}`,
+        ),
       ),
     ),
     h(

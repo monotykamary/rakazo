@@ -124,7 +124,12 @@ export function RunsOnPicker({
           onPress={() => setOpen(true)}
           style={({ pressed }) => [styles.manage, pressed && styles.pressed]}
         >
-          <NativeSymbol ios="ellipsis" android="ellipsis-horizontal" size={20} color={native.label} />
+          <NativeSymbol
+            ios="ellipsis"
+            android="ellipsis-horizontal"
+            size={20}
+            color={native.label}
+          />
         </Pressable>
       </View>
       {snapshot.error ? <Text style={styles.error}>{snapshot.error}</Text> : null}

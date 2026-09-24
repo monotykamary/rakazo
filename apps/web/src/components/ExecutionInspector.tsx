@@ -81,7 +81,9 @@ function RetainedEvents({
                   setFlowId(undefined);
                 }}
                 className={`min-w-0 rounded-lg px-2.5 py-2 text-start text-[13px] ${
-                  selected ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
+                  selected
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >{t`Run ${index + 1}`}</button>
             );

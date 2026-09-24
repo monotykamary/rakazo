@@ -134,12 +134,20 @@ describe("evidence-backed execution graph", () => {
         display: { name: "Inspect startup" },
         details: {
           audits: [
-            { ref: "pi.read", tool: "read", provider: "pi", args: { path: "src/main.ts" }, success: true },
+            {
+              ref: "pi.read",
+              tool: "read",
+              provider: "pi",
+              args: { path: "src/main.ts" },
+              success: true,
+            },
           ],
         },
       }),
     ]);
-    expect(typescript.nodes.find((node) => node.executionId === "fabric")?.name).toBe("Inspect startup");
+    expect(typescript.nodes.find((node) => node.executionId === "fabric")?.name).toBe(
+      "Inspect startup",
+    );
     expect(typescript.nodes.find((node) => node.name === "pi.read src/main.ts")).toMatchObject({
       kind: "execution",
     });
@@ -154,7 +162,11 @@ describe("evidence-backed execution graph", () => {
         executionId: "py",
         name: "fabric_exec",
         details: {
-          trace: { calls: [{ ref: "pi.bash", tool: "bash", provider: "pi", args: { command: "bun test" } }] },
+          trace: {
+            calls: [
+              { ref: "pi.bash", tool: "bash", provider: "pi", args: { command: "bun test" } },
+            ],
+          },
         },
       }),
     ]);

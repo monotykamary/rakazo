@@ -1,10 +1,6 @@
 import { t } from "@lingui/core/macro";
 import type { ProductEvent } from "@rakazo/contracts";
-import {
-  type ExecutionTraceKind,
-  executionTracePreview,
-  groupExecutionTrace,
-} from "@rakazo/core";
+import { type ExecutionTraceKind, executionTracePreview, groupExecutionTrace } from "@rakazo/core";
 import { ChevronRight } from "lucide-react";
 import { useState } from "react";
 

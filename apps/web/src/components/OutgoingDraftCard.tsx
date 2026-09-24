@@ -84,7 +84,11 @@ export function OutgoingDraftCard({
   };
   const fieldLabels = { to: t`To`, cc: t`CC`, bcc: t`BCC`, subject: t`Subject`, body: t`Message` };
   const statusTone =
-    draft.status === "pending" ? "ready" : draft.status === "failed" || draft.status === "uncertain" ? "need" : "done";
+    draft.status === "pending"
+      ? "ready"
+      : draft.status === "failed" || draft.status === "uncertain"
+        ? "need"
+        : "done";
 
   async function act(action: "save" | "send" | "discard") {
     if (locked.current || !active || !approvalEffectId || !message.runId) return;
@@ -167,7 +171,10 @@ export function OutgoingDraftCard({
         }}
       />
     ) : (
-      <div className="min-w-0 flex-1 whitespace-pre-wrap wrap-anywhere text-sm leading-relaxed" dir="auto">
+      <div
+        className="min-w-0 flex-1 whitespace-pre-wrap wrap-anywhere text-sm leading-relaxed"
+        dir="auto"
+      >
         {value}
       </div>
     );
@@ -180,7 +187,9 @@ export function OutgoingDraftCard({
     }
     return (
       <div key={name} className="flex min-w-0 items-start gap-3 border-b border-border py-2.5">
-        <div className="w-16 shrink-0 pt-0.5 text-xs text-muted-foreground">{fieldLabels[name]}</div>
+        <div className="w-16 shrink-0 pt-0.5 text-xs text-muted-foreground">
+          {fieldLabels[name]}
+        </div>
         {control}
       </div>
     );
@@ -247,12 +256,18 @@ export function OutgoingDraftCard({
         </div>
       ) : null}
       {draft.error ? (
-        <p role="alert" className="whitespace-pre-wrap wrap-anywhere px-4 pb-2 text-sm text-destructive">
+        <p
+          role="alert"
+          className="whitespace-pre-wrap wrap-anywhere px-4 pb-2 text-sm text-destructive"
+        >
           {draft.error}
         </p>
       ) : null}
       {error ? (
-        <p role="alert" className="whitespace-pre-wrap wrap-anywhere px-4 pb-2 text-sm text-destructive">
+        <p
+          role="alert"
+          className="whitespace-pre-wrap wrap-anywhere px-4 pb-2 text-sm text-destructive"
+        >
           {error}
         </p>
       ) : null}
@@ -280,7 +295,12 @@ export function OutgoingDraftCard({
               <Button size="sm" disabled={busy} onClick={() => void act("send")}>
                 <Trans>Send email</Trans>
               </Button>
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => void act("discard")}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={() => void act("discard")}
+              >
                 <Trans>Discard</Trans>
               </Button>
             </>

@@ -36,7 +36,11 @@ describe("execution trace list", () => {
           event("run.started", {}, 30),
           event("thread.progress", { text: "Reading files" }, 31),
           event("thread.progress", { text: "Planning the change" }, 32),
-          event("agent.tool.called", { name: "fabric_exec", display: { name: "Inspect startup" } }, 33),
+          event(
+            "agent.tool.called",
+            { name: "fabric_exec", display: { name: "Inspect startup" } },
+            33,
+          ),
         ]}
       />,
     );

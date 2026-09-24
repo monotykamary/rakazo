@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { AgentRunTopology, AgentSessionParticipant, JobPublisher } from "@rakazo/adapter-kit";
 import type { Actor } from "@rakazo/contracts";
-import { listPremoveQueue, mutatePremoveQueue, type PrismaClient, type ThreadEvents } from "@rakazo/db";
+import {
+  listPremoveQueue,
+  mutatePremoveQueue,
+  type PrismaClient,
+  type ThreadEvents,
+} from "@rakazo/db";
 import { messageBot } from "./bot-messages.js";
 
 type TopologyDeps = {
@@ -105,12 +110,11 @@ export function createAgentRunTopology(
         const handed = await host.handoff({ id, message });
         return sessionOf(handed, "running");
       }
-      const sent = await messageBot(
-        deps,
-        input.run,
-        input.bot,
-        { bot_id: id, message, intent: "request" },
-      );
+      const sent = await messageBot(deps, input.run, input.bot, {
+        bot_id: id,
+        message,
+        intent: "request",
+      });
       if (!sent.ok) throw new Error(sent.error);
       return sessionOf({ id: sent.botId, name: sent.name }, "running");
     },

@@ -36,10 +36,10 @@ import {
   attachmentsForThread,
   buildComposerMentionOptions,
   type ComposerMention,
+  type ComposerOps,
   clampMentionHighlightIndex,
   clusterMessageBlocks,
   composerOps,
-  type ComposerOps,
   cronFromPreset,
   groupBotsForSidebar,
   inferAttachmentMimeType,
@@ -90,11 +90,11 @@ import {
   useFrameState,
 } from "@rakazo/ui-web";
 import { ComposerActionIcon } from "@rakazo/ui-web/components/ui/composer-action-icon";
-import { SpringWidth } from "@rakazo/ui-web/components/ui/motion";
 import {
   SpringAside,
   SpringButton,
   SpringDisclosure,
+  SpringWidth,
   useMotionMedia,
 } from "@rakazo/ui-web/components/ui/motion";
 import {
@@ -150,31 +150,32 @@ import {
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArtifactFileCard } from "../components/ArtifactFileCard";
 import { AskCard } from "../components/AskCard";
-import { ComputerTakeoverCard } from "../components/ComputerTakeoverCard";
-import { ToolStepsRow } from "../components/ToolStepsRow";
 import { ActiveBotGlyph, CollaborationMarker } from "../components/ai/CollaborationMarker";
 import { BotModelSwitcher } from "../components/BotModelSwitcher";
+import type { OverlayChat } from "../components/ChatTurns";
 import { CloudAgentCard } from "../components/CloudAgentCard";
+import { ComposerOpsPills } from "../components/ComposerOpsPills";
 import { ComputerMaintenanceActions } from "../components/ComputerMaintenanceActions";
 import {
   ComputersUnavailableHint,
   computersAreUnavailable,
 } from "../components/ComputersUnavailableHint";
+import { ComputerTakeoverCard } from "../components/ComputerTakeoverCard";
 import {
   lastMessageExecution,
   MessageActivityLinks,
   MessageExecutionButton,
 } from "../components/MessageActivityLinks";
 import { MessageHoverMetadata } from "../components/MessageHoverMetadata";
+import { OfficeEgressHost } from "../components/OfficeEgressHost";
 import { OutgoingDraftCard } from "../components/OutgoingDraftCard";
-import type { OverlayChat } from "../components/ChatTurns";
 import { ThreadInspector, type ThreadInspectorTarget } from "../components/ThreadInspector";
-import { ComposerOpsPills } from "../components/ComposerOpsPills";
 import {
   ThreadQueue,
   type ThreadQueueEdit,
   type ThreadQueueHandle,
 } from "../components/ThreadQueue";
+import { ToolStepsRow } from "../components/ToolStepsRow";
 import { SkillDraftCard } from "../components/teach/SkillDraftCard";
 import { TeachCaptureOverlay } from "../components/teach/TeachCaptureOverlay";
 import { TeachComputerOverlayControl } from "../components/teach/TeachComputerOverlay";
@@ -241,7 +242,6 @@ import { ActivityList } from "./ActivityList";
 import type { ContextMenuPosition } from "./BotContextMenu";
 import { CreateGroupForm, GroupSettings, memberName } from "./GroupPanel";
 import { HostComputerPrompt } from "./HostComputerPrompt";
-import { OfficeEgressHost } from "../components/OfficeEgressHost";
 import {
   draftFromRoutine,
   emptyRoutineDraft,
@@ -1725,14 +1725,7 @@ export function ShellPage() {
         messages: activeSnapshot?.messages ?? [],
         routines: activeRoutines,
       }),
-    [
-      active,
-      activeRoutines,
-      activeSnapshot?.messages,
-      currentRuns,
-      inGroup,
-      transcriptMembers,
-    ],
+    [active, activeRoutines, activeSnapshot?.messages, currentRuns, inGroup, transcriptMembers],
   );
   const resolveTranscriptBot = useCallback(
     (botId: string) => {
@@ -2341,17 +2334,14 @@ export function ShellPage() {
     setEditingRoutine(null);
     setPanel("routine");
   }, []);
-  const openPeerMessages = useCallback(
-    (peer: OverlayChat) => {
-      peerReturnFocus.current =
-        document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      setPanel(null);
-      setThreadInspector(null);
-      setQueueOpen(undefined);
-      setPeerConversation(peer);
-    },
-    [],
-  );
+  const openPeerMessages = useCallback((peer: OverlayChat) => {
+    peerReturnFocus.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setPanel(null);
+    setThreadInspector(null);
+    setQueueOpen(undefined);
+    setPeerConversation(peer);
+  }, []);
   const speakingMessageIdRef = useRef(speakingMessageId);
   speakingMessageIdRef.current = speakingMessageId;
   const speakMessage = useCallback((message: ThreadMessage) => {
@@ -3513,8 +3503,8 @@ export function ShellPage() {
               ]}
             />
           )}
-          </div>
-          {peerConversation && (peerConversation.botId ?? active?.id) ? (
+        </div>
+        {peerConversation && (peerConversation.botId ?? active?.id) ? (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <Suspense fallback={null}>
               <PeerMessagesOverlay
@@ -3540,13 +3530,9 @@ export function ShellPage() {
               />
             </Suspense>
           </div>
-          ) : null}
-          {active || activeGroup ? (
-            <div
-              className={
-                peerConversation && !peerConversation.canSteer ? "hidden" : "contents"
-              }
-            >
+        ) : null}
+        {active || activeGroup ? (
+          <div className={peerConversation && !peerConversation.canSteer ? "hidden" : "contents"}>
             <Composer
               key={inGroup ? `group:${groupId}` : `bot:${active?.id}`}
               activeName={inGroup ? (activeGroup?.name ?? activeSnapshot?.groupName) : active?.name}
@@ -3653,8 +3639,8 @@ export function ShellPage() {
                 }
               }}
             />
-            </div>
-          ) : null}
+          </div>
+        ) : null}
       </main>
 
       <SpringAside
@@ -5930,9 +5916,9 @@ function MessageBubbleReaction({
   const { t } = useLingui();
   const entries = reactions ? [...reactions] : [];
   return (
-    <div
+    <fieldset
       data-testid="message-reactions"
-      className="group/edge absolute bottom-0 end-0 z-10 h-1/4 w-1/4"
+      className="group/edge absolute bottom-0 end-0 z-10 h-1/4 w-1/4 min-w-0"
       onContextMenu={(event) => {
         if (!entries.length) return;
         event.preventDefault();
@@ -5999,7 +5985,7 @@ function MessageBubbleReaction({
           )}
         </button>
       </div>
-    </div>
+    </fieldset>
   );
 }
 
@@ -6241,34 +6227,36 @@ const MessageView = memo(function MessageView({
           <ToolStepsRow key={i} steps={block.steps} color={stepColor} identity={stepIdentity} />
         ))}
         {visibleNarrationBlocks.length === 0 ? null : (
-        <div className="flex w-fit max-w-full justify-start">
-          <div
-            data-testid="message-bot-bubble"
-            className="max-w-full space-y-2.5 rounded-[20px] bg-muted px-[18px] py-3 text-[14.5px] leading-[1.5] text-foreground/90"
-            dir="auto"
-          >
-            {visibleNarrationBlocks.map((block, i) => {
-              if (block.kind === "text" || block.kind === "progress") {
-                return (
-                  <div key={i}>
-                    <ChatMarkdown streaming={block.kind === "progress"}>{block.text}</ChatMarkdown>
-                  </div>
-                );
-              }
-              return null;
-            })}
-            {!isLive && voiceReady && message.blocks.some((block) => block.kind === "text") ? (
-              <button
-                type="button"
-                aria-label={speaking ? t`Stop speaking` : t`Speak this reply`}
-                onClick={() => onSpeak(message)}
-                className="text-[12px] text-muted-foreground hover:text-foreground"
-              >
-                {speaking ? <Trans>Stop</Trans> : <Trans>Speak</Trans>}
-              </button>
-            ) : null}
+          <div className="flex w-fit max-w-full justify-start">
+            <div
+              data-testid="message-bot-bubble"
+              className="max-w-full space-y-2.5 rounded-[20px] bg-muted px-[18px] py-3 text-[14.5px] leading-[1.5] text-foreground/90"
+              dir="auto"
+            >
+              {visibleNarrationBlocks.map((block, i) => {
+                if (block.kind === "text" || block.kind === "progress") {
+                  return (
+                    <div key={i}>
+                      <ChatMarkdown streaming={block.kind === "progress"}>
+                        {block.text}
+                      </ChatMarkdown>
+                    </div>
+                  );
+                }
+                return null;
+              })}
+              {!isLive && voiceReady && message.blocks.some((block) => block.kind === "text") ? (
+                <button
+                  type="button"
+                  aria-label={speaking ? t`Stop speaking` : t`Speak this reply`}
+                  onClick={() => onSpeak(message)}
+                  className="text-[12px] text-muted-foreground hover:text-foreground"
+                >
+                  {speaking ? <Trans>Stop</Trans> : <Trans>Speak</Trans>}
+                </button>
+              ) : null}
+            </div>
           </div>
-        </div>
         )}
       </>
     );
@@ -6574,9 +6562,7 @@ const MessageView = memo(function MessageView({
           );
         }
         if (block.kind === "computer") {
-          return (
-            <ComputerTakeoverCard key={i} block={block} onOpenComputer={onOpenComputer} />
-          );
+          return <ComputerTakeoverCard key={i} block={block} onOpenComputer={onOpenComputer} />;
         }
         return null;
       })}

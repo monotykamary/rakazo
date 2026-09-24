@@ -181,6 +181,7 @@ test("message hover shows beside-bubble actions; reply links to parent", async (
   await testInfo.attach("message-hover-toolbar", { contentType: "image/png", path: hoverPath });
 
   const edge = botRow.getByTestId("message-reactions");
+  await expect(edge).toHaveRole("group");
   await edge.hover();
   const react = edge.getByRole("button", { name: "React" });
   await expect(react).toBeVisible();

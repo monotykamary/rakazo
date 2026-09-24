@@ -1,15 +1,15 @@
+import type { IncomingMessage } from "node:http";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { connect, type Socket as TcpSocket } from "node:net";
-import type { IncomingMessage } from "node:http";
-import type { Session } from "electron";
 import { MACHINE_EGRESS_UPGRADE } from "@rakazo/contracts";
 import {
   createEgressFrameReader,
-  encodeEgressPacket,
   type EgressFrame,
+  encodeEgressPacket,
   parseEgressTarget,
 } from "@rakazo/core";
+import type { Session } from "electron";
 
 export type OfficeEgressHostState = {
   connected: boolean;
@@ -70,7 +70,11 @@ export function createOfficeEgressHost(): OfficeEgressHost {
       sessionTotal += 1;
       emit();
       remote.on("data", (chunk) =>
-        send({ type: "data", id: frame.id, bytes: typeof chunk === "string" ? Buffer.from(chunk) : chunk }),
+        send({
+          type: "data",
+          id: frame.id,
+          bytes: typeof chunk === "string" ? Buffer.from(chunk) : chunk,
+        }),
       );
       remote.on("close", () => {
         if (!streams.has(frame.id)) return;
@@ -118,7 +122,9 @@ export function createOfficeEgressHost(): OfficeEgressHost {
         req.end();
       });
       const reader = createEgressFrameReader(handle, () => socket?.destroy());
-      socket.on("data", (chunk) => reader.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk));
+      socket.on("data", (chunk) =>
+        reader.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk),
+      );
       socket.on("close", () => {
         for (const id of [...streams.keys()]) closeStream(id);
         socket = null;

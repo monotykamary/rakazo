@@ -1,8 +1,5 @@
 import { createHash } from "node:crypto";
-import {
-  type OfficeReplicaJournalEntry,
-  OfficeReplicaJournalEntrySchema,
-} from "@rakazo/contracts";
+import { type OfficeReplicaJournalEntry, OfficeReplicaJournalEntrySchema } from "@rakazo/contracts";
 
 const HASH_BYTES = 32;
 

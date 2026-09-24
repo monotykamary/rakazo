@@ -80,7 +80,9 @@ describe("tool activity", () => {
     ).toBe("Read file");
     expect(
       liveWorkingLabel([
-        message("progress:run", [{ kind: "steps", steps: [{ label: "Running commands", count: 1 }] }]),
+        message("progress:run", [
+          { kind: "steps", steps: [{ label: "Running commands", count: 1 }] },
+        ]),
       ]),
     ).toBe("Running commands");
     expect(
@@ -91,7 +93,13 @@ describe("tool activity", () => {
     expect(
       liveWorkingLabel([
         message("subagent:1", [
-          { kind: "subagent", agentId: "1", name: "Reviewer", task: "Review the patch", status: "running" },
+          {
+            kind: "subagent",
+            agentId: "1",
+            name: "Reviewer",
+            task: "Review the patch",
+            status: "running",
+          },
         ]),
       ]),
     ).toBe("Reviewer");

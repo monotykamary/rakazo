@@ -31,8 +31,8 @@ import {
 } from "@rakazo/ui-web";
 import { Copy, Ellipsis, Plus } from "lucide-react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { OfficeEgressControls } from "./OfficeEgressControls";
 import { rpc } from "../lib/rpc";
+import { OfficeEgressControls } from "./OfficeEgressControls";
 
 const gateway: MachineGateway = {
   list: () => rpc.machines.list(),
@@ -132,7 +132,10 @@ export function BotRunsOn({
               <Trans>Office</Trans>
             </PopoverTitle>
             {isLocalManagedOrigin(window.location.origin) ? (
-              <p className="px-1 text-[12px] text-muted-foreground" data-testid="runs-on-local-warning">
+              <p
+                className="px-1 text-[12px] text-muted-foreground"
+                data-testid="runs-on-local-warning"
+              >
                 <Trans>Paired machines pause while this computer sleeps.</Trans>
               </p>
             ) : null}

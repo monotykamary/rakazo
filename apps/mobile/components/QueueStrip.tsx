@@ -643,8 +643,7 @@ function ExecutionEvents({
             }}
           >
             <Text style={{ color: tokens.foreground }}>
-              {t("Steer")} ·{" "}
-              {participant.name ?? t("Participant {number}", { number: index + 1 })}
+              {t("Steer")} · {participant.name ?? t("Participant {number}", { number: index + 1 })}
             </Text>
           </Pressable>
         ))}
@@ -769,7 +768,10 @@ function ExecutionEvents({
                   <Text style={[styles.traceKind, { color: tokens.mutedForeground }]}>
                     {traceKindLabel(group.kind, item.type)}
                   </Text>
-                  <Text numberOfLines={1} style={{ flex: 1, color: tokens.foreground, fontSize: 13 }}>
+                  <Text
+                    numberOfLines={1}
+                    style={{ flex: 1, color: tokens.foreground, fontSize: 13 }}
+                  >
                     {preview ?? ""}
                   </Text>
                   <Text style={{ color: tokens.mutedForeground, fontSize: 11 }}>
@@ -777,7 +779,10 @@ function ExecutionEvents({
                   </Text>
                 </Pressable>
                 {expanded === item.id && (
-                  <Text selectable style={{ color: tokens.mutedForeground, fontFamily: "monospace", fontSize: 11 }}>
+                  <Text
+                    selectable
+                    style={{ color: tokens.mutedForeground, fontFamily: "monospace", fontSize: 11 }}
+                  >
                     {JSON.stringify(item.payload, null, 2)}
                   </Text>
                 )}
@@ -806,7 +811,13 @@ const styles = StyleSheet.create({
   row: { borderWidth: 1, borderRadius: 12, padding: 10, marginVertical: 4 },
   traceRow: { paddingVertical: 4, marginStart: 4, borderLeftWidth: 1, paddingStart: 12 },
   traceHeader: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 28 },
-  traceKind: { width: 76, fontSize: 10, fontWeight: "600", letterSpacing: 0.6, textTransform: "uppercase" },
+  traceKind: {
+    width: 76,
+    fontSize: 10,
+    fontWeight: "600",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+  },
   input: { borderWidth: 1, borderRadius: 8, padding: 12, minHeight: 60 },
   image: { width: 56, height: 56, borderRadius: 8 },
 });

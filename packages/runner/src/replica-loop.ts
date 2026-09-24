@@ -2,7 +2,7 @@ import { type OfficeReplicaWork, OfficeReplicaWorkSchema } from "@rakazo/contrac
 import type { RunnerCredentials } from "./credentials.js";
 import type { ReplicaDriver } from "./replica-driver.js";
 import { ReplicaJournal } from "./replica-journal.js";
-import { MachineRevokedError, TunnelClient } from "./tunnel-client.js";
+import { MachineRevokedError, type TunnelClient } from "./tunnel-client.js";
 
 export interface ReplicaLoopOptions {
   credentials: RunnerCredentials;
@@ -46,7 +46,9 @@ export async function runReplicaLoop(options: ReplicaLoopOptions): Promise<void>
         continue;
       }
       const running = driveReplica(options, work).catch((error) => {
-        log(`replica ${work.replicaId} failed: ${error instanceof Error ? error.message : "unknown"}`);
+        log(
+          `replica ${work.replicaId} failed: ${error instanceof Error ? error.message : "unknown"}`,
+        );
       });
       active.add(running);
       void running.finally(() => active.delete(running));

@@ -66,6 +66,8 @@ import { AppConnectCard } from "../components/AppConnectCard";
 import { ArtifactImageFan } from "../components/ArtifactImageFan";
 import { AskActions } from "../components/AskActions";
 import { BotAvatar } from "../components/bot-avatar";
+import { ComposerOpsPills } from "../components/ComposerOpsPills";
+import { ComputerTakeoverCard } from "../components/ComputerTakeoverCard";
 import { MessageActivityLinks } from "../components/MessageActivityLinks";
 import { ModelSelectionControl } from "../components/ModelSelectionControl";
 import {
@@ -73,12 +75,10 @@ import {
   type MarkdownArtifactPreviewTarget,
 } from "../components/markdown-artifact-preview";
 import { NativeSymbol } from "../components/native-symbol";
-import { ComputerTakeoverCard } from "../components/ComputerTakeoverCard";
 import { OutgoingDraftCard } from "../components/OutgoingDraftCard";
-import { ToolStepsRow } from "../components/ToolStepsRow";
 import { PeerMessagesSheet } from "../components/PeerMessagesSheet";
-import { ComposerOpsPills } from "../components/ComposerOpsPills";
 import { GroupQueueStrip, QueueStrip } from "../components/QueueStrip";
+import { ToolStepsRow } from "../components/ToolStepsRow";
 import {
   applyMobileThreadEvent,
   blockText,
@@ -2729,12 +2729,13 @@ const MessageBubble = memo(function MessageBubble({
     (block): block is Extract<MessageBlock, { kind: "computer" }> => block.kind === "computer",
   );
   if (computer) {
-    const stepColor =
-      bots.find((bot) => bot.id === cardBotId)?.color ?? tokens.mutedForeground;
+    const stepColor = bots.find((bot) => bot.id === cardBotId)?.color ?? tokens.mutedForeground;
     return (
       <View style={{ gap: 8, width: "100%" }}>
         {message.blocks
-          .filter((block): block is Extract<MessageBlock, { kind: "steps" }> => block.kind === "steps")
+          .filter(
+            (block): block is Extract<MessageBlock, { kind: "steps" }> => block.kind === "steps",
+          )
           .map((block, index) => (
             <ToolStepsRow
               key={`steps-${index}`}
@@ -3471,8 +3472,18 @@ function AskBlock({
       }}
     >
       {secretInput ? null : (
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <Text {...actionProps} style={{ color: tokens.foreground, fontSize: 14, fontWeight: "600" }}>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+          }}
+        >
+          <Text
+            {...actionProps}
+            style={{ color: tokens.foreground, fontSize: 14, fontWeight: "600" }}
+          >
             {t("Question")}
           </Text>
           <Text style={{ color: pending ? tokens.warning : tokens.mutedForeground, fontSize: 13 }}>
@@ -3482,7 +3493,11 @@ function AskBlock({
       )}
       <Text
         {...(secretInput ? actionProps : {})}
-        style={{ color: tokens.foreground, fontSize: 15.5, fontWeight: secretInput ? "600" : "400" }}
+        style={{
+          color: tokens.foreground,
+          fontSize: 15.5,
+          fontWeight: secretInput ? "600" : "400",
+        }}
       >
         {ask.text}
       </Text>

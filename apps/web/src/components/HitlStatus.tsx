@@ -3,13 +3,7 @@ import type { ReactNode } from "react";
 
 export type HitlStatusTone = "need" | "ready" | "done";
 
-export function HitlStatus({
-  tone,
-  children,
-}: {
-  tone: HitlStatusTone;
-  children: ReactNode;
-}) {
+export function HitlStatus({ tone, children }: { tone: HitlStatusTone; children: ReactNode }) {
   return (
     <span
       role="status"
@@ -20,7 +14,10 @@ export function HitlStatus({
     >
       <span
         aria-hidden="true"
-        className={cn("size-1.5 rounded-full", tone === "need" ? "bg-warning" : "bg-muted-foreground/70")}
+        className={cn(
+          "size-1.5 rounded-full",
+          tone === "need" ? "bg-warning" : "bg-muted-foreground/70",
+        )}
       />
       {children}
     </span>

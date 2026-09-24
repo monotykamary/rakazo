@@ -83,6 +83,8 @@ describe("describeToolActivity", () => {
     expect(describeToolActivity("fabric_exec", { display: { name: "Inspect startup" } })).toBe(
       "Inspect startup",
     );
-    expect(describeToolActivity("fabric_exec", { code: "return 1" })).toBe("Running Fabric program");
+    expect(describeToolActivity("fabric_exec", { code: "return 1" })).toBe(
+      "Running Fabric program",
+    );
   });
 });

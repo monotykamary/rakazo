@@ -136,7 +136,11 @@ export function AskCard({
               onChange={(event) => setAnswer(event.target.value)}
               placeholder={secretLabel}
             />
-            <Button type="submit" className="self-start" disabled={answer.length === 0 || submitting}>
+            <Button
+              type="submit"
+              className="self-start"
+              disabled={answer.length === 0 || submitting}
+            >
               {submitting ? <Trans>Saving…</Trans> : <Trans>Save</Trans>}
             </Button>
           </form>

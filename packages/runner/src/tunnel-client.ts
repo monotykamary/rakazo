@@ -188,7 +188,10 @@ export class TunnelClient {
     }
   }
 
-  async heartbeat(machineToken: string, signal?: AbortSignal): Promise<{
+  async heartbeat(
+    machineToken: string,
+    signal?: AbortSignal,
+  ): Promise<{
     enabled: boolean;
     hostConnected: boolean;
   } | null> {
@@ -215,7 +218,10 @@ export class TunnelClient {
     }
   }
 
-  async claimReplica(machineToken: string, signal?: AbortSignal): Promise<OfficeReplicaWork | null> {
+  async claimReplica(
+    machineToken: string,
+    signal?: AbortSignal,
+  ): Promise<OfficeReplicaWork | null> {
     const { status, payload } = await this.requestJson<{ work?: unknown }>(machineToken, {
       path: "/api/machines/runner/replicas/claim",
       signal,
@@ -249,7 +255,12 @@ export class TunnelClient {
 
   async returnReplica(
     machineToken: string,
-    body: { replicaId: string; epoch: number; outcome: "completed" | "failed" | "cancelled"; error?: string },
+    body: {
+      replicaId: string;
+      epoch: number;
+      outcome: "completed" | "failed" | "cancelled";
+      error?: string;
+    },
     signal?: AbortSignal,
   ): Promise<void> {
     const { status } = await this.requestJson(machineToken, {

@@ -52,11 +52,7 @@ export function ComposerOpsPills({
         </OpsPill>
       ) : null}
       {ops.listening.length ? (
-        <OpsPill
-          testId="composer-ops-listening"
-          label={t`Listening`}
-          count={ops.listening.length}
-        >
+        <OpsPill testId="composer-ops-listening" label={t`Listening`} count={ops.listening.length}>
           {ops.listening.map((routine) => (
             <button
               key={routine.id}

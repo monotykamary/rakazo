@@ -55,7 +55,9 @@ export function liveWorkingLabel(
 ): string | undefined {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]!;
-    const live = message.id.startsWith("progress:") || message.blocks.some((block) => block.kind === "subagent");
+    const live =
+      message.id.startsWith("progress:") ||
+      message.blocks.some((block) => block.kind === "subagent");
     if (!live) continue;
     for (let blockIndex = message.blocks.length - 1; blockIndex >= 0; blockIndex -= 1) {
       const label = labelForBlock(message.blocks[blockIndex]!);

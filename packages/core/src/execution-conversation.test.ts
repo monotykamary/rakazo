@@ -1,10 +1,10 @@
+import type { ProductEvent } from "@rakazo/contracts";
 import { describe, expect, it } from "vitest";
 import {
   participantChatTurns,
   participantConversationEvents,
   projectParticipantChat,
 } from "./execution-conversation.js";
-import type { ProductEvent } from "@rakazo/contracts";
 
 function event(type: ProductEvent["type"], payload: ProductEvent["payload"]): ProductEvent {
   return {

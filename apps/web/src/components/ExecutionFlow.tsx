@@ -6,14 +6,7 @@ import type {
 } from "@rakazo/contracts";
 import { executionFlowRows } from "@rakazo/core";
 import { SpringDisclosure } from "@rakazo/ui-web/components/ui/motion";
-import {
-  Bot,
-  Code2,
-  CornerDownRight,
-  Hourglass,
-  MessageSquare,
-  RotateCcw,
-} from "lucide-react";
+import { Bot, Code2, CornerDownRight, Hourglass, MessageSquare, RotateCcw } from "lucide-react";
 
 function nodeTitle(node: ExecutionFlowNode, ordinal: number, relationships: ExecutionFlowEdge[]) {
   if (node.name) {
@@ -137,7 +130,9 @@ export function ExecutionFlow({
         const focusedStatus = focusedRun?.status ?? node.status;
         const status = statusLabel(focusedStatus);
         const failed = focusedStatus === "failed" || focusedStatus === "run.failed";
-        const eventIds = node.evidence.filter((item) => item.kind === "event").map((item) => item.id);
+        const eventIds = node.evidence
+          .filter((item) => item.kind === "event")
+          .map((item) => item.id);
         return (
           <li
             key={node.id}
@@ -171,7 +166,10 @@ export function ExecutionFlow({
                   className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
                 />
               ) : (
-                <Icon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                <Icon
+                  aria-hidden="true"
+                  className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+                />
               )}
               <span className="min-w-0 flex-1">
                 {parent ? (

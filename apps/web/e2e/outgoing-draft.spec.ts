@@ -414,7 +414,9 @@ test("calls require on-screen draft review and never start dictation for approva
   await captureScreenshot(page, testInfo, "outgoing-draft-call-review");
   await dialog.getByRole("button", { name: "Hang up", exact: true }).click();
   await expect(
-    page.getByTestId("outgoing-draft-card").getByRole("button", { name: "Send email", exact: true }),
+    page
+      .getByTestId("outgoing-draft-card")
+      .getByRole("button", { name: "Send email", exact: true }),
   ).toBeVisible();
 });
 

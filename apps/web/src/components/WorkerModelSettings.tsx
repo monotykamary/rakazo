@@ -43,7 +43,8 @@ export function PiRuntimeModelSettings({ botId, threadId, participantId }: Model
           previous.current?.thinkingLevel === next.current?.thinkingLevel &&
           previous.selection?.requested?.provider === next.selection?.requested?.provider &&
           previous.selection?.requested?.modelId === next.selection?.requested?.modelId &&
-          previous.selection?.requested?.thinkingLevel === next.selection?.requested?.thinkingLevel &&
+          previous.selection?.requested?.thinkingLevel ===
+            next.selection?.requested?.thinkingLevel &&
           previous.catalog.length === next.catalog.length
             ? previous
             : next,
@@ -75,7 +76,8 @@ export function PiRuntimeModelSettings({ botId, threadId, participantId }: Model
     return () => clearTimeout(timer);
   }, [runtime, busy, refresh]);
   async function save(nextSelection: ModelSelection | null) {
-    if (saving.current || loading || !runtime || runtime.availability.status !== "available") return;
+    if (saving.current || loading || !runtime || runtime.availability.status !== "available")
+      return;
     if (nextSelection) {
       const entry = runtime.catalog.find(
         (item) => item.provider === nextSelection.provider && item.id === nextSelection.modelId,

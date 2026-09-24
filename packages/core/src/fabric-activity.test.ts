@@ -8,12 +8,16 @@ import {
 
 describe("fabric nested activity", () => {
   it("coerces display objects and bare strings", () => {
-    expect(normalizeFabricDisplay({ name: "Inspect startup", description: "Read the entry" })).toEqual({
+    expect(
+      normalizeFabricDisplay({ name: "Inspect startup", description: "Read the entry" }),
+    ).toEqual({
       name: "Inspect startup",
       description: "Read the entry",
     });
     expect(normalizeFabricDisplay("Inspect startup")).toEqual({ name: "Inspect startup" });
-    expect(normalizeFabricDisplay('{"name":"Inspect startup"}')).toEqual({ name: "Inspect startup" });
+    expect(normalizeFabricDisplay('{"name":"Inspect startup"}')).toEqual({
+      name: "Inspect startup",
+    });
   });
 
   it("pulls nested TypeScript audits before the durable trace", () => {
@@ -28,7 +32,9 @@ describe("fabric nested activity", () => {
             args: { path: "src/main.ts", extra: "drop" },
           },
         ],
-        trace: { operations: [{ ref: "pi.grep", action: "grep", provider: "pi", outcome: "succeeded" }] },
+        trace: {
+          operations: [{ ref: "pi.grep", action: "grep", provider: "pi", outcome: "succeeded" }],
+        },
       }).map(fabricNestedHeadline),
     ).toEqual(["pi.read src/main.ts"]);
   });
@@ -54,7 +60,9 @@ describe("fabric nested activity", () => {
     expect(
       fabricExecutionLabel({
         name: "fabric_exec",
-        details: { audits: [{ ref: "pi.read", tool: "read", provider: "pi", args: { path: "a.ts" } }] },
+        details: {
+          audits: [{ ref: "pi.read", tool: "read", provider: "pi", args: { path: "a.ts" } }],
+        },
       }),
     ).toBe("Fabric program");
     expect(fabricExecutionLabel({ name: "fabric_exec" })).toBe("Fabric program");

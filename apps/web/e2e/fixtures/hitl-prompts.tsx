@@ -64,7 +64,7 @@ const messages: ThreadMessage[] = [
   botMessage("ask-1", 5, [
     {
       kind: "ask",
-      text: 'Finished checking email, but Gmail is still signed out. Sign in on the shared browser, then this can be re-run.',
+      text: "Finished checking email, but Gmail is still signed out. Sign in on the shared browser, then this can be re-run.",
       status: "pending",
     },
   ]),

@@ -17,7 +17,10 @@ export interface EgressAttachment {
 export interface MachineEgressHub {
   snapshot(actor: EgressActor): Omit<MachineEgressSnapshot, "enabled">;
   attachHost(actor: EgressActor, peer: EgressPeer): EgressAttachment;
-  attachClient(actor: EgressActor & { machineId: string }, peer: EgressPeer): EgressAttachment | null;
+  attachClient(
+    actor: EgressActor & { machineId: string },
+    peer: EgressPeer,
+  ): EgressAttachment | null;
   detachHost(actor: EgressActor): void;
 }
 
@@ -101,7 +104,10 @@ export function createMachineEgressHub(): MachineEgressHub {
         return;
       }
       const existing = room.byClient.get(machineId) ?? new Map<number, number>();
-      if (existing.size >= MACHINE_EGRESS_MAX_STREAMS || room.streams.size >= MACHINE_EGRESS_MAX_STREAMS) {
+      if (
+        existing.size >= MACHINE_EGRESS_MAX_STREAMS ||
+        room.streams.size >= MACHINE_EGRESS_MAX_STREAMS
+      ) {
         room.clients.get(machineId)?.send({
           type: "close",
           id: frame.id,

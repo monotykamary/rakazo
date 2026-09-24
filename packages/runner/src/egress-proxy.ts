@@ -27,7 +27,10 @@ export function isPrivateRemoteAddress(address: string | undefined): boolean {
   if (address === "127.0.0.1" || address === "::1" || address === "localhost") return true;
   if (address.startsWith("::ffff:")) return isPrivateRemoteAddress(address.slice(7));
   const parts = address.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+  if (
+    parts.length !== 4 ||
+    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  ) {
     return false;
   }
   const [a, b] = parts;

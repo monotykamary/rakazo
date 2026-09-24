@@ -21,10 +21,7 @@ export function ComposerOpsPills({
   const appearance = useResolvedAppearance();
   if (!composerOpsVisible(ops)) return null;
 
-  function present(
-    title: string,
-    actions: { text: string; onPress: () => void }[],
-  ) {
+  function present(title: string, actions: { text: string; onPress: () => void }[]) {
     if (actions.length === 1) {
       actions[0]?.onPress();
       return;
@@ -49,7 +46,13 @@ export function ComposerOpsPills({
   return (
     <View
       accessibilityRole="summary"
-      style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingHorizontal: 4, paddingBottom: 8 }}
+      style={{
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: 6,
+        paddingHorizontal: 4,
+        paddingBottom: 8,
+      }}
     >
       {ops.working.length ? (
         <Pressable

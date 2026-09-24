@@ -1,20 +1,12 @@
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
+import type { EgressPeer, MachineEgressHub, MachinesService } from "@rakazo/adapters";
+import { mergeEgressSnapshot } from "@rakazo/adapters";
 import type { Auth } from "@rakazo/auth";
-import {
-  MACHINE_EGRESS_UPGRADE,
-  type MachineEgressSnapshot,
-} from "@rakazo/contracts";
-import {
-  createEgressFrameReader,
-  encodeEgressPacket,
-  type EgressFrame,
-} from "@rakazo/core";
+import { MACHINE_EGRESS_UPGRADE, type MachineEgressSnapshot } from "@rakazo/contracts";
+import { createEgressFrameReader, type EgressFrame, encodeEgressPacket } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
 import { requireMembership } from "@rakazo/db";
-import type { MachineEgressHub, EgressPeer } from "@rakazo/adapters";
-import { mergeEgressSnapshot } from "@rakazo/adapters";
-import type { MachinesService } from "@rakazo/adapters";
 
 export interface MachineEgressUpgradeDeps {
   auth: Auth;

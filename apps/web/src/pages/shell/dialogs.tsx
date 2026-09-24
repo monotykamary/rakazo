@@ -183,9 +183,7 @@ export function ClearConversationDialog({
             <Trans>Clear {bot.name}’s conversation?</Trans>
           </AlertDialogTitle>
           <AlertDialogDescription>
-            <Trans>
-              This starts a new conversation and stops current work.
-            </Trans>
+            <Trans>This starts a new conversation and stops current work.</Trans>
           </AlertDialogDescription>
         </AlertDialogHeader>
         {error ? <p className="text-[13.5px] text-destructive">{error}</p> : null}
