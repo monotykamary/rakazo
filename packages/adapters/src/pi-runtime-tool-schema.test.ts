@@ -4,6 +4,58 @@ import { parseConnectorToolArgs } from "./lazy-tool-catalog.js";
 import { jsonSchemaParameters, parametersFor } from "./pi-runtime.js";
 
 describe("jsonSchemaParameters", () => {
+  it("preserves allOf fields, local references, and intersecting constraints for dispatch", () => {
+    const inputSchema = {
+      $defs: {
+        label: {
+          type: "object",
+          properties: { label: { type: "string", minLength: 2 } },
+          required: ["label"],
+        },
+      },
+      allOf: [
+        { $ref: "#/$defs/label" },
+        {
+          type: "object",
+          properties: {
+            label: { type: "string", maxLength: 5 },
+            count: { type: "integer", minimum: 1 },
+          },
+          required: ["count"],
+        },
+      ],
+    };
+    const parameters = parametersFor({ name: "intersection", description: "test", inputSchema });
+    expect(JSON.parse(JSON.stringify(parameters))).toMatchObject(inputSchema);
+    const validate = (args: { label?: string; count?: number }) =>
+      validateToolArguments(
+        { name: "intersection", description: "test", parameters },
+        { type: "toolCall", id: "call", name: "intersection", arguments: args },
+      );
+    expect(validate({ label: "okay", count: 1 })).toEqual({ label: "okay", count: 1 });
+    for (const args of [
+      { label: "x", count: 1 },
+      { label: "too long", count: 1 },
+      { label: "okay", count: 0 },
+      { label: "okay" },
+      { count: 1 },
+    ]) {
+      expect(() => validate(args)).toThrow();
+    }
+  });
+
+  it.each([{ allOf: [] }, { allOf: [null] }, { allOf: "invalid" }])(
+    "fails closed for malformed allOf %j",
+    ({ allOf }) => {
+      expect(
+        JSON.parse(
+          JSON.stringify(
+            parametersFor({ name: "bad", description: "bad", inputSchema: { allOf } }),
+          ),
+        ),
+      ).toEqual({ type: "object", properties: {}, additionalProperties: false });
+    },
+  );
   it("keeps model-facing nullable parameters compatible with connector validation", () => {
     const tool = {
       name: "catalog_lookup",

@@ -248,7 +248,7 @@ describe("live probe regressions", () => {
     await writeFile(path.join(root, ".env"), text);
     await writeFile(
       command,
-      `#!${process.execPath}\nif(process.argv.includes('--version')) { console.log('0.85.1'); } else { process.on('SIGTERM',()=>process.exit(9)); process.kill(process.ppid,'SIGINT'); setTimeout(()=>process.kill(process.ppid,'SIGINT'),30); setTimeout(()=>{console.log('pi-normal-exit');process.exit(0)},100); }\n`,
+      `#!${process.execPath}\nif(process.argv.includes('--version')) { console.log('0.87.1'); } else { process.on('SIGTERM',()=>process.exit(9)); process.kill(process.ppid,'SIGINT'); setTimeout(()=>process.kill(process.ppid,'SIGINT'),30); setTimeout(()=>{console.log('pi-normal-exit');process.exit(0)},100); }\n`,
       { mode: 0o700 },
     );
     const module = new URL("../../../scripts/dev.mjs", import.meta.url).href;
@@ -546,9 +546,9 @@ describe("process and install boundaries", () => {
   });
 
   it("checks installed Pi supports agent_settled without changing existing Pi", async () => {
-    expect(validatePiVersion("0.85.1\n")).toBe(PI_RUNTIME_VERSION);
-    expect(validatePiVersion("pi 0.86.0")).toBe("0.86.0");
-    for (const version of ["0.84.9", "0.85.0", "unknown", "1.0.0"])
+    expect(validatePiVersion("0.87.1\n")).toBe(PI_RUNTIME_VERSION);
+    expect(validatePiVersion("pi 0.88.0")).toBe("0.88.0");
+    for (const version of ["0.84.9", "0.85.0", "0.87.0", "unknown", "1.0.0"])
       expect(() => validatePiVersion(version)).toThrow("dev:kit");
     const pkg = JSON.parse(
       await readFile(new URL("../../pi-kit/package.json", import.meta.url), "utf8"),
@@ -616,8 +616,8 @@ describe("process and install boundaries", () => {
     expect(await executable("pi --unsafe", { PATH: root }, root)).toBeNull();
   });
   it("pins Pi and never installs globally or executes lifecycle scripts", () => {
-    const plan = piInstallPlan("/checkout", "0.85.1");
-    expect(plan.args).toContain("@earendil-works/pi-coding-agent@0.85.1");
+    const plan = piInstallPlan("/checkout", "0.87.1");
+    expect(plan.args).toContain("@earendil-works/pi-coding-agent@0.87.1");
     expect(plan.args).toContain("--ignore-scripts");
     expect(plan.args).not.toContain("-g");
     expect(plan.command).toBe("/checkout/data/dev/pi/node_modules/.bin/pi");

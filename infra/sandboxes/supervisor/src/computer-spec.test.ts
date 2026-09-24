@@ -680,6 +680,16 @@ describe("computer resource limits", () => {
     expect(HostConfig.PidsLimit).toBe(2048);
   });
 
+  it.each(["", "   ", "\t\n"])("uses bounded defaults for blank environment values %j", (blank) => {
+    for (const key of KEYS) process.env[key] = blank;
+    expect(containerCreateOptions(createInput).HostConfig).toMatchObject({
+      Memory: 2 * 1024 ** 3,
+      MemorySwap: 2 * 1024 ** 3,
+      NanoCpus: 2e9,
+      PidsLimit: 2048,
+    });
+  });
+
   it("pins MemorySwap to Memory so the ceiling cannot be swapped past", () => {
     process.env.RAKAZO_COMPUTER_MEMORY = "1536m";
     const { HostConfig } = containerCreateOptions(createInput);

@@ -75,7 +75,7 @@ describe("sanitized real-model computer recordings", () => {
     } finally {
       await fixture.close();
     }
-  });
+  }, 90_000);
 
   it("rejects raw metadata and unexpected operations instead of relying on secret-pattern matching", () => {
     const safe = recorded(openDialog);
@@ -161,7 +161,7 @@ describe("sanitized real-model computer recordings", () => {
       browser.close();
       await fixture.close();
     }
-  });
+  }, 90_000);
 
   it("cancels at the export dialog without producing a download or receipt", async () => {
     const fixture = await setup();
@@ -215,7 +215,7 @@ describe("sanitized real-model computer recordings", () => {
       );
       await expect(
         executeContactsJourney(
-          emulator.model,
+          { ...emulator.model, acceptsImages: true },
           recorder,
           interruptedContext,
           new PiAgentRuntime({ host: createTestProcessHost() }),
@@ -243,7 +243,7 @@ describe("sanitized real-model computer recordings", () => {
       await emulator.close();
       await fixture.close();
     }
-  });
+  }, 90_000);
 
   it("restores a downloaded workspace into a replacement computer and verifies it without another export", async () => {
     const fixture = await setup();

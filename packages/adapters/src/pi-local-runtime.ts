@@ -4,7 +4,7 @@ import { mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "no
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { validateToolArguments } from "@earendil-works/pi-ai";
+import { type JsonObject, validateToolArguments } from "@earendil-works/pi-ai";
 import type {
   AdapterContext,
   AgentRunRequest,
@@ -828,7 +828,11 @@ class LocalToolBridge {
         type: "toolCall",
         id: toolCallId,
         name: item.tool.name,
-        arguments: prepareManagedToolArguments(item.tool.name, object(input.args) ?? {}),
+        // Arguments crossed the JSON-only bridge before compatibility normalization.
+        arguments: prepareManagedToolArguments(
+          item.tool.name,
+          object(input.args) ?? {},
+        ) as JsonObject,
       },
     ) as Record<string, unknown>;
     const executionId = `${this.request.runId}:${toolCallId}`;

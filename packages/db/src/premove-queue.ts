@@ -54,7 +54,8 @@ export interface PremoveQueueMutationOptions {
 function engineQueueOperation(operation: QueueMutation["operation"]) {
   if (operation.type === "enqueue") {
     const { artifactIds: _artifactIds, target: _target, ...engineOperation } = operation;
-    return engineOperation;
+    // Product queues append across lanes unless the caller explicitly requests priority.
+    return { ...engineOperation, tail: operation.tail ?? true };
   }
   if (operation.type === "edit-patch") {
     const { artifactIds: _artifactIds, ...patch } = operation.patch;
@@ -225,6 +226,7 @@ async function adoptLegacySteering(
       operation: {
         type: "enqueue",
         lane: "steer",
+        tail: true,
         text: blocksToAgentHistoryText(blocks) || "Attached files",
       },
     });
@@ -747,6 +749,7 @@ export async function stagePremoveSteeringInTransaction(
     operation: {
       type: "enqueue",
       lane: "steer",
+      tail: true,
       text: blocksToAgentHistoryText(input.blocks) || "Attached files",
     },
   });

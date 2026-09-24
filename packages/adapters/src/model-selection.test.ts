@@ -29,6 +29,28 @@ const defaults: SelectionInput = {
 };
 
 describe("configured model selection", () => {
+  it.each(["null", "undefined", "  "])("does not treat legacy %j as a model pin", (modelId) => {
+    expect(
+      selectConfiguredModel({ ...defaults, bot: { ...bot, modelId }, overrideCredential }),
+    ).toMatchObject({ provider: "space-provider", id: "space-model", credential: spaceCredential });
+    expect(
+      selectConfiguredModel({
+        ...defaults,
+        bot: null,
+        defaultCredential: credential("space-provider", modelId),
+        settings: null,
+        deployment: null,
+      }).id,
+    ).toBeUndefined();
+    expect(
+      selectConfiguredModel({
+        ...defaults,
+        defaultCredential: null,
+        settings: { defaultModelProvider: "settings-provider", defaultModelId: modelId },
+        deployment: null,
+      }).id,
+    ).toBeUndefined();
+  });
   it.each<{
     name: string;
     input: Partial<SelectionInput>;

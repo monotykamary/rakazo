@@ -203,7 +203,12 @@ export async function replayContactsRecording(
   const recorder = createContactsRecorder(sandbox, browser, computer, context);
   const emulator = await startModelEmulator({ steps: contactsReplaySteps(record) });
   try {
-    await executeContactsJourney(emulator.model, recorder, context, runtime);
+    await executeContactsJourney(
+      { ...emulator.model, acceptsImages: true },
+      recorder,
+      context,
+      runtime,
+    );
     emulator.assertComplete();
     assert.deepEqual(recorder.recording(record.source), record);
   } finally {

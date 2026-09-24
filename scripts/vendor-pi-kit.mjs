@@ -27,10 +27,25 @@ const allSources = [
   "pi-vision-handoff",
 ];
 const args = process.argv.slice(2);
-if (args.length && (args.length !== 2 || args[0] !== "--only" || !allSources.includes(args[1]))) {
-  throw new Error(`Usage: vendor-pi-kit.mjs [--only ${allSources.join("|")}]`);
+const options = new Map();
+for (let i = 0; i < args.length; i += 2) {
+  const flag = args[i];
+  const value = args[i + 1];
+  if (
+    !["--only", "--source-root"].includes(flag) ||
+    !value ||
+    value.startsWith("--") ||
+    options.has(flag) ||
+    (flag === "--only" && !allSources.includes(value))
+  ) {
+    throw new Error(
+      `Usage: vendor-pi-kit.mjs [--only ${allSources.join("|")}] [--source-root directory]`,
+    );
+  }
+  options.set(flag, value);
 }
-const sources = args.length ? [args[1]] : allSources;
+const sources = options.has("--only") ? [options.get("--only")] : allSources;
+const sourceRoot = resolve(options.get("--source-root") ?? resolve(root, ".."));
 const destination = resolve(root, "vendor/pi-kit");
 const kitManifestPath = resolve(root, "packages/pi-kit/package.json");
 const manifest = JSON.parse(readFileSync(kitManifestPath, "utf8"));
@@ -44,7 +59,7 @@ const staging = mkdtempSync(resolve(tmpdir(), "rakazo-kit-pack-"));
 const records = [];
 try {
   for (const source of sources) {
-    const cwd = resolve(root, "..", source);
+    const cwd = resolve(sourceRoot, source);
     const packageManifest = JSON.parse(readFileSync(resolve(cwd, "package.json"), "utf8"));
     // Builds and tests must be run before this command; never let pack trigger an implicit build.
     const archivePath = resolve(staging, "snapshot.tgz");

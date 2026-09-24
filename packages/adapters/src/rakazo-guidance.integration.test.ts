@@ -78,7 +78,7 @@ it("actual sealed Pi/Fabric reads the whole advertised skill without computer or
     );
     await runtime.session.bindExtensions({});
     await kit.initialize(runtime);
-    const prompt = runtime.session.agent.state.systemPrompt;
+    const prompt = runtime.session.systemPrompt;
     expect(prompt).toContain("You are an expert coding assistant");
     expect(prompt).toContain("Fixture bot instruction.");
     expect(prompt).not.toContain("## Bots and self-template generation");

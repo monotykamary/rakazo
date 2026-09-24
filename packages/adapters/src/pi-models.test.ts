@@ -125,6 +125,16 @@ describe("catalogModelLabel", () => {
     ["mistral-medium", "Mistral Medium Latest", "Mistral Medium (auto-updates)"],
     ["mistral-small", "Mistral Small Latest", "Mistral Small (auto-updates)"],
     ["gemini-flash-latest", "Gemini Flash Latest", "Gemini Flash (auto-updates)"],
+    [
+      "routers/qwen-max-latest",
+      "Qwen Max Latest (Qwen3.8 Max)",
+      "Qwen Max (Qwen3.8 Max) (auto-updates)",
+    ],
+    [
+      "routers/glm-flash-latest",
+      "GLM Flash Latest (GLM 5.3 Flash)",
+      "GLM Flash (GLM 5.3 Flash) (auto-updates)",
+    ],
     ["foo-latest", "foo-latest", "foo (auto-updates)"],
     ["foo/latest", "foo/latest", "foo (auto-updates)"],
     // Pinned: `-preview` is its own model and a dated id is already a snapshot, so promise nothing.

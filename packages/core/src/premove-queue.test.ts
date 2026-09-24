@@ -14,7 +14,8 @@ async function mutate(state: DurableQueueState, operation: QueueOperation) {
     version: 1,
     requestId: `test:${state.view.revision}`,
     expectedRevision: state.view.revision,
-    operation,
+    operation:
+      operation.type === "enqueue" ? { ...operation, tail: operation.tail ?? true } : operation,
   });
   expect(reply.ok).toBe(true);
   return {

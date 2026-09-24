@@ -105,7 +105,8 @@ export async function materializeCurrentTurnFiles(
   },
 ): Promise<MaterializedThreadFile[]> {
   const fileBlocks = blocks?.filter(
-    (block): block is Extract<MessageBlock, { kind: "file" }> => block.kind === "file",
+    (block): block is Extract<MessageBlock, { kind: "file" | "image" }> =>
+      block.kind === "file" || block.kind === "image",
   );
   if (!fileBlocks?.length) return [];
 

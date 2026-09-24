@@ -141,6 +141,7 @@ export type BotSection = z.infer<typeof BotSectionSchema>;
  */
 export const SpaceBotSchema = BotSchema.pick({
   id: true,
+  parentBotId: true,
   spaceId: true,
   name: true,
   title: true,

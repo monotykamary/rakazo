@@ -133,6 +133,21 @@ function fixture() {
 }
 
 describe("durable premove database service", () => {
+  it("appends steering by default and prioritizes it only on explicit request", async () => {
+    const f = fixture();
+    await f.mutate({ type: "enqueue", lane: "followUp", text: "future" });
+    await f.mutate({ type: "enqueue", lane: "steer", text: "normal" });
+    expect(f.state()!.view.rows.map((row) => row.text)).toEqual(["future", "normal"]);
+    await f.mutate({ type: "enqueue", lane: "steer", text: "priority", tail: false });
+    expect(f.state()!.view.rows.map((row) => row.text)).toEqual(["priority", "future", "normal"]);
+    await f.mutate({ type: "enqueue", lane: "steer", text: "last", tail: true });
+    expect(f.state()!.view.rows.map((row) => row.text)).toEqual([
+      "priority",
+      "future",
+      "normal",
+      "last",
+    ]);
+  });
   it.each(["idle", "settled", "turn-end"] as const)(
     "drains a paused cross-lane prefix once at %s with write-ahead reservation and concurrent enqueue",
     async (boundary) => {

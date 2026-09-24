@@ -78,7 +78,7 @@ vi.mock("./pi-rpc-transport.js", async (original) => {
         stock = false,
       ) {
         if (!stock)
-          queueMicrotask(() => observe({ type: "hello", version: 1, runtimeVersion: "0.85.1" }));
+          queueMicrotask(() => observe({ type: "hello", version: 1, runtimeVersion: "0.87.1" }));
       }
       async request(operation: string, data: JsonRecord = {}) {
         if (operation === "set_model") this.model = { provider: data.provider, id: data.modelId };
@@ -93,7 +93,7 @@ vi.mock("./pi-rpc-transport.js", async (original) => {
           };
         if (operation === "compact") return compactReply();
         if (operation === "prompt") this.observe({ type: "agent_settled" });
-        return { version: 1, runtimeVersion: "0.85.1", nativeTools: false };
+        return { version: 1, runtimeVersion: "0.87.1", nativeTools: false };
       }
       async close() {}
     },

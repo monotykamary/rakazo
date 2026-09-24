@@ -3,59 +3,59 @@
   "packages": [
     {
       "name": "pi-fabric",
-      "version": "0.92.5",
-      "filename": "pi-fabric-0.92.5-c381801e61ce.tgz",
-      "sha256": "c381801e61ceb8436dce8753d86c8ee5cef6a196f54778630151990faabf54ce",
-      "baseCommit": "464baf8bf61e51b2d5be217f8a207cd2b11ce485"
+      "version": "0.96.0",
+      "filename": "pi-fabric-0.96.0-6a3568e47e83.tgz",
+      "sha256": "6a3568e47e83504da5d2532fc864f1d7304cce57b2c01655dd890842a7b9a048",
+      "baseCommit": "9370bacbd68b135bfc7a8ec90ac439b53f162cee"
     },
     {
       "name": "pi-fovea",
-      "version": "0.27.0",
-      "filename": "pi-fovea-0.27.0-594e101ead06.tgz",
-      "sha256": "594e101ead064d2f5f652063ae41fcdd018360eabbe6631678c31de0ff366738",
-      "baseCommit": "7138743787b538f3dd2eef077dbbd7ca2b3c4504"
+      "version": "0.31.0",
+      "filename": "pi-fovea-0.31.0-4a1f33a31cba.tgz",
+      "sha256": "4a1f33a31cba69b42e2c5daa916bbaf0ac2fabf8eeb766c3b3915011c890a29d",
+      "baseCommit": "5880ef470ee60abebb5a36d017bb911c15cf8b1b"
     },
     {
       "name": "pi-queue-steer-factory",
-      "version": "0.17.1",
-      "filename": "pi-queue-steer-factory-0.17.1-b529d9db29ee.tgz",
-      "sha256": "b529d9db29eec2ac389629c6104d537f64545118bc9909d863ac7d7d3da42b44",
-      "baseCommit": "c702ace4115d288fa66a60e33d6bfc93e0f9fcee"
+      "version": "0.17.5",
+      "filename": "pi-queue-steer-factory-0.17.5-3c5077b8cdbb.tgz",
+      "sha256": "3c5077b8cdbb8e58af5c8521af821661e689a9f2ce727f0dcb7131982b80abd5",
+      "baseCommit": "098480dd07f713abe4795c8489ac6f639effd5f7"
     },
     {
       "name": "@monotykamary/pi-retry",
-      "version": "0.9.0",
-      "filename": "monotykamary-pi-retry-0.9.0-3158b56e1d7e.tgz",
-      "sha256": "3158b56e1d7ed4ad03f428c6fa5bcd94b90bfaad433e828295444c96e3763db1",
-      "baseCommit": "bb726b75a923a059480615f7c907cd674bf93a91"
+      "version": "0.10.2",
+      "filename": "monotykamary-pi-retry-0.10.2-fbc11955ed57.tgz",
+      "sha256": "fbc11955ed57236c97df075c4c169c2ffb806cb97e45e57c8d0aeaff925ae771",
+      "baseCommit": "4fa4835e1fe9a4daf6ac0a92f9b25a1a235d843f"
     },
     {
       "name": "pi-multiprovider",
-      "version": "0.6.3",
-      "filename": "pi-multiprovider-0.6.3-a323974cd31e.tgz",
-      "sha256": "a323974cd31ec34f73dcb601e1d30efccbabaa952e383bc8fe3dce08ec6f5926",
-      "baseCommit": "7788f7e499fdb684457540404e238a493bc07baf"
+      "version": "0.10.0",
+      "filename": "pi-multiprovider-0.10.0-5552c7d70919.tgz",
+      "sha256": "5552c7d70919b5be87a367f70df215fe4e14c42017638085d006de8984147e00",
+      "baseCommit": "4d62f7fc58bb95d77de987d758c525d6551add13"
     },
     {
       "name": "pi-hide-providers",
-      "version": "0.1.18",
-      "filename": "pi-hide-providers-0.1.18-d0b8bbcb190d.tgz",
-      "sha256": "d0b8bbcb190d0fa1c2179855e7f94afb2afc1bbac78fc458c35a2b5c845e0fba",
-      "baseCommit": "9c055d0916f661a198287f60d501180c7595d67c"
+      "version": "0.1.20",
+      "filename": "pi-hide-providers-0.1.20-2ec00ec5e754.tgz",
+      "sha256": "2ec00ec5e75450cff655f7c656c058e34e87306069ccb8785dbb5f744021ea01",
+      "baseCommit": "7052d293c80efb8e978f19c2aa8bcfe7a0c7c919"
     },
     {
       "name": "pi-contour",
-      "version": "0.2.0",
-      "filename": "pi-contour-0.2.0-13e89ebded96.tgz",
-      "sha256": "13e89ebded96477f10cca52077e99ee0dac155380a392d42b53dc61f76852000",
-      "baseCommit": "91294973f86d25a3db8efdb0a8cbcee8c653ec28"
+      "version": "0.4.4",
+      "filename": "pi-contour-0.4.4-99686d88d681.tgz",
+      "sha256": "99686d88d681dabcc25cf4cd406b50223193bb9ff514e0ab360ba6b48c2aac4a",
+      "baseCommit": "361f21759af0c67833ce4959d49a472c1bf682dc"
     },
     {
       "name": "pi-vision-handoff",
-      "version": "0.10.3",
-      "filename": "pi-vision-handoff-0.10.3-9a15743b6566.tgz",
-      "sha256": "9a15743b6566245eb92c536d60e852500603a46cf486681d5b561714b40ac89d",
-      "baseCommit": "406f31bd6232403a3705a42e1c2be7a4d83014e1"
+      "version": "0.10.6",
+      "filename": "pi-vision-handoff-0.10.6-56b4085977ce.tgz",
+      "sha256": "56b4085977ce8ed5bc830d4f92c72fbb12c2a002303074be596f85d62c3a6f33",
+      "baseCommit": "45a103b4e31f7ab0e4bb19967fa4cc7e8a1ac791"
     }
   ]
 }

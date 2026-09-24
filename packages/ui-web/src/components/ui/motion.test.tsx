@@ -29,7 +29,7 @@ describe("shell motion", () => {
     expect(state.props.initial).toBe(false);
     renderToStaticMarkup(<SpringButton animate={{ insetInlineStart: 308 }} />);
     expect(state.props.transition).toBe(shellSpring);
-    renderToStaticMarkup(<SpringWidth width={36} />);
+    renderToStaticMarkup(<SpringWidth width={36}>{null}</SpringWidth>);
     expect(state.props.animate).toEqual({ width: 36 });
     expect(state.props.initial).toBe(false);
   });

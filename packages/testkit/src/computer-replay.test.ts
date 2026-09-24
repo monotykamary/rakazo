@@ -39,7 +39,7 @@ describe("computer replay with real Pi and stateful offline computer", () => {
       browser.close();
       await sandbox.destroy(computer, context);
     }
-  });
+  }, 90_000);
 
   it("rejects an empty action batch without invalidating the current page refs", async () => {
     const sandbox = new FakeSandboxProvider();

@@ -14,7 +14,7 @@ import type { AgentRunRequest } from "@rakazo/adapter-kit";
 import { resolvePiKit } from "@rakazo/pi-kit";
 import type { FabricInvocationContext } from "pi-fabric/protocol";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { builtinAgentTools, PRIVATE_SUBAGENT_TOOL } from "./builtin-tools.js";
+import { PRIVATE_SUBAGENT_TOOL } from "./builtin-tools.js";
 import {
   createManagedKit,
   hybridMemoryProvider,
@@ -42,7 +42,7 @@ const invocation: FabricInvocationContext = {
   extensionContext: {} as never,
   update: () => undefined,
 };
-const ready = { version: 1, runtimeVersion: "0.85.1", nativeTools: false, memory: true };
+const ready = { version: 1, runtimeVersion: "0.87.1", nativeTools: false, memory: true };
 type BridgeArgs = ConstructorParameters<typeof ToolBridge>;
 const captured = new Map<
   string,
@@ -84,7 +84,7 @@ vi.mock("./pi-rpc-transport.js", async (original) => {
             (observe as (event: JsonRecord) => void)({
               type: "hello",
               version: 1,
-              runtimeVersion: "0.85.1",
+              runtimeVersion: "0.87.1",
             }),
           );
         }

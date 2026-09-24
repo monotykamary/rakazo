@@ -2,45 +2,45 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const PI_RUNTIME_VERSION = "0.85.1";
+export const PI_RUNTIME_VERSION = "0.87.1";
 
 /** Reviewed together; never resolve floating extension versions at session startup. */
 export const PI_KIT_PACKAGES = [
-  { name: "pi-fabric", version: "0.92.5", entry: "pi-fabric", extensions: ["dist/index.js"] },
-  { name: "pi-fovea", version: "0.27.0", entry: "pi-fovea/ops", extensions: ["src/index.ts"] },
+  { name: "pi-fabric", version: "0.96.0", entry: "pi-fabric", extensions: ["dist/index.js"] },
+  { name: "pi-fovea", version: "0.31.0", entry: "pi-fovea/ops", extensions: ["src/index.ts"] },
   {
     name: "pi-queue-steer-factory",
-    version: "0.17.1",
+    version: "0.17.5",
     entry: "pi-queue-steer-factory/headless",
     extensions: ["index.ts"],
   },
   {
     name: "@monotykamary/pi-retry",
-    version: "0.9.0",
+    version: "0.10.2",
     entry: "@monotykamary/pi-retry/package.json",
     extensions: ["retry.ts"],
   },
   {
     name: "pi-multiprovider",
-    version: "0.6.3",
+    version: "0.10.0",
     entry: "pi-multiprovider",
     extensions: ["extensions/multiprovider.ts"],
   },
   {
     name: "pi-hide-providers",
-    version: "0.1.18",
+    version: "0.1.20",
     entry: "pi-hide-providers/package.json",
     extensions: ["hide-providers.ts"],
   },
   {
     name: "pi-contour",
-    version: "0.2.0",
+    version: "0.4.4",
     entry: "pi-contour/package.json",
     extensions: ["dist/index.mjs"],
   },
   {
     name: "pi-vision-handoff",
-    version: "0.10.3",
+    version: "0.10.6",
     entry: "pi-vision-handoff/package.json",
     extensions: ["vision-handoff.ts"],
   },

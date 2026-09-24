@@ -8,6 +8,23 @@ import {
 } from "./model-credentials.js";
 
 describe("findDefaultModelCredential", () => {
+  it.each(["null", "undefined", "  "])("normalizes legacy stored model ID %j", async (modelId) => {
+    const prisma = {
+      spaceModelPreference: {
+        findFirst: vi.fn().mockResolvedValue({
+          credential: { id: "credential", provider: "test" },
+          modelId,
+          isDefault: true,
+        }),
+      },
+    } as unknown as PrismaClient;
+    await expect(
+      findDefaultModelCredential(prisma, { userId: "user", spaceId: "space" }),
+    ).resolves.toMatchObject({ defaultModel: null });
+    await expect(
+      findModelCredential(prisma, { userId: "user", spaceId: "space" }, "test"),
+    ).resolves.toMatchObject({ defaultModel: null });
+  });
   it("resolves the default from the active space preference", async () => {
     const findFirst = vi.fn().mockResolvedValue(null);
     const prisma = { spaceModelPreference: { findFirst } } as unknown as PrismaClient;
@@ -46,6 +63,25 @@ describe("findModelCredential", () => {
 });
 
 describe("selectSpaceModelPreference", () => {
+  it.each([null, undefined, "null", "undefined", "  null  ", ""])(
+    "does not persist absent model ID %j",
+    async (modelId) => {
+      const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+      const upsert = vi.fn().mockResolvedValue({});
+      await selectSpaceModelPreference(
+        { spaceModelPreference: { updateMany, upsert } } as unknown as PrismaClient,
+        { userId: "user", spaceId: "space" },
+        "credential",
+        modelId,
+      );
+      expect(upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ modelId: null }),
+          update: { modelId: null, isDefault: true },
+        }),
+      );
+    },
+  );
   it("clears only a different active default before selecting the credential", async () => {
     const updateMany = vi.fn().mockResolvedValue({ count: 1 });
     const upsert = vi.fn().mockResolvedValue({ id: "preference" });

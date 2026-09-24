@@ -117,15 +117,15 @@ function parsePidsLimit(name: string, raw: string): number {
 export function computerResourceLimits() {
   const memoryBytes = parseMemoryBytes(
     "RAKAZO_COMPUTER_MEMORY",
-    process.env.RAKAZO_COMPUTER_MEMORY ?? DEFAULT_COMPUTER_MEMORY,
+    process.env.RAKAZO_COMPUTER_MEMORY?.trim() || DEFAULT_COMPUTER_MEMORY,
   );
   const nanoCpus = parseNanoCpus(
     "RAKAZO_COMPUTER_CPUS",
-    process.env.RAKAZO_COMPUTER_CPUS ?? DEFAULT_COMPUTER_CPUS,
+    process.env.RAKAZO_COMPUTER_CPUS?.trim() || DEFAULT_COMPUTER_CPUS,
   );
   const pidsLimit = parsePidsLimit(
     "RAKAZO_COMPUTER_PIDS_LIMIT",
-    process.env.RAKAZO_COMPUTER_PIDS_LIMIT ?? DEFAULT_COMPUTER_PIDS_LIMIT,
+    process.env.RAKAZO_COMPUTER_PIDS_LIMIT?.trim() || DEFAULT_COMPUTER_PIDS_LIMIT,
   );
   return {
     // Memory and MemorySwap are set together: leaving MemorySwap unset lets the

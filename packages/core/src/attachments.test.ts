@@ -1,3 +1,4 @@
+import { ATTACHMENT_MAX_BYTES } from "@rakazo/contracts";
 import { describe, expect, it } from "vitest";
 import {
   AttachmentValidationError,
@@ -18,6 +19,29 @@ describe("attachment helpers", () => {
       AttachmentValidationError,
     );
     expect(() => decodeAttachmentBase64("aGVsbG8")).toThrow(AttachmentValidationError);
+  });
+
+  it.each([5 * 1024 ** 2, ATTACHMENT_MAX_BYTES])(
+    "decodes %i bytes without overflowing the regex stack",
+    (size) => {
+      const bytes = Buffer.alloc(size, 0xa5);
+      expect(Buffer.from(decodeAttachmentBase64(bytes.toString("base64"))).equals(bytes)).toBe(
+        true,
+      );
+    },
+  );
+
+  it.each(["====", "A===", "AA=A", "AA==AAAA", "AA!A", "AAAA\nAAAA"])(
+    "rejects malformed base64 %j",
+    (value) => {
+      expect(() => decodeAttachmentBase64(value)).toThrow(AttachmentValidationError);
+    },
+  );
+
+  it("rejects oversized decoded payloads even within the encoded-length bound", () => {
+    expect(() =>
+      decodeAttachmentBase64(Buffer.alloc(ATTACHMENT_MAX_BYTES + 1).toString("base64")),
+    ).toThrow("10 MiB");
   });
 
   it("builds prompt text and history summaries", () => {

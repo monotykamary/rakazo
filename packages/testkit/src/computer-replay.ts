@@ -20,6 +20,7 @@ import {
   type ModelEmulatorStep,
   startModelEmulator,
 } from "./model-emulator.js";
+import { validatePngScreenshot } from "./png-validation.js";
 
 export function computerReplayContext(): AdapterContext {
   return {
@@ -105,15 +106,23 @@ export async function runComputerReplay(
           const result = request.messages.findLast((message) => message.role === "tool");
           assert.equal(result?.tool_call_id, "observe");
           assert.match(String(result?.content), /computer observed/);
-          // Sealed Fabric returns extension content as JSON, not a model-visible image.
-          // Verify screenshot preservation without pretending this tests image understanding.
+          // Fabric keeps image metadata in JSON and forwards the bytes as model-visible media.
+          // Verify the actual protocol image without claiming image understanding.
           const envelope = JSON.parse(String(result?.content));
           assert.equal(envelope.isError, false);
           const image = envelope.content.find((part: { type: string }) => part.type === "image");
           assert.equal(image?.mimeType, "image/png");
-          assert.deepEqual(
-            [...Buffer.from(image.data, "base64").subarray(0, 8)],
-            [137, 80, 78, 71, 13, 10, 26, 10],
+          const images = request.messages.flatMap((message) =>
+            Array.isArray(message.content)
+              ? message.content.filter((part) => part.type === "image_url")
+              : [],
+          );
+          assert.ok(images.length > 0, "The screenshot must reach the multimodal model");
+          const url = images[0].image_url.url as string;
+          assert.ok(url.startsWith("data:image/png;base64,"));
+          validatePngScreenshot(
+            Buffer.from(url.slice("data:image/png;base64,".length), "base64"),
+            "replayed screenshot",
           );
           assert.equal(typeof result?.content, "string");
         },
@@ -145,7 +154,7 @@ export async function runComputerReplay(
           "Complete the requested task using your computer. Inspect current state before acting.",
         history: [],
         tools: builtinAgentTools.filter((definition) => names.has(definition.name)),
-        model: emulator.model,
+        model: { ...emulator.model, acceptsImages: true },
         executeTool: async (name, args) => {
           usedTools.push(name);
           if (name === "browser_navigate")

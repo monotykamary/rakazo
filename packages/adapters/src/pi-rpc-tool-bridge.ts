@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { validateToolArguments } from "@earendil-works/pi-ai";
+import { type JsonObject, validateToolArguments } from "@earendil-works/pi-ai";
 import type {
   AgentRunRequest,
   AgentRuntimeEvent,
@@ -139,7 +139,8 @@ export class ToolBridge {
         type: "toolCall",
         id: callId,
         name: tool.name,
-        arguments: prepareManagedToolArguments(tool.name, record(input.args)),
+        // Arguments crossed the JSON-only bridge before compatibility normalization.
+        arguments: prepareManagedToolArguments(tool.name, record(input.args)) as JsonObject,
       },
     ) as Record<string, unknown>;
     const executionId = `${this.request.runId}:${randomUUID()}`;

@@ -14,7 +14,7 @@ const log = (value) => appendFile(logPath, JSON.stringify(value) + "\\n");
 
 if (process.argv.includes("--version")) {
   await log({ type: "version" });
-  process.stdout.write((scenario.version ?? "0.85.1") + "\\n");
+  process.stdout.write((scenario.version ?? "0.87.1") + "\\n");
   process.exit(0);
 }
 

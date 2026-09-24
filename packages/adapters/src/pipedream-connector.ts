@@ -458,19 +458,24 @@ export class PipedreamConnector implements ManagedConnectorProvider {
         signal: requestAbort,
       },
     );
-    const body = JSON.parse(await readPipedreamBody(response, requestAbort)) as {
-      access_token?: string;
-      expires_in?: number;
-      error?: string;
-    };
-    if (!response.ok || !body.access_token) {
-      throw new Error(`Pipedream authentication failed: ${body.error ?? response.status}`);
+    const text = await readPipedreamBody(response, requestAbort);
+    // Do not parse or echo an error body: proxies can return HTML or reflect credentials.
+    if (!response.ok) throw new Error(`Pipedream authentication failed: ${response.status}`);
+    let body: { access_token?: unknown; expires_in?: number };
+    try {
+      body = JSON.parse(text);
+      if (!body || typeof body.access_token !== "string" || !body.access_token.trim()) {
+        throw new Error("missing token");
+      }
+    } catch {
+      throw new Error("Pipedream authentication failed: invalid token response");
     }
+    const token = body.access_token as string;
     this.accessToken = {
-      value: body.access_token,
+      value: token,
       expiresAt: Date.now() + (body.expires_in ?? 3_600) * 1_000,
     };
-    return body.access_token;
+    return token;
   }
 }
 

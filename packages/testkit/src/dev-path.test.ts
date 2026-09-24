@@ -3,7 +3,12 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { callerEnvironment, executable, loadEnvironment } from "../../../scripts/dev.mjs";
+import {
+  callerEnvironment,
+  executable,
+  loadEnvironment,
+  PI_RUNTIME_VERSION,
+} from "../../../scripts/dev.mjs";
 
 const temporary: string[] = [];
 afterEach(async () => {
@@ -106,7 +111,7 @@ describe("dev caller PATH", () => {
       await script(ancestor, "pi", "exit 91");
       await script(ancestor, "pi-real", "exit 92");
       await script(system, "pi", 'exec pi-real "$@"');
-      await script(system, "pi-real", 'printf "0.85.1\\n"');
+      await script(system, "pi-real", `printf "${PI_RUNTIME_VERSION}\\n"`);
       await script(local, "workspace-probe", 'printf "workspace-ok\\n"');
       const source = new URL("../../../scripts/dev.mjs", import.meta.url).href;
       await writeFile(
@@ -156,7 +161,7 @@ describe("dev caller PATH", () => {
         encoding: "utf8",
         timeout: 15000,
       });
-      expect(result.trim().split("\n")).toEqual(["0.85.1", "workspace-ok"]);
+      expect(result.trim().split("\n")).toEqual([PI_RUNTIME_VERSION, "workspace-ok"]);
     },
   );
 });

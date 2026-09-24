@@ -9,6 +9,7 @@ import {
   type Context,
   createAssistantMessageEventStream,
   InMemoryCredentialStore,
+  type JsonValue,
   type Model,
   type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
@@ -417,7 +418,7 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
                 toolCallId: callId,
                 toolName: name,
                 content: result.content as never,
-                details: result.details,
+                details: result.details as JsonValue | undefined,
                 isError: response.isError === true,
                 timestamp: Date.now(),
               },
@@ -547,8 +548,8 @@ export async function runManagedPiWorker(bridgePort: PrivateDuplex): Promise<nev
         transform ? await transform(messages, signal) : messages,
       );
     };
-    const stopAfter = agent.shouldStopAfterTurn;
-    agent.shouldStopAfterTurn = (ctx, signal) => paused || stopAfter?.(ctx, signal) || false;
+    const finishTurn = agent.finishTurn;
+    agent.finishTurn = (ctx, signal) => (paused ? { action: "end" } : finishTurn?.(ctx, signal));
     // Only the sealed managed kit is exposed through stock RPC.
     ready();
     return {

@@ -114,6 +114,7 @@ export function createRepos(prisma: PrismaClient) {
       },
       select: {
         id: true,
+        parentBotId: true,
         spaceId: true,
         name: true,
         title: true,
@@ -141,6 +142,7 @@ export function createRepos(prisma: PrismaClient) {
       if (!bot.thread) throw new IsolationError("Bot is missing its thread");
       return {
         id: bot.id,
+        parentBotId: bot.parentBotId,
         spaceId: bot.spaceId,
         name: bot.name,
         title: bot.title,

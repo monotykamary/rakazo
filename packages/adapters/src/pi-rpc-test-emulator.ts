@@ -4,6 +4,18 @@ import type { AgentProcessHost } from "./pi-rpc-protocol.js";
 import { createTestProcessHost } from "./pi-rpc-test-host.js";
 import { PiAgentRuntime } from "./pi-runtime.js";
 
+// Distinct valid one-pixel PNGs; Pi validates images before admitting them to a session.
+export const RPC_TEST_IMAGES = {
+  root: Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==",
+    "base64",
+  ),
+  steering: Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4////fwAJ+wP9KobjigAAAABJRU5ErkJggg==",
+    "base64",
+  ),
+};
+
 export async function createRpcHarness(
   options: {
     wrapHost?: (host: AgentProcessHost) => AgentProcessHost;

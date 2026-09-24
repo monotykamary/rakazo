@@ -83,6 +83,36 @@ describe("PipedreamConnector", () => {
     ).rejects.toThrow("secure HTTPS connect URL");
   });
 
+  it.each([
+    { status: 502, body: "<html>fake-client-secret</html>", reason: "502" },
+    { status: 401, body: '{"error":"fake-client-secret"}', reason: "401" },
+    ...["", "not json", "null", "{}", '{"access_token":42}', '{"access_token":" "}'].map(
+      (body) => ({ status: 200, body, reason: "invalid token response" }),
+    ),
+  ])(
+    "bounds and sanitizes invalid token responses ($status, $body)",
+    async ({ status, body, reason }) => {
+      const fetch = vi.fn().mockResolvedValue(new Response(body, { status }));
+      const connector = new PipedreamConnector(
+        {
+          clientId: "fake-client-id",
+          clientSecret: "fake-client-secret",
+          projectId: "fake-project-id",
+          environment: "development",
+          identitySecret: "fake-identity-secret",
+        },
+        { fetch },
+      );
+      await expect(
+        connector.begin(
+          { provider: "gmail", redirectUrl: "https://rakazo.example.test/app" },
+          context,
+        ),
+      ).rejects.toThrow(`Pipedream authentication failed: ${reason}`);
+      expect(fetch).toHaveBeenCalledOnce();
+    },
+  );
+
   it("rejects an oversized token response before buffering it", async () => {
     const response = new Response("oversized", {
       headers: { "content-length": String(MAX_PIPEDREAM_RESPONSE_BYTES + 1) },

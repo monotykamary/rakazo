@@ -22,7 +22,8 @@ export function decodeAttachmentBase64(contentBase64: string): Uint8Array {
   }
   if (
     normalized.length % 4 !== 0 ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(normalized)
+    // A flat character scan avoids V8's stack overflow on multi-megabyte uploads.
+    !/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)
   ) {
     throw new AttachmentValidationError("Attachment content is not valid base64");
   }

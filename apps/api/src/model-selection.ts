@@ -8,6 +8,7 @@ import {
   type ModelSelectionStatus,
   ModelSelectionStatusSchema,
   sameModelSelection,
+  usableModelId,
 } from "@rakazo/contracts";
 import { ACTIVE_RUN_STATUSES } from "@rakazo/core";
 import {
@@ -107,11 +108,12 @@ export async function getPiModelSelection(
     select: { modelProvider: true, modelId: true, thinkingLevel: true },
   });
   if (!bot) throw new ORPCError("NOT_FOUND");
+  const modelId = usableModelId(bot.modelId);
   let requested: ModelSelection | null =
-    bot.modelProvider && bot.modelId
+    bot.modelProvider && modelId
       ? {
           provider: bot.modelProvider,
-          modelId: bot.modelId,
+          modelId,
           thinkingLevel: ModelSelectionSchema.shape.thinkingLevel.safeParse(bot.thinkingLevel)
             .success
             ? (bot.thinkingLevel as ModelSelection["thinkingLevel"])

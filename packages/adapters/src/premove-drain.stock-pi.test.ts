@@ -16,6 +16,8 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { expect, it } from "vitest";
+import { placeholderObservation } from "./computer-support.js";
+import { RPC_TEST_IMAGES } from "./pi-rpc-test-emulator.js";
 import { toPiImages } from "./pi-runtime.js";
 import { deliverPremoveDrain } from "./premove-drain.js";
 
@@ -145,10 +147,14 @@ it.each([false, true])(
             throw new Error(JSON.stringify(session.messages));
           }),
         ]);
-      const images = [1, 2, 3].map((value) => ({
-        name: `image-${value}`,
+      const images = [
+        RPC_TEST_IMAGES.root,
+        RPC_TEST_IMAGES.steering,
+        placeholderObservation().image,
+      ].map((data, index) => ({
+        name: `image-${index + 1}`,
         mimeType: "image/png" as const,
-        data: new Uint8Array([value]),
+        data,
       }));
       await deliverPremoveDrain(
         [

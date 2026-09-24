@@ -1,4 +1,5 @@
 import type { AgentRunRequest } from "@rakazo/adapter-kit";
+import { usableModelId } from "@rakazo/contracts";
 import type { findDefaultModelCredential } from "@rakazo/db";
 
 export class ModelConnectionUnavailableError extends Error {
@@ -32,7 +33,7 @@ export function selectConfiguredModel(input: {
   deployment: { provider: string; model: string } | null;
 }) {
   const { bot, overrideCredential, defaultCredential, settings, deployment } = input;
-  const hasOverride = Boolean(bot?.modelProvider && bot.modelId);
+  const hasOverride = Boolean(bot?.modelProvider && usableModelId(bot.modelId));
   // A missing connection must not turn an explicit pin into a different model.
   const credential = hasOverride ? overrideCredential : defaultCredential;
   return {
@@ -42,10 +43,11 @@ export function selectConfiguredModel(input: {
       settings?.defaultModelProvider ??
       deployment?.provider,
     id:
-      (hasOverride ? bot!.modelId : null) ??
-      credential?.defaultModel ??
-      settings?.defaultModelId ??
-      deployment?.model,
+      usableModelId(hasOverride ? bot!.modelId : null) ??
+      usableModelId(credential?.defaultModel) ??
+      usableModelId(settings?.defaultModelId) ??
+      usableModelId(deployment?.model) ??
+      undefined,
     credential,
     thinkingLevel: (bot?.thinkingLevel as AgentRunRequest["model"]["thinkingLevel"]) ?? null,
   };

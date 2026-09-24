@@ -367,6 +367,15 @@ function isComputerScreenshotMessage(
 export function jsonSchemaParameters(
   schema: Record<string, unknown>,
 ): ReturnType<typeof Type.Object> {
+  // The managed model sees Fabric only. Keep intersections intact for backend validation;
+  // flattening these into a provider envelope would discard required fields or constraints.
+  if (schema.allOf !== undefined) {
+    if (!Array.isArray(schema.allOf) || schema.allOf.length === 0) {
+      throw new Error("allOf must be a nonempty array");
+    }
+    for (const branch of schema.allOf) schemaObject(branch);
+    return Type.Unsafe(schema) as unknown as ReturnType<typeof Type.Object>;
+  }
   const alternatives = Array.isArray(schema.oneOf)
     ? schema.oneOf
     : Array.isArray(schema.anyOf)
@@ -548,7 +557,7 @@ export function reliableStreamOptions(
     // avoids long-lived sockets between tool turns and has bounded retries.
     next = { ...next, transport: "sse" };
   }
-  // These protocols require affinity headers that Pi 0.85.1 does not attach.
+  // Preserve the product conversation identity at the provider boundary.
   if (model.provider === "opencode" || model.provider === "opencode-go") {
     const sessionId = next?.sessionId?.trim() || randomUUID();
     next = {

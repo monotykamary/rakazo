@@ -1,4 +1,78 @@
-# Handpicked upstream adaptation: 6d7da581
+# Handpicked upstream adaptation: a6a5b5e4
+
+Reviewed the 45 commits after `6d7da581` through `a6a5b5e4`. These are manual
+ports, not a merge or cherry-pick. The managed Pi/Fabric boundary, local Pi model
+ownership, exact model pins, office placement/egress, and Bun tooling remain intact.
+
+## Selected and implemented
+
+| Upstream | Fork adaptation | Acceptance checks |
+| --- | --- | --- |
+| `7cf756d5` | Flat base64 validation avoids V8 stack overflow on normal large uploads; the 10 MiB limit and padding validation remain. | Decode 5 MiB and maximum-size payloads; reject malformed and oversized input. |
+| `57effb6e` (#954) | Materialize images alongside files in the authorized computer workspace, not just inline vision input. | Image/PDF paths, owner/Space query scope, and dirty-before-write ordering. |
+| `5dc3f824` (#970) | Preserve `allOf` and local schema references through backend tool validation. Do not flatten away intersections: only Fabric is exposed to the model. | Accept a valid intersection; reject missing fields, conflicting limits, and malformed combinators. |
+| `d5b5d928` (#974), adapted | Reject stringified absent IDs at shared model-selection/routing boundaries; normalize legacy database preferences and bot pins on read. Do not import catalog-first fallback that changes an explicit pin. | Shared schemas, persisted/read sentinel values, and existing exact-pin selection regressions. |
+| `9d009d6e` (#959) | Include `parentBotId` throughout the compact cross-Space database projection, shared contract, and API DTO. | Root/child repository projections and real RPC output parsing. |
+| `b4c4da11` | Handle unsuccessful Pipedream token responses before JSON parsing; sanitize malformed successful responses too. | HTML, reflected credentials, empty/malformed JSON, invalid token types, existing response-size bounds. |
+| `ee0fbc35` (#934) | Blank or whitespace computer limits use bounded defaults; explicit unlimited and malformed-value behavior is unchanged. | Container creation options for empty, whitespace, unlimited, and invalid settings. |
+| `64c9b641` (#996) | Restore prior browser tabs using the existing assigned profile. | Execute the launcher against a stub browser; check default/explicit profile, restoration flag, and loopback debug binding. |
+
+All behavior is shared backend/contracts code or the existing computer image. No
+new screen, provider dependency, or persistent UI copy is introduced. The validation
+error "Invalid model ID" appears only for invalid input; token-response errors are
+likewise failure-only and deliberately omit remote bodies.
+
+## Worth a separate integration batch
+
+- Quotes (#950): rendered-text excerpt validation belongs with the still-deferred cross-platform quoting workflow.
+- Preview correctness (#932, #939): retain literal underscores and autolink destinations using a deliberately bounded Markdown parser, with shared mobile/sidebar/push coverage. Do not import upstream's whole preview implementation implicitly.
+- Connector discovery (#946, #947, #955, #968 and `4226be0b`): audit failed discovery/returned errors, lazy Pipedream catalogs, and live-account reconciliation. These need adaptation to the fork's sealed MCP bridge and durable audit identity, not upstream executor replacement.
+- Free-text answers (#917), quiet routine completion (#929), and agent-editable notification/avatar settings (#918, #920): useful product features, but require approval, completion, persistence, and native/web parity work.
+- Computer interaction (#913, #915, #916), avatars (#967), sidebar sizing (#925), and focus-card localization (#960): separate UI/device verification rather than bundling an unverified UI rewrite.
+- Voice verification/catalog bounds (#938, #961) and on-device voice (#971): optional provider/native work with provider-contract and device verification.
+
+## Not imported
+
+- Upstream history summarizer changes (#991, #995, #997), page-state pruning (#979, #980), and reasoning output budgets (#983): the fork uses deterministic Fabric compaction and brokered managed/local Pi execution. Do not introduce a second context/retry owner or prune exact-recall source.
+- Root schema flattening (#962): upstream exposes individual tool schemas to Anthropic; this fork exposes only `fabric_exec` and must preserve backend validation constraints.
+- CreateOS (#982), TypeSafe Jev Auto Review (#931), and model-specific catalog changes (#981): optional new product/provider scope, not prerequisites for this refresh. Pi's catalog is updated through its SDK pin instead.
+- Expo patches (#921, #999): keep native dependency updates with Expo validation and native build checks; no native lifecycle migration is included here.
+- Request-secret validation (#912), plain-text preview foundations (#914), and stopped-container recovery (#924): retain existing fork behavior and earlier ports rather than replay overlapping patches. The related upstream focus-card assertion change (#969) targets its own UI flow.
+
+## Pi bundle refresh
+
+Pi coding-agent, ai, agent-core, and tui are pinned to **0.87.1**. The eight
+content-addressed extension snapshots are Fabric **0.96.0**, Fovea **0.31.0**,
+queue-steer **0.17.5**, retry **0.10.2**, multiprovider **0.10.0**,
+hide-providers **0.1.20**, Contour **0.4.4**, and vision-handoff **0.10.6**.
+
+Archives were rebuilt from committed source snapshots, not modified working trees.
+The manifest records each commit and hash. The vendor command accepts
+`--source-root` for prepared checkouts. Runtime startup still verifies exact identities;
+there is no runtime install or sibling lookup. Managed pause uses Pi's supported
+`finishTurn` hook, with the handshake version sourced from the kit constant.
+The rebuilt queue engine prioritizes steering unless `tail` is selected; Rakazo
+now explicitly selects tail insertion for ordinary, staged, and adopted enqueues.
+An explicit priority request remains supported. The previous archive had stale
+compiled enqueue behavior, so rebuilding without this adaptation changed FIFO order.
+
+### Verification ledger
+
+- Extension-source builds/type checks where applicable and offline suites: 1,139 tests passed across all eight snapshots.
+- Installed kit identity, archive hashes, extension entries/public exports, and vendor argument checks: passed.
+- Actual headless kit loading, sealed tools, snapshots, recall, and compaction: 16 tests passed.
+- Upstream regressions passed after correcting the navigation fixture and completing the repository/shared-contract projection. Large-upload, image/PDF materialization, allOf, model sentinel, token-error, browser argv, and resource-default checks all passed.
+- The Pi-focused sweep initially passed 419 tests and exposed 11 failures. Targeted rechecks passed all failures after updating stale version expectations, replacing invalid image placeholders with distinct valid PNGs, handling qualified catalog alias labels, and rerunning schema tests against the completed edit. Actual RPC image forwarding and child-session image isolation/continuation passed without dropping assertions. Exact-pin model/API regressions also passed.
+- Queue verification exposed four ordering/drain failures. Explicit FIFO insertion fixed the backend path; all 52 core/database/API queue tests passed, including write-ahead reservation, concurrent enqueue, pause, drain, and explicitly requested priority. Legacy model-read and drain-selection rechecks also passed.
+- Standalone clean installation of all eight archives passed, as did workspace install/link and native-isolation checks. Runtime imports do not require sibling checkouts.
+- Every workspace type-check passed across the initial sweep and corrected targeted checks. A pre-existing motion test omitted required children and was repaired without production UI changes. Expo validation was rerun with offline mode forwarded through Turbo; online patch-version recommendations are not claimed as satisfied.
+- The refreshed catalog reuses the existing "(auto-updates)" label for qualified alias names rather than calling older routed models "Latest". No new explanatory UI copy or model-specific policy was added.
+- Repository lint and whitespace checks passed; existing warning-level diagnostics remain. Structural review retained the intentional allOf validation and sentinel-normalization branches. Archive inspection found no embedded checkout path.
+- The pre-commit full offline sweep passed 5,046 tests and exposed seven failures. All seven passed targeted rechecks after adapting version/prompt/image fixtures, declaring image support for screenshot-consuming replay models, and validating the actual forwarded PNG instead of embedded JSON bytes. Together these checks cover 5,053 passing tests; 212 database/provider-dependent tests remain skipped. The affected subprocess replay cases use the existing 90-second integration-test budget; production timeouts and artifact/exactly-once assertions are unchanged.
+- The commit gate also corrected baseline formatting/import ordering, native reaction grouping, and stale browser fixture expectations. All 24 workspace type-check tasks passed, followed by successful checks of the final changed packages. The isolated headless contextual activity/queue scenario passed; obsolete inspector model controls were not restored.
+- No Electron E2E, real-browser session restoration, native-device build, or production container enforcement is claimed by these offline checks.
+
+# Previous adaptation: 6d7da581
 
 This rollout adapts behavior from upstream without merging or replaying commits.
 The fork's managed Pi/Fabric runtime, office handoff and egress, remote providers,

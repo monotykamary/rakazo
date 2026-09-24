@@ -1065,7 +1065,7 @@ describe("LocalPiRuntime", () => {
     await writeLocalPiScenario(cwd, { version: "0.84.9" });
     const versionRuntime = new LocalPiRuntime({ command, cwd, sessionDir });
     await expect(collect(versionRuntime, request({ runId: "old-version" }))).rejects.toThrow(
-      "0.85.1 or newer",
+      "0.87.1 or newer",
     );
     expect(
       (await readLocalPiEmulatorLog(cwd)).filter((entry) => entry.type === "start"),

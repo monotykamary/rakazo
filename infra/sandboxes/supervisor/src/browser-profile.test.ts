@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   browserProfilePathForScreen,
@@ -40,6 +41,31 @@ function fixture() {
 }
 
 describe("durable independent browser profiles", () => {
+  it.each([false, true])("restores tabs with the selected profile (explicit: %s)", (explicit) => {
+    const root = mkdtempSync(path.join(tmpdir(), "rakazo-browser-argv-"));
+    fixtures.push(root);
+    const profile = path.join(root, "profile with spaces");
+    writeFileSync(path.join(root, "chromium"), '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 });
+    const wrapper = fileURLToPath(new URL("../../computer/rakazo-browser", import.meta.url));
+    const args = explicit ? ["--user-data-dir", profile] : [];
+    const result = spawnSync("sh", [wrapper, ...args], {
+      encoding: "utf8",
+      timeout: 10_000,
+      env: {
+        ...process.env,
+        HOME: root,
+        PATH: `${root}:${process.env.PATH}`,
+        DISPLAY: ":2",
+        RAKAZO_BROWSER_PROFILE: profile,
+      },
+    });
+    expect(result.status).toBe(0);
+    const argv = result.stdout.trim().split("\n");
+    expect(argv).toContain("--restore-last-session");
+    expect(argv).toContain("--remote-debugging-address=127.0.0.1");
+    expect(argv).toContain("--remote-debugging-port=9223");
+    expect(argv).toContain(explicit ? profile : `--user-data-dir=${profile}`);
+  });
   it("keeps both bots' data through stop and restart without copying the default profile", () => {
     const { shared, profile, run } = fixture();
     writeFileSync(path.join(shared, "login"), "legacy-session");

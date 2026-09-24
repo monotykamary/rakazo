@@ -9,6 +9,7 @@ import {
   QueueControlCommandSchema,
   type QueueControlResult,
 } from "@rakazo/contracts";
+import { PI_RUNTIME_VERSION } from "@rakazo/pi-kit";
 import type { AgentExecutionRequest } from "pi-fabric/agents";
 import { workerSessionCheckpoint } from "./pi-agent-snapshot.js";
 import {
@@ -605,7 +606,11 @@ export class ManagedPiRuntime implements AgentRuntime {
       bridge = new JsonPeer(connection.bridge, handle, (event) => {
         if (event.type === "disconnected") disconnect(event.cause);
         if (event.type === "worker_error") rejectSettled(new Error("Managed queued prompt failed"));
-        if (event.type === "hello" && event.version === 1 && event.runtimeVersion === "0.85.1") {
+        if (
+          event.type === "hello" &&
+          event.version === 1 &&
+          event.runtimeVersion === PI_RUNTIME_VERSION
+        ) {
           clearTimeout(helloTimer);
           resolveHello();
         }
@@ -737,7 +742,11 @@ export class ManagedPiRuntime implements AgentRuntime {
           signal,
         ),
       );
-      if (ready.version !== 1 || ready.runtimeVersion !== "0.85.1" || ready.nativeTools !== false)
+      if (
+        ready.version !== 1 ||
+        ready.runtimeVersion !== PI_RUNTIME_VERSION ||
+        ready.nativeTools !== false
+      )
         throw new Error("Unsafe or incompatible Pi worker");
       if (request.memory && ready.memory !== true)
         throw new Error("Managed worker lacks host memory support");

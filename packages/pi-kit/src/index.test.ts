@@ -25,7 +25,7 @@ describe("managed Pi kit", () => {
   it("pins all eight extensions and the runtime", () => {
     expect(PI_KIT_PACKAGES).toHaveLength(8);
     for (const { version } of PI_KIT_PACKAGES) expect(version).toMatch(/^\d+\.\d+\.\d+$/);
-    expect(PI_RUNTIME_VERSION).toBe("0.85.1");
+    expect(PI_RUNTIME_VERSION).toBe("0.87.1");
   });
   it("validates extension files before returning an installation", () => {
     expect(validatePiKitPackage(fixture(), expected)[0]).toMatch(/dist[/\\]index\.js$/);

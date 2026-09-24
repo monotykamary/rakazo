@@ -1,17 +1,18 @@
 import * as z from "zod";
 import { Id } from "./ids.js";
+import { ModelIdSchema } from "./model-selection.js";
 
 // Same-provider account rotation is separate from explicit cross-model fallback.
 export const ModelRoutingTargetSchema = z.object({
   credentialId: Id,
-  modelId: z.string().trim().min(1).max(300),
+  modelId: ModelIdSchema,
 });
 export const ModelRoutingSchema = z
   .object({
     version: z.literal(1),
     strategy: z.enum(["ordered", "round-robin"]),
     credentialIds: z.array(Id).min(1).max(20),
-    modelId: z.string().trim().min(1).max(300),
+    modelId: ModelIdSchema,
     fallbacks: z.array(ModelRoutingTargetSchema).max(20),
   })
   .superRefine((value, ctx) => {

@@ -297,51 +297,59 @@ describe("createRepos.listBots", () => {
 });
 
 describe("createRepos.listSpaceBotsForSpaces", () => {
-  it("loads and maps only the compact cross-space sidebar fields", async () => {
-    const findMany = vi.fn(async (_query: { where: unknown; select: Record<string, unknown> }) => [
-      {
-        id: "bot-2",
-        spaceId: "ws-2",
-        name: "Support",
-        title: "Customer support",
-        color: "#123456",
-        notifyOnFinish: false,
-        pinned: true,
-        sectionId: null,
-        updatedAt: new Date("2026-08-20T00:00:00.000Z"),
-        thread: {
-          unread: true,
-          messages: [{ blocks: [{ kind: "text", text: "Waiting for a reply" }] }],
-        },
-        runs: [{ status: "running" }],
-      },
-    ]);
-    const repos = createRepos({ bot: { findMany } } as unknown as PrismaClient);
+  it.each([null, "parent-bot"])(
+    "loads compact cross-space fields with parent %s",
+    async (parentBotId) => {
+      const findMany = vi.fn(
+        async (_query: { where: unknown; select: Record<string, unknown> }) => [
+          {
+            id: "bot-2",
+            parentBotId,
+            spaceId: "ws-2",
+            name: "Support",
+            title: "Customer support",
+            color: "#123456",
+            notifyOnFinish: false,
+            pinned: true,
+            sectionId: null,
+            updatedAt: new Date("2026-08-20T00:00:00.000Z"),
+            thread: {
+              unread: true,
+              messages: [{ blocks: [{ kind: "text", text: "Waiting for a reply" }] }],
+            },
+            runs: [{ status: "running" }],
+          },
+        ],
+      );
+      const repos = createRepos({ bot: { findMany } } as unknown as PrismaClient);
 
-    await expect(repos.listSpaceBotsForSpaces(actor, ["ws-2"])).resolves.toEqual([
-      {
-        id: "bot-2",
-        spaceId: "ws-2",
-        name: "Support",
-        title: "Customer support",
-        color: "#123456",
-        notifyOnFinish: false,
-        pinned: true,
-        sectionId: null,
-        unread: true,
-        preview: "Waiting for a reply",
-        status: "running",
-        updatedAt: "2026-08-20T00:00:00.000Z",
-      },
-    ]);
-    const query = findMany.mock.calls[0]![0];
-    expect(query.where).toEqual(
-      expect.objectContaining({ spaceId: { in: ["ws-2"] }, userId: actor.userId }),
-    );
-    expect(query.select).not.toHaveProperty("description");
-    expect(query.select).not.toHaveProperty("instructions");
-    expect(query.select).not.toHaveProperty("computer");
-  });
+      await expect(repos.listSpaceBotsForSpaces(actor, ["ws-2"])).resolves.toEqual([
+        {
+          id: "bot-2",
+          parentBotId,
+          spaceId: "ws-2",
+          name: "Support",
+          title: "Customer support",
+          color: "#123456",
+          notifyOnFinish: false,
+          pinned: true,
+          sectionId: null,
+          unread: true,
+          preview: "Waiting for a reply",
+          status: "running",
+          updatedAt: "2026-08-20T00:00:00.000Z",
+        },
+      ]);
+      const query = findMany.mock.calls[0]![0];
+      expect(query.where).toEqual(
+        expect.objectContaining({ spaceId: { in: ["ws-2"] }, userId: actor.userId }),
+      );
+      expect(query.select).toHaveProperty("parentBotId", true);
+      expect(query.select).not.toHaveProperty("description");
+      expect(query.select).not.toHaveProperty("instructions");
+      expect(query.select).not.toHaveProperty("computer");
+    },
+  );
 });
 
 describe("createRepos.reorderBots", () => {

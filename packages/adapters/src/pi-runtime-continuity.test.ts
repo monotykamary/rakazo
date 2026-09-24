@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { builtinAgentTools, PRIVATE_SUBAGENT_TOOL } from "./builtin-tools.js";
 import { boundedExecutionEvidence } from "./pi-execution-evidence.js";
-import { createRpcHarness } from "./pi-rpc-test-emulator.js";
+import { createRpcHarness, RPC_TEST_IMAGES } from "./pi-rpc-test-emulator.js";
 
 const children = (state: any): any[] =>
   state?.agents?.records.map((entry: any) => entry.record) ?? [];
@@ -68,7 +68,7 @@ describe("managed runtime continuity", () => {
     try {
       await harness.run({
         currentTurnImages: [
-          { name: "root.png", mimeType: "image/png", data: Buffer.from("root-only-image-fixture") },
+          { name: "root.png", mimeType: "image/png", data: RPC_TEST_IMAGES.root },
         ],
         tools: [
           PRIVATE_SUBAGENT_TOOL,
@@ -94,7 +94,7 @@ describe("managed runtime continuity", () => {
       );
       expect(childRecord(saved, id).checkpoint.placement.cwd).toBe("project");
       expect(JSON.stringify(childRecord(saved, id).checkpoint.session)).not.toContain(
-        Buffer.from("root-only-image-fixture").toString("base64"),
+        RPC_TEST_IMAGES.root.toString("base64"),
       );
       let sent = false;
       await harness.run({
@@ -123,7 +123,7 @@ describe("managed runtime continuity", () => {
               {
                 name: "fixture.png",
                 mimeType: "image/png",
-                data: Buffer.from("offline-image-fixture"),
+                data: RPC_TEST_IMAGES.steering,
               },
             ],
           });
@@ -138,7 +138,7 @@ describe("managed runtime continuity", () => {
       expect(childRecord(saved, id).parentId).toBe("run-next");
       expect(childRecord(saved, id).checkpoint.session.sourceMessageIds).toContain("targeted");
       expect(JSON.stringify(childRecord(saved, id).checkpoint.session)).toContain(
-        Buffer.from("offline-image-fixture").toString("base64"),
+        RPC_TEST_IMAGES.steering.toString("base64"),
       );
       expect(authorized).toHaveBeenCalledTimes(2);
       expect(harness.host.reaped).toBe(4);

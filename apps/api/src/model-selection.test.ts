@@ -107,6 +107,21 @@ function fixture() {
   return { db, prisma, client, state, bot, piModels };
 }
 describe("model selection routes", () => {
+  it.each(["null", "undefined"])(
+    "reads a legacy %s bot pin without breaking response validation",
+    async (modelId) => {
+      const f = fixture();
+      f.bot.modelId = modelId;
+      await expect(
+        f.client().models.getSelection({ botId: "bot", threadId: "thread" }),
+      ).resolves.toMatchObject({ requested: null, effective: old });
+      await expect(
+        f.client().models.setWorkerSelection({ ...scope, selection: { ...selection, modelId } }),
+      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      expect(f.db.runtimeModelPreference.upsert).not.toHaveBeenCalled();
+      expect(f.piModels.validate).not.toHaveBeenCalled();
+    },
+  );
   it("registers both authenticated model methods and rejects anonymous callers before storage", async () => {
     const f = fixture();
     const client = f.client(false);

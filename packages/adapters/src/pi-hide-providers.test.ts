@@ -30,7 +30,7 @@ async function archiveFixture() {
   const artifact = manifest.packages.find(
     (entry: { name: string }) => entry.name === "pi-hide-providers",
   );
-  expect(artifact.version).toBe("0.1.18");
+  expect(artifact.version).toBe("0.1.20");
   execFileSync("tar", [
     "-xzf",
     fileURLToPath(new URL(`../../../vendor/pi-kit/${artifact.filename}`, import.meta.url)),
