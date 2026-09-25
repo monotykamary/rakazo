@@ -192,16 +192,19 @@ test("message hover shows beside-bubble actions; reply links to parent", async (
   await captureScreenshot(page, testInfo, "message-reaction-picker");
   await picker.getByRole("button", { name: "❤️", exact: true }).click();
   const reactionChip = botRow.getByTestId("message-reactions");
-  await expect(reactionChip).toContainText("❤️");
+  const reactionButton = reactionChip.getByRole("button", { name: "React" });
+  await expect(reactionButton).toContainText("❤️");
   await captureScreenshot(page, testInfo, "message-emoji-reaction");
   await reactionChip.click({ button: "right" });
-  await expect(reactionChip).not.toContainText("❤️");
+  await expect(reactionButton).not.toContainText("❤️");
   await edge.hover();
   await react.hover();
   await picker.getByRole("button", { name: "❤️", exact: true }).click();
-  await expect(reactionChip).toContainText("❤️");
+  await expect(reactionButton).toContainText("❤️");
   await page.reload();
-  await expect(botRow.getByTestId("message-reactions")).toContainText("❤️");
+  await expect(
+    botRow.getByTestId("message-reactions").getByRole("button", { name: "React" }),
+  ).toContainText("❤️");
 
   await parentRow.hover();
   await toolbar.getByRole("button", { name: "More" }).click();

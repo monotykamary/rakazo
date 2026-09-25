@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   captureScreenshot,
+  closeNavigation,
   completeOnboarding,
   createNamedBot,
   openNewGroup,
@@ -97,7 +98,11 @@ test("create group from + and see two bots in one transcript", async ({ page }, 
   await expect(groupAvatar.locator(".rakazo-organic-avatar")).toHaveCount(2);
   const workingAvatar = groupAvatar.locator('[data-working="true"]');
   await expect(workingAvatar).toHaveCount(1);
-  await expect(workingAvatar.locator("svg")).toHaveCSS("animation-name", "rakazo-avatar-spin");
+  await expect(workingAvatar).toHaveClass(/rakazo-organic-avatar/);
+  await expect(workingAvatar.locator(".rakazo-organic-avatar-body-working")).toHaveCSS(
+    "opacity",
+    "1",
+  );
   await captureScreenshot(page, testInfo, "group-avatar-active");
   await page.unroute("**/rpc/groups/list");
   await page.unroute("**/rpc/threads/get");
@@ -232,7 +237,7 @@ test("create group from + and see two bots in one transcript", async ({ page }, 
   expect((await transcript.boundingBox())?.width).toBeGreaterThan(350);
   await page.getByRole("button", { name: "Open navigation" }).click();
   await expect(page.getByRole("button", { name: "Close navigation" })).toBeVisible();
-  await page.getByRole("button", { name: "Close navigation" }).click();
+  await closeNavigation(page);
   await page.getByTestId("bot-settings-trigger").click();
   const settings = page.getByTestId("side-panel");
   await expect(settings).toHaveAttribute("data-panel", "group-settings");

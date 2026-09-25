@@ -66,6 +66,14 @@ export async function signup(
   await page.getByRole("button", { name: "Create account" }).click();
 }
 
+export async function closeNavigation(page: Page) {
+  const backdrop = page.getByRole("button", { name: "Close navigation" });
+  const box = await backdrop.boundingBox();
+  if (!box) throw new Error("Navigation backdrop not found");
+  // The sidebar covers the center of the backdrop on mobile.
+  await backdrop.click({ position: { x: box.width - 8, y: box.height / 2 } });
+}
+
 export async function captureScreenshot(page: Page, testInfo: TestInfo, name: string) {
   const screenshotPath = testInfo.outputPath(`${name}.png`);
   await page.screenshot({

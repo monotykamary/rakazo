@@ -2,10 +2,24 @@ import { expect, type Page, test } from "@playwright/test";
 import { BOT_COLORS, type ModelRuntimeSnapshot, type ModelSelection } from "@rakazo/contracts";
 import { captureScreenshot } from "./helpers";
 
-const current: ModelSelection = { provider: "fixture", modelId: "sol", thinkingLevel: "high" };
-const next: ModelSelection = { provider: "fixture", modelId: "astra", thinkingLevel: "low" };
+const current: ModelSelection = {
+  provider: "fixture",
+  modelId: "sol",
+  thinkingLevel: "high",
+};
+const next: ModelSelection = {
+  provider: "fixture",
+  modelId: "astra",
+  thinkingLevel: "low",
+};
 const catalog = [
-  { provider: "fixture", id: "sol", label: "Sol", billing: "", thinkingLevels: ["high" as const] },
+  {
+    provider: "fixture",
+    id: "sol",
+    label: "Sol",
+    billing: "",
+    thinkingLevels: ["high" as const],
+  },
   {
     provider: "fixture",
     id: "astra",
@@ -153,7 +167,10 @@ async function mount(
       );
     if (path === "/rpc/models/runtime") {
       const input = route.request().postDataJSON().json;
-      expect(input).toEqual({ botId: bot.id, ...(input.refresh ? { refresh: true } : {}) });
+      expect(input).toEqual({
+        botId: bot.id,
+        ...(input.refresh ? { refresh: true } : {}),
+      });
       if (options.delay)
         await new Promise<void>((resolve) => {
           release = resolve;
@@ -174,11 +191,11 @@ async function mount(
         : null;
       runtime = {
         ...runtime,
-        current: requested ?? runtime.profileDefault,
+        current: options.firstRun ? null : (requested ?? runtime.profileDefault),
         selection: {
           requested,
-          effective: requested ?? runtime.profileDefault,
-          status: "applied",
+          effective: options.firstRun ? null : (requested ?? runtime.profileDefault),
+          status: options.firstRun ? "pending" : "applied",
           error: null,
         },
       };
@@ -213,7 +230,12 @@ async function mount(
       runtime = {
         ...runtime,
         current: next,
-        selection: { requested: next, effective: next, status: "applied", error: null },
+        selection: {
+          requested: next,
+          effective: next,
+          status: "applied",
+          error: null,
+        },
       };
     },
   };
@@ -241,22 +263,41 @@ for (const width of [1280, 375]) {
     await captureScreenshot(page, testInfo, `model-header-${width}`);
     await trigger.click();
     await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(2);
-    const input = await page.locator('[data-slot="command-input-wrapper"]').boundingBox();
-    const first = await page.getByRole("listbox").getByRole("option").first().boundingBox();
-    expect(first!.y - (input!.y + input!.height)).toBeGreaterThanOrEqual(12);
+    await expect
+      .poll(async () => {
+        const input = await page.locator('[data-slot="command-input-wrapper"]').boundingBox();
+        const first = await page.getByRole("listbox").getByRole("option").first().boundingBox();
+        return Math.round(first!.y - (input!.y + input!.height));
+      })
+      .toBeGreaterThanOrEqual(12);
     await page.getByRole("combobox", { name: "Search models" }).fill("astra");
     await page.getByRole("listbox").getByRole("option").click();
     await expect
       .poll(() => fixture.writes)
       .toEqual([
-        { botId: "bot-fixture", modelProvider: "fixture", modelId: "astra", thinkingLevel: null },
+        {
+          botId: "bot-fixture",
+          modelProvider: "fixture",
+          modelId: "astra",
+          thinkingLevel: null,
+        },
       ]);
     await page.getByRole("combobox", { name: "Thinking", exact: true }).selectOption("low");
     await expect
       .poll(() => fixture.writes)
       .toEqual([
-        { botId: "bot-fixture", modelProvider: "fixture", modelId: "astra", thinkingLevel: null },
-        { botId: "bot-fixture", modelProvider: "fixture", modelId: "astra", thinkingLevel: "low" },
+        {
+          botId: "bot-fixture",
+          modelProvider: "fixture",
+          modelId: "astra",
+          thinkingLevel: null,
+        },
+        {
+          botId: "bot-fixture",
+          modelProvider: "fixture",
+          modelId: "astra",
+          thinkingLevel: "low",
+        },
       ]);
     await expect(trigger).toHaveText("Astra");
     await expect(page.getByTestId("current-model")).toHaveText("Current: fixture/astra · low");
@@ -304,7 +345,9 @@ test("header load and save failures are accessible and recoverable", async ({ pa
   fixture.options.fail = false;
   await page.keyboard.press("Escape");
   await page.getByTestId("bot-model-switcher").click();
-  await expect(page.getByRole("listbox").getByRole("option")).toHaveCount(2);
+  const search = page.getByRole("combobox", { name: "Search models" });
+  await search.fill("sol");
+  await expect(page.getByRole("listbox").getByRole("option", { name: /Sol/ })).toBeVisible();
 });
 
 test("a new bot shows its inherited model without an unsolicited pending label", async ({

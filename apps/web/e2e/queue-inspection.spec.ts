@@ -289,7 +289,7 @@ test("queue controls and retained execution inspection", async ({ page }, testIn
   await expect(execution.getByRole("button", { name: "Flow", exact: true })).toHaveCount(0);
   await expect(execution.getByRole("button", { name: "Model", exact: true })).toHaveCount(0);
   await execution.getByRole("list", { name: "Retained events" }).getByText("bash").click();
-  await expect(page.getByText("npm test", { exact: false })).toBeVisible();
+  await expect(execution.getByText("npm test", { exact: false }).last()).toBeVisible();
   await expect(page.getByText("run.completed", { exact: false })).toHaveCount(0);
   await expect(execution.getByRole("button", { name: "Steer", exact: true })).toHaveCount(0);
   await expect(page.locator("[data-flow-node]")).toHaveCount(5);

@@ -82,16 +82,16 @@ test("routine editing updates in place, preserves timezone, and deletion persist
   await page.reload();
   await page.getByTitle("Agent computer").click();
 
-  await page.getByRole("button", { name: /Tokyo check-in/ }).click();
+  await page.getByRole("button", { name: /^Tokyo check-in / }).click();
   await page.locator("label:has-text('Name') input").fill("Weekday check-in");
   await page.locator("label:has-text('Instruction') textarea").fill("Send the revised update");
   await page.getByLabel("How often").selectOption("Weekdays");
   await saveAndReturn(page, "routines/update");
 
-  const updatedButton = page.getByRole("button", { name: /Weekday check-in/ });
+  const updatedButton = page.getByRole("button", { name: /^Weekday check-in / });
   await expect(updatedButton).toHaveCount(1);
   await expect(updatedButton).toContainText("Weekdays at 9:00 AM");
-  await expect(page.getByRole("button", { name: /Tokyo check-in/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Tokyo check-in / })).toHaveCount(0);
 
   const [updated] = await rpc<Routine[]>(page, "routines/list", { botId });
   expect(updated).toMatchObject({
@@ -222,7 +222,7 @@ test("switching bots while a routine save is pending does not reopen stale state
   await page.reload();
 
   await page.getByTitle("Agent computer").click();
-  await page.getByRole("button", { name: /First routine/ }).click();
+  await page.getByRole("button", { name: /^First routine / }).click();
   await page.locator("label:has-text('Name') input").fill("First routine updated");
 
   let releaseUpdate!: () => void;
@@ -262,8 +262,8 @@ test("switching bots while a routine save is pending does not reopen stale state
   await expect(page.getByRole("alert")).toHaveCount(0);
 
   await page.getByTitle("Agent computer").click();
-  await expect(page.getByRole("button", { name: /Second routine/ })).toHaveCount(1);
-  await expect(page.getByRole("button", { name: /First routine/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Second routine / })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /^First routine / })).toHaveCount(0);
 
   let releaseStaleList!: () => void;
   let sawStaleList!: () => void;
@@ -297,8 +297,8 @@ test("switching bots while a routine save is pending does not reopen stale state
   await staleListResponse;
   await page.unroute("**/rpc/routines/list");
 
-  await expect(page.getByRole("button", { name: /Second routine/ })).toHaveCount(1);
-  await expect(page.getByRole("button", { name: /First routine/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Second routine / })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /^First routine / })).toHaveCount(0);
 });
 
 function localSchedule(iso: string, timezone: string) {

@@ -63,6 +63,8 @@ test("running work morphs the send control into stop", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Send", exact: true })).toHaveCount(0);
   await expect(page.locator('[data-composer-icon="stop"]')).toBeVisible();
+  await page.getByRole("combobox", { name: "Message Fixture Bot" }).fill("steer later");
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
   await page.keyboard.down("Alt");
   await expect(page.getByRole("button", { name: "Steer", exact: true })).toBeVisible();
   await expect(page.locator('[data-composer-icon="steer"]')).toBeVisible();
@@ -71,8 +73,6 @@ test("running work morphs the send control into stop", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Queue", exact: true })).toBeVisible();
   await expect(page.locator('[data-composer-icon="followUp"]')).toBeVisible();
   await page.keyboard.up("Meta");
-  await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
-  await page.getByRole("combobox", { name: "Message Fixture Bot" }).fill("steer later");
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
   await expect(page.locator('[data-composer-icon="send"]')).toBeVisible();
   await page.getByRole("button", { name: "Choose message action" }).click();

@@ -66,11 +66,11 @@ test("thread queue, retained Flow, and Pi inventory screens", async ({ page }, t
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page.getByTestId("composer-error")).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "Inspect failed run", exact: true }).click();
-  await expect(page.getByRole("dialog").getByText("run.failed", { exact: false })).toBeVisible();
   const inspector = page.getByRole("dialog", { name: "Execution", exact: true });
   await expect(inspector.getByRole("navigation", { name: "Run", exact: true })).toBeVisible();
   const outline = inspector.getByTestId("execution-flow");
   await expect(outline.locator("[data-flow-node]").first()).toBeVisible();
+  await expect(outline.getByText("Failed", { exact: true })).toBeVisible();
   await expect(outline.getByRole("region", { name: "Evidence", exact: true })).toHaveCount(0);
   await expect(outline).not.toContainText("run:");
   await captureScreenshot(page, testInfo, "app-execution-flow");

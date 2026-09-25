@@ -86,11 +86,11 @@ test("bot creation, editing, and deletion persist", async ({ page }, testInfo) =
   );
   const settings = page.getByTestId("bot-settings");
   await expect(settings.getByRole("radio", { name: "Color 7" })).toBeChecked();
-  const modelSelect = settings.locator("label:has-text('Model') select");
+  const modelSearch = settings.getByRole("combobox", { name: "Search models" });
   const teamComputer = settings.getByRole("button", { name: "Team" });
   const openWork = settings.getByTestId("bot-scratchpad");
   await expect(teamComputer).toBeHidden();
-  await expect(modelSelect).toBeHidden();
+  await expect(modelSearch).toBeHidden();
   await expect(openWork).toBeHidden();
   await expect(settings.getByRole("button", { name: "Save", exact: true })).toBeVisible();
   await expect(settings.getByRole("button", { name: "Recover computer" })).toHaveCount(0);
@@ -100,8 +100,8 @@ test("bot creation, editing, and deletion persist", async ({ page }, testInfo) =
   await settings.getByText("Advanced", { exact: true }).click();
   await expect(teamComputer).toBeVisible();
   await expect(openWork).toBeVisible();
-  await expect(modelSelect).toBeVisible();
-  await expect(modelSelect).toContainText("Space default");
+  await expect(modelSearch).toBeVisible();
+  await expect(settings.getByTestId("current-model")).toBeVisible();
   await captureScreenshot(page, testInfo, "27a-bot-settings-model");
   await page.getByRole("button", { name: "Show computer" }).click();
   const sidePanel = page.getByTestId("side-panel");

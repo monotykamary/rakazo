@@ -1,5 +1,11 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, openNewSpace, signup } from "./helpers";
+import {
+  captureScreenshot,
+  closeNavigation,
+  completeOnboarding,
+  openNewSpace,
+  signup,
+} from "./helpers";
 
 function isPresented(error: Locator) {
   return error.evaluate((element) => {
@@ -59,6 +65,7 @@ test("a failed run is visible once without returning after reload", async ({ pag
 });
 
 test("a covered run error is not remembered until it is presented", async ({ page }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   const stamp = Date.now();
   await signup(page, `covered-run-failure-${stamp}@rakazo.test`, "password12", "Covered Failure");
   await completeOnboarding(page);
@@ -95,7 +102,7 @@ test("a covered run error is not remembered until it is presented", async ({ pag
   await nextSendButton.evaluate((button) => (button as HTMLButtonElement).click());
   await expect(error).toContainText("Scripted run failure", { timeout: 30_000 });
 
-  await page.getByRole("button", { name: "Close navigation" }).click();
+  await closeNavigation(page);
   await expect.poll(() => isPresented(error)).toBe(true);
   await expect.poll(() => seenRunErrorCount(page)).toBe(recordedErrorCount + 1);
   await captureScreenshot(page, testInfo, "covered-run-error-presented-after-drawer-close");

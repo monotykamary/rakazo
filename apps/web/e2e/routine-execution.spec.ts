@@ -143,7 +143,7 @@ test("routine test-run completes and survives reload", async ({ page }, testInfo
   await saved;
   await expect(page.getByRole("button", { name: "Save" })).toBeEnabled();
   await page.getByRole("button", { name: "Back" }).click();
-  const routine = page.getByRole("button", { name: /Daily verification/ });
+  const routine = page.getByRole("button", { name: /^Daily verification / });
   await expect(routine).toContainText("Weekdays at 9:00 AM");
   await captureScreenshot(page, testInfo, "33-routine-scheduled");
 
@@ -156,7 +156,7 @@ test("routine test-run completes and survives reload", async ({ page }, testInfo
   await page.reload();
   await expect(page.getByText(/routine-run-now-ok/i).first()).toBeVisible();
   await page.getByTitle("Agent computer").click();
-  await expect(page.getByRole("button", { name: /Daily verification/ })).toContainText(
+  await expect(page.getByRole("button", { name: /^Daily verification / })).toContainText(
     "Weekdays at 9:00 AM",
   );
   await captureScreenshot(page, testInfo, "35-routine-run-persisted");

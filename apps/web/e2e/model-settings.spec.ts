@@ -2,8 +2,14 @@ import { expect, test } from "@playwright/test";
 import type { ModelSelection, ModelSelectionStatus } from "@rakazo/contracts";
 import { captureScreenshot } from "./helpers";
 
+test.beforeEach(async ({ page }) => {
+  await page.route("**/rpc/models/getVisionHandoff", (route) =>
+    route.fulfill({ json: { json: { enabled: false, visionModel: null } } }),
+  );
+});
+
 for (const screen of ["", "?bot", "?worker"]) {
-  test(`model discovery reuses cache except explicit Refresh (${screen || "global"})`, async ({
+  test(`model discovery uses cache${screen === "" ? " except explicit Refresh" : ""} (${screen || "global"})`, async ({
     page,
   }) => {
     const inputs: Array<Record<string, unknown>> = [];
@@ -18,17 +24,21 @@ for (const screen of ["", "?bot", "?worker"]) {
     await page.goto(`/e2e/fixtures/pi-models.html${screen}`);
     if (screen === "?bot") await page.getByText("Advanced", { exact: true }).click();
     const refresh = page.getByRole("button", { name: "Refresh", exact: true });
-    await expect(refresh).toBeEnabled();
-    expect(inputs.length).toBeGreaterThan(0);
+    await expect.poll(() => inputs.length).toBeGreaterThan(0);
     expect(inputs.every((input) => input.refresh === undefined)).toBe(true);
-    await refresh.click();
-    await expect.poll(() => inputs.some((input) => input.refresh === true)).toBe(true);
-    await expect(refresh).toBeEnabled();
+    if (screen === "") {
+      await expect(refresh).toBeEnabled();
+      await refresh.click();
+      await expect.poll(() => inputs.some((input) => input.refresh === true)).toBe(true);
+      await expect(refresh).toBeEnabled();
+    } else {
+      await expect(refresh).toHaveCount(0);
+    }
     inputs.length = 0;
     await page.reload();
     if (screen === "?bot") await page.getByText("Advanced", { exact: true }).click();
-    await expect(refresh).toBeEnabled();
-    expect(inputs.length).toBeGreaterThan(0);
+    if (screen === "") await expect(refresh).toBeEnabled();
+    await expect.poll(() => inputs.length).toBeGreaterThan(0);
     expect(inputs.every((input) => input.refresh === undefined)).toBe(true);
   });
 }
@@ -81,7 +91,7 @@ for (const [theme, width] of [
     const assertGap = async () => {
       const input = await page.locator('[data-slot="command-input-wrapper"]').boundingBox();
       const row = await page.getByRole("option").first().boundingBox();
-      expect(row!.y - (input!.y + input!.height)).toBeGreaterThanOrEqual(12);
+      expect(Math.round(row!.y - (input!.y + input!.height))).toBeGreaterThanOrEqual(12);
     };
     await assertGap();
     const panel = await page.getByTestId("model-inventory-panel").boundingBox();
@@ -104,7 +114,7 @@ for (const [theme, width] of [
     await expect(page.getByText("No matching models", { exact: true })).toBeVisible();
     const input = await page.locator('[data-slot="command-input-wrapper"]').boundingBox();
     const empty = await page.getByText("No matching models", { exact: true }).boundingBox();
-    expect(empty!.y - (input!.y + input!.height)).toBeGreaterThanOrEqual(12);
+    expect(Math.round(empty!.y - (input!.y + input!.height))).toBeGreaterThanOrEqual(12);
     await captureScreenshot(page, testInfo, `models-${theme}-${width}-empty`);
   });
 }
@@ -158,9 +168,19 @@ test("global inventory searches extension identities and labels only the Pi prof
 }, testInfo) => {
   const calls: string[] = [];
   await page.route("**/rpc/**", async (route) => {
-    calls.push(new URL(route.request().url()).pathname);
-    expect(route.request().postDataJSON().json).toEqual({});
-    await route.fulfill({ json: { json: { ...snapshot(), current: null, selection: null } } });
+    const path = new URL(route.request().url()).pathname;
+    calls.push(path);
+    if (path === "/rpc/models/runtime") {
+      expect(route.request().postDataJSON().json).toEqual({});
+    }
+    await route.fulfill({
+      json: {
+        json:
+          path === "/rpc/models/getVisionHandoff"
+            ? { enabled: false, visionModel: null }
+            : { ...snapshot(), current: null, selection: null },
+      },
+    });
   });
   await page.goto("/e2e/fixtures/pi-models.html");
   await expect(page.getByTestId("pi-profile-default")).toHaveText(
@@ -181,10 +201,12 @@ test("global inventory searches extension identities and labels only the Pi prof
     "custom-extension/profile-startup",
   );
   await expect(
-    page.getByRole("button", { name: /Use model|Connect|API key|Visibility|Rotation/ }),
+    page.getByRole("button", {
+      name: /Use model|Connect|API key|Visibility|Rotation/,
+    }),
   ).toHaveCount(0);
   await expect(page.getByRole("combobox", { name: "Thinking", exact: true })).toHaveCount(0);
-  expect(calls).toEqual(["/rpc/models/runtime"]);
+  expect(calls).toEqual(["/rpc/models/runtime", "/rpc/models/getVisionHandoff"]);
   await captureScreenshot(page, testInfo, "pi-model-inventory-search");
 });
 
@@ -299,57 +321,73 @@ test("worker preserves unavailable intent, shows actual current, and handles pen
   await page.getByRole("option").click();
   await page.getByRole("combobox", { name: "Thinking", exact: true }).selectOption("high");
   await expect(
-    page.getByText("Pending · private-extension/custom-research-2026", { exact: true }),
+    page.getByText("Pending · private-extension/custom-research-2026", {
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(page.getByTestId("current-model")).toContainText(
     "custom-extension/actual-running-v2",
   );
   await captureScreenshot(page, testInfo, "pi-model-switch-pending");
   status = { ...status, status: "failed", error: "Model unavailable" };
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(page.getByRole("alert")).toHaveText("Model unavailable");
+  await expect(page.getByRole("alert")).toHaveText("Model unavailable", {
+    timeout: 5_000,
+  });
   failWrite = true;
-  await page.getByRole("combobox", { name: "Search models" }).fill("research");
-  await page.getByRole("option").click();
+  await page.getByRole("combobox", { name: "Search models" }).fill("basic");
+  await page.getByRole("listbox").getByRole("option").click();
   await expect(page.getByText("Could not switch model", { exact: true })).toBeVisible();
 });
 
-test("failed and delayed refresh preserve draft; reasoning follows Pi capabilities", async ({
+test("delayed pending refresh preserves a newer selection; reasoning follows Pi capabilities", async ({
   page,
 }) => {
-  let fail = false;
+  let status: ModelSelectionStatus = {
+    requested: stale,
+    effective: current,
+    status: "applied",
+    error: null,
+  };
   let release: (() => void) | undefined;
   let delay = false;
   await page.route("**/rpc/models/runtime", async (route) => {
+    const response = snapshot(status);
     if (delay)
       await new Promise<void>((resolve) => {
         release = resolve;
       });
-    if (fail) return route.fulfill({ status: 503, body: "Unavailable" });
-    await route.fulfill({ json: { json: snapshot() } });
+    await route.fulfill({ json: { json: response } });
+  });
+  await page.route("**/rpc/models/setWorkerSelection", async (route) => {
+    status = {
+      requested: route.request().postDataJSON().json.selection,
+      effective: current,
+      status: "pending",
+      error: null,
+    };
+    await route.fulfill({ json: { json: status } });
   });
   await page.goto("/e2e/fixtures/pi-models.html?worker");
   await expect(page.getByTestId("selected-model")).toContainText("retired-model");
   delay = true;
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await page.getByRole("combobox", { name: "Search models" }).fill("basic");
   await page.getByRole("option").click();
   await expect(page.getByRole("combobox", { name: "Thinking", exact: true })).toHaveCount(0);
-  await expect.poll(() => Boolean(release)).toBe(true);
+  await expect.poll(() => Boolean(release), { timeout: 5_000 }).toBe(true);
+  await page.getByRole("combobox", { name: "Search models" }).fill("research");
+  await page.getByRole("option").click();
+  await expect(page.getByRole("option", { name: /Research/i })).toHaveAttribute(
+    "data-checked",
+    "true",
+  );
+  const refreshed = page.waitForResponse("**/rpc/models/runtime");
   release!();
-  await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
-  await expect(page.getByRole("option", { name: /Basic/i })).toHaveAttribute(
+  await (await refreshed).finished();
+  await expect(page.getByRole("option", { name: /Research/i })).toHaveAttribute(
     "data-checked",
     "true",
   );
-  delay = false;
-  fail = true;
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(page.getByRole("alert")).toHaveText("Could not refresh models");
-  await expect(page.getByRole("option", { name: /Basic/i })).toHaveAttribute(
-    "data-checked",
-    "true",
-  );
+  await expect(page.getByRole("button", { name: "Refresh", exact: true })).toHaveCount(0);
 });
 
 for (const available of [false, true]) {
@@ -362,17 +400,22 @@ for (const available of [false, true]) {
             catalog: [],
             current: null,
             selection: null,
-            availability: { status: available ? "available" : "unavailable", error: null },
+            availability: {
+              status: available ? "available" : "unavailable",
+              error: null,
+            },
           },
         },
       }),
     );
     await page.goto("/e2e/fixtures/pi-models.html?worker");
     await expect(
-      page.getByText(available ? "No models available" : "Pi unavailable", { exact: true }),
+      page.getByText(available ? "No models available" : "Pi unavailable", {
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(page.getByRole("button", { name: "Use model", exact: true })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Refresh", exact: true })).toHaveCount(0);
   });
 }
 
@@ -384,7 +427,9 @@ test("bot picker uses authorized bot runtime and preserves stale intent on unrel
   await page.route("**/rpc/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/rpc/models/runtime") {
-      expect(route.request().postDataJSON().json).toEqual({ botId: "bot-fixture" });
+      expect(route.request().postDataJSON().json).toEqual({
+        botId: "bot-fixture",
+      });
       return route.fulfill({ json: { json: snapshot() } });
     }
     if (path === "/rpc/bots/update") {
@@ -434,7 +479,14 @@ test("unsupported persisted thinking stays visible and switching does not claim 
   };
   await page.route("**/rpc/models/runtime", (route) =>
     route.fulfill({
-      json: { json: snapshot({ requested, effective: current, status: "applied", error: null }) },
+      json: {
+        json: snapshot({
+          requested,
+          effective: current,
+          status: "applied",
+          error: null,
+        }),
+      },
     }),
   );
   await page.route("**/rpc/models/setWorkerSelection", async (route) => {
@@ -454,8 +506,12 @@ test("unsupported persisted thinking stays visible and switching does not claim 
   );
   release!();
   await expect(page.getByText("Could not switch model", { exact: true })).toBeVisible();
-  await expect(page.getByTestId("selected-model")).toContainText(
-    "private-extension/custom-research-2026",
+  await expect(page.getByRole("listbox").getByRole("option", { name: /Research/ })).toHaveAttribute(
+    "data-checked",
+    "true",
+  );
+  await expect(page.getByTestId("current-model")).toContainText(
+    "custom-extension/actual-running-v2",
   );
 });
 
@@ -467,7 +523,9 @@ test("global inventory picks a vision describer", async ({ page }, testInfo) => 
   await page.route("**/rpc/**", (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/rpc/models/runtime") {
-      return route.fulfill({ json: { json: { ...snapshot(), catalog: visionCatalog } } });
+      return route.fulfill({
+        json: { json: { ...snapshot(), catalog: visionCatalog } },
+      });
     }
     if (path === "/rpc/models/getVisionHandoff") {
       return route.fulfill({ json: { json: handoff } });

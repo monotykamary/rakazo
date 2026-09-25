@@ -90,7 +90,7 @@ test("consecutive images render as a fanned stack", async ({ page }, testInfo) =
   const fan = page.getByTestId("artifact-image-fan");
   await expect(fan).toBeVisible({ timeout: 20_000 });
   await expect(fan).toHaveAttribute("aria-label", "3 images");
-  await expect(fan.locator("img")).toHaveCount(3);
+  await expect(fan.locator("xpath=..").locator("img")).toHaveCount(3);
   await captureScreenshot(page, testInfo, "image-fan");
   await fan.click();
   const dialog = page.getByRole("dialog");

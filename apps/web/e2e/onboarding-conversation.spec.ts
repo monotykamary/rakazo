@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
+import { captureScreenshot, completeOnboarding, createBotFromPicker, rpc, signup } from "./helpers";
 
 function slackCard(page: Page) {
   return page.getByRole("group", { name: "Slack connection" });
@@ -11,10 +11,18 @@ test("focus choice suggests apps and preserves a completed connection", async ({
   const stamp = Date.now();
   await signup(page, `onboarding-${stamp}@rakazo.test`, "password12", "Robin");
   await completeOnboarding(page);
+  await expect(
+    page
+      .getByTestId("transcript")
+      .getByText("What do you want to build or get off your plate first?", { exact: true }),
+  ).toBeVisible();
 
+  await page.clock.install();
+  await createBotFromPicker(page, { name: "Assistant" });
   await expect(
     page.getByText("Hey Robin. Fresh start on my side, so I’ll keep this short."),
   ).toBeVisible();
+  await page.clock.fastForward(10_500);
   await expect(page.getByText("What do you want me on first?", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /Day-to-day work/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Research & writing/ })).toBeVisible();
@@ -24,10 +32,9 @@ test("focus choice suggests apps and preserves a completed connection", async ({
   await captureScreenshot(page, testInfo, "choice-card-onboarding");
 
   await page.getByRole("button", { name: /Day-to-day work/ }).click();
-  // The focus step suggests apps but must not rename the bot: the name the
-  // user chose during creation ("Chief") is preserved.
-  await expect(page.locator("main").getByText("Chief", { exact: true })).toBeVisible();
-  await expect(page.getByPlaceholder("Message Chief")).toBeVisible();
+  // The focus step suggests apps but preserves the name chosen during creation.
+  await expect(page.locator("main").getByText("Assistant", { exact: true })).toBeVisible();
+  await expect(page.getByPlaceholder("Message Assistant")).toBeVisible();
   await expect(page.getByText("Slack", { exact: true })).toBeVisible();
   await expect(page.getByText("Gmail", { exact: true })).toBeVisible();
   const connectionCards = page.getByRole("group", { name: / connection$/ });
@@ -92,6 +99,9 @@ test("focus choice suggests apps and preserves a completed connection", async ({
 test("choice refresh failures leave options available for retry", async ({ page }) => {
   await signup(page, `choice-refresh-${Date.now()}@rakazo.test`, "password12", "Choice Retry");
   await completeOnboarding(page);
+  await page.clock.install();
+  await createBotFromPicker(page, { name: "Assistant" });
+  await page.clock.fastForward(10_500);
   const choice = page.getByRole("button", { name: /Day-to-day work/ });
   await expect(choice).toBeEnabled();
   // Keep the existing choice rendered while its save succeeds and navigation refresh fails.

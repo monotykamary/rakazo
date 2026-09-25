@@ -5028,7 +5028,12 @@ export const Composer = memo(function Composer({
     }
     recordIfPresented();
     const observer = new MutationObserver(recordIfPresented);
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "style", "hidden", "inert", "aria-hidden", "open"],
+    });
     document.addEventListener("transitionend", recordIfPresented);
     document.addEventListener("visibilitychange", recordIfPresented);
     return () => {
