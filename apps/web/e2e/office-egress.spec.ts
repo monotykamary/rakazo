@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 
 test("bot settings show desktop egress in the office list", async ({ page }, testInfo) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/e2e/fixtures/office-egress.html");
   await expect(page.getByTestId("bot-settings")).toBeVisible();
@@ -20,4 +22,5 @@ test("bot settings show desktop egress in the office list", async ({ page }, tes
     path: screenshotPath,
   });
   await testInfo.attach("office-egress", { contentType: "image/png", path: screenshotPath });
+  expect(pageErrors).toEqual([]);
 });

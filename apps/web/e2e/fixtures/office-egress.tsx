@@ -80,6 +80,7 @@ window.fetch = async (input, init) => {
     });
   }
   if (url.includes("/rpc/voice/")) return json([]);
+  if (url.includes("/rpc/scratchpad/list")) return json([]);
   if (url.includes("/rpc/services/")) return json({ services: [] });
   if (url.includes("/rpc/")) return json(null);
   return originalFetch(input, init);
