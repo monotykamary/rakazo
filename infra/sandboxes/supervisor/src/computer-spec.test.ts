@@ -162,6 +162,7 @@ describe("graphical computer spec", () => {
     const start = readFileSync(path.join(root, "start.sh"), "utf8");
     const browser = readFileSync(path.join(root, "rakazo-browser"), "utf8");
     const desktop = readFileSync(path.join(root, "rakazo-browser.desktop"), "utf8");
+    expect(dockerfile).not.toMatch(/^\s*\/\//m);
     expect(dockerfile).toMatch(/chromium/);
     expect(dockerfile).toMatch(/rakazo-browser\.desktop/);
     expect(dockerfile).toMatch(/control.py/);

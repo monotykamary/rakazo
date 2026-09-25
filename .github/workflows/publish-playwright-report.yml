@@ -18,6 +18,9 @@ concurrency:
 jobs:
   publish:
     if: >-
+      vars.S3_BUCKET != '' &&
+      vars.S3_ENDPOINT != '' &&
+      vars.PLAYWRIGHT_PUBLIC_BASE_URL != '' &&
       (github.event.workflow_run.conclusion == 'success' ||
        github.event.workflow_run.conclusion == 'failure' ||
        github.event.workflow_run.conclusion == 'timed_out') &&

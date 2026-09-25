@@ -1,5 +1,14 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -64,6 +73,54 @@ describe("Bun workspace contract", () => {
     expect(existsSync(path.join(root, "pnpm-lock.yaml"))).toBe(false);
     expect(existsSync(path.join(root, "pnpm-workspace.yaml"))).toBe(false);
   });
+
+  it("validates mobile dependencies against the locked SDK instead of a live release catalog", () => {
+    const mobile = JSON.parse(read("apps/mobile/package.json"));
+    expect(mobile.scripts.check).toBe(
+      "cross-env EXPO_OFFLINE=1 expo install --check && tsc --noEmit -p tsconfig.json",
+    );
+    expect(pkg.devDependencies["cross-env"]).toBeDefined();
+  });
+
+  it("still rejects incompatible installed mobile packages while offline", () => {
+    const { directory, write } = fixture();
+    const mobileRequire = createRequire(path.join(root, "apps/mobile/package.json"));
+    const expoRoot = path.dirname(mobileRequire.resolve("expo/package.json"));
+    const expoVersion = JSON.parse(
+      readFileSync(path.join(expoRoot, "package.json"), "utf8"),
+    ).version;
+    write("package.json", {
+      name: "mobile-fixture",
+      private: true,
+      dependencies: { expo: expoVersion, "expo-audio": "0.0.0" },
+    });
+    write("node_modules/expo-audio/package.json", { name: "expo-audio", version: "0.0.0" });
+    symlinkSync(expoRoot, path.join(directory, "node_modules/expo"), "dir");
+    const result = spawnSync(
+      process.execPath,
+      [path.join(expoRoot, "bin/cli"), "install", "--check", "--json"],
+      {
+        cwd: directory,
+        env: { ...env, CI: "1", EXPO_OFFLINE: "1" },
+        encoding: "utf8",
+      },
+    );
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stdout).toContain('"packageName": "expo-audio"');
+    expect(result.stdout).toContain('"actualVersion": "0.0.0"');
+    expect(result.stdout).toContain('"upToDate": false');
+  });
+
+  it.each(["ci.yml", "desktop-macos-screenshot.yml"])(
+    "installs Electron before launching smoke tests in %s",
+    (file) => {
+      const workflow = read(`.github/workflows/${file}`);
+      const install = workflow.indexOf("run: bun run --cwd apps/desktop install-electron");
+      const smoke = workflow.indexOf("bun run --cwd apps/desktop playwright test");
+      expect(install).toBeGreaterThan(0);
+      expect(smoke).toBeGreaterThan(install);
+    },
+  );
 
   it("rejects other package managers before installation", () => {
     const command = path.join(root, "scripts/check-package-manager.mjs");

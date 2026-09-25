@@ -936,13 +936,35 @@ export function killOwnedProcessTree(
 }
 
 export function localPiChildPort(child: ChildProcessWithoutNullStreams): PrivateDuplex {
+  let writeFailure: Error | undefined;
+  const pendingWrites = new Set<(error: Error) => void>();
+  child.stdin.on("error", (error: Error) => {
+    writeFailure = error;
+    for (const reject of pendingWrites) reject(error);
+    pendingWrites.clear();
+  });
   return {
     incoming: child.stdout as AsyncIterable<Uint8Array>,
     write: (frame) =>
       new Promise<void>((resolveWrite, reject) => {
-        child.stdin.write(frame, (error?: Error | null) =>
-          error ? reject(error) : resolveWrite(),
-        );
+        if (writeFailure) {
+          reject(writeFailure);
+          return;
+        }
+        pendingWrites.add(reject);
+        const finish = (error?: Error | null) => {
+          pendingWrites.delete(reject);
+          const failure = error ?? writeFailure;
+          if (failure) {
+            writeFailure = failure;
+            reject(failure);
+          } else resolveWrite();
+        };
+        try {
+          child.stdin.write(frame, finish);
+        } catch (error) {
+          finish(error instanceof Error ? error : new Error("Local Pi stdin write failed"));
+        }
       }),
     close: () =>
       new Promise<void>((resolveClose) => {

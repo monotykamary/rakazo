@@ -1,10 +1,12 @@
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRunRequest, AgentRuntimeEvent } from "@rakazo/adapter-kit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { builtinAgentTools } from "./builtin-tools.js";
-import { LocalPiRuntime } from "./pi-local-runtime.js";
+import { LocalPiRuntime, localPiChildPort } from "./pi-local-runtime.js";
 import {
   readLocalPiEmulatorLog,
   writeLocalPiEmulator,
@@ -51,6 +53,35 @@ async function waitFor(condition: () => Promise<boolean>, timeout = 5_000): Prom
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
+
+describe("localPiChildPort", () => {
+  it("handles child stdin EPIPE and rejects the pending write", async () => {
+    const stdin = Object.assign(new EventEmitter(), {
+      destroyed: false,
+      write: (_frame: Uint8Array, callback: (error?: Error | null) => void) => {
+        const error = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+        queueMicrotask(() => {
+          stdin.emit("error", error);
+          callback(error);
+        });
+        return true;
+      },
+      end: (callback: () => void) => {
+        stdin.destroyed = true;
+        callback();
+      },
+    });
+    const child = {
+      stdin,
+      stdout: (async function* () {})(),
+    } as unknown as ChildProcessWithoutNullStreams;
+
+    await expect(localPiChildPort(child).write(new Uint8Array([1]))).rejects.toMatchObject({
+      code: "EPIPE",
+    });
+    expect(stdin.listenerCount("error")).toBe(1);
+  });
+});
 
 describe("LocalPiRuntime", () => {
   let root: string;

@@ -1,5 +1,5 @@
-// Same digest pin as infra/compose/Dockerfile so the computer image gets the
-// exact Node toolchain the server image builds with, without a curl installer.
+# Same digest pin as infra/compose/Dockerfile so the computer image gets the
+# exact Node toolchain the server image builds with, without a curl installer.
 FROM node:24-bookworm@sha256:be23f54a88d34e8824c741b19b91064094f92c1c97b194144bfc8b50d67258e2 AS node-toolchain
 
 FROM debian:bookworm-slim AS capture-builder

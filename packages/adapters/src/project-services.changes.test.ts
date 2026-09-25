@@ -24,7 +24,14 @@ mkdirSync(markers);
 afterAll(() => rmSync(repo, { recursive: true, force: true }));
 
 function git(argv: string[], cwd = repo): void {
-  const result = spawnSync("git", argv, { cwd, encoding: "utf8" });
+  const result = spawnSync(
+    "git",
+    ["-c", "core.fsmonitor=false", "-c", "commit.gpgsign=false", ...argv],
+    {
+      cwd,
+      encoding: "utf8",
+    },
+  );
   if (result.status !== 0) throw new Error(`git ${argv.join(" ")} failed: ${result.stderr}`);
 }
 
@@ -32,7 +39,7 @@ const hostileScript = join(repo, "hostile.sh");
 writeFileSync(hostileScript, '#!/bin/sh\ntouch "$MARKERS/hostile-$1"\nexit 1\n');
 chmodSync(hostileScript, 0o755);
 
-git(["init", "-q"]);
+git(["init", "-q", "--initial-branch=main"]);
 git(["config", "user.email", "test@rakazo.test"]);
 git(["config", "user.name", "Test"]);
 git(["config", "diff.hostile.textconv", `${hostileScript} textconv`]);
@@ -54,6 +61,7 @@ const sandbox = {
     const result = spawnSync(request.argv[0] ?? "git", request.argv.slice(1), {
       cwd: request.cwd ?? repo,
       encoding: "utf8",
+      env: { ...process.env, MARKERS: markers },
     });
     yield { type: "stdout", data: result.stdout };
     yield { type: "stderr", data: result.stderr };

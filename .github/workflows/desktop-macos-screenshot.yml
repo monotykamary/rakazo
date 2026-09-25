@@ -37,6 +37,9 @@ jobs:
           node-version: 24
       - run: bun install --frozen-lockfile
       - run: bun run --filter @rakazo/desktop build
+      - name: Install Electron
+        timeout-minutes: 3
+        run: bun run --cwd apps/desktop install-electron
       - name: Capture native macOS setup window
         run: >-
           bun run --cwd apps/desktop playwright test

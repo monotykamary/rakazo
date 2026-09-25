@@ -130,12 +130,7 @@ integration("atomic edit actual executor effect boundary", () => {
       const authority = new RunAuthority(request, new AbortController().signal);
       const pending: AgentRuntimeEvent[] = [];
       const makeEdit = (run: AgentRunRequest) => {
-        const bridge = new ToolBridge(
-          run,
-          authority,
-          (event) => pending.push(event),
-          async () => undefined,
-        );
+        const bridge = new ToolBridge(run, authority, (event) => pending.push(event));
         const entry = bridge.catalog.find((tool) => tool.name === "edit_file")!;
         const proxy: ToolDefinition = {
           name: "edit_file",

@@ -67,8 +67,12 @@ jobs:
           DATABASE_URL: postgres://rakazo:rakazo@127.0.0.1:5433/rakazo
           BETTER_AUTH_SECRET: ci-build-auth-secret-at-least-32-characters
           ENCRYPTION_KEY: ci-build-encryption-key-at-least-32-characters
+      # Electron downloads lazily since v44; do not spend a smoke test's timeout installing it.
+      - name: Install Electron
+        timeout-minutes: 3
+        run: bun run --cwd apps/desktop install-electron
       - name: Electron smoke
-        run: xvfb-run --auto-servernum bun run --cwd apps/desktop playwright test --config e2e/playwright.config.ts
+        run: xvfb-run --auto-servernum bun run --cwd apps/desktop playwright test --config e2e/playwright.config.ts --max-failures=1
       - name: Upload desktop setup screenshots
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

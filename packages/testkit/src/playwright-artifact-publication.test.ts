@@ -84,6 +84,27 @@ with zipfile.ZipFile(sys.argv[1], "w") as archive:
 }
 
 describe("Playwright artifact publication boundary", () => {
+  it("publishes only when hosted storage is configured and keeps nightly artifacts regardless", () => {
+    const reusable = readFileSync(path.join(repoRoot, ".github/workflows/playwright.yml"), "utf8");
+    const nightly = readFileSync(
+      path.join(repoRoot, ".github/workflows/nightly-verification.yml"),
+      "utf8",
+    );
+    const publisherGate = workflow.match(/publish:\n\s+if: >-\n([\s\S]*?)\n\s+runs-on:/)?.[1];
+    const reusableGate = reusable.match(
+      /name: Publish Playwright visual report\n\s+if: >-\n([\s\S]*?)\n\s+env:/,
+    )?.[1];
+    for (const gate of [publisherGate, reusableGate]) {
+      expect(gate).toBeDefined();
+      for (const variable of ["S3_BUCKET", "S3_ENDPOINT", "PLAYWRIGHT_PUBLIC_BASE_URL"]) {
+        expect(gate).toContain(`vars.${variable} != ''`);
+      }
+    }
+    expect(reusable).toContain("if: always() && inputs.upload_artifacts");
+    expect(nightly).toContain("upload_artifacts: true");
+    expect(nightly).toContain("publish_report: true");
+  });
+
   it("keeps extraction and explicit report inputs outside the trusted checkout", () => {
     expect(workflow).not.toContain("actions/download-artifact@");
     expect(workflow).toContain(
