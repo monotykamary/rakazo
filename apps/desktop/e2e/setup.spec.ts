@@ -80,7 +80,7 @@ test("first run asks whether to use a local or existing instance", async () => {
 
   await expect(setup.getByRole("heading", { name: "Welcome to Rakazo" })).toBeVisible();
   await expect(setup.getByText("Choose which server this app should use.")).toBeVisible();
-  await expect(setup.getByText("This computer")).toBeVisible();
+  await expect(setup.getByText("This computer", { exact: true })).toBeVisible();
   await expect(setup.getByText("Another server")).toBeVisible();
   await expect(setup.locator(".card")).toHaveCount(0);
 
