@@ -20,10 +20,14 @@ test("focus choice suggests apps and preserves a completed connection", async ({
   await page.clock.install();
   await createBotFromPicker(page, { name: "Assistant" });
   await expect(
-    page.getByText("Hey Robin. Fresh start on my side, so I’ll keep this short."),
+    page
+      .getByTestId("transcript")
+      .getByText("Hey Robin. Fresh start on my side, so I’ll keep this short."),
   ).toBeVisible();
   await page.clock.fastForward(10_500);
-  await expect(page.getByText("What do you want me on first?", { exact: true })).toBeVisible();
+  await expect(
+    page.getByTestId("transcript").getByText("What do you want me on first?", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: /Day-to-day work/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Research & writing/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /A bit of everything/ })).toBeVisible();

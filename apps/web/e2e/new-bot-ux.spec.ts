@@ -41,7 +41,9 @@ test("create opens form, then empty chat; picker lists bots; sidebar collapses",
   await page.waitForURL(/\/app\/[^/]+$/);
   await expect(page.getByPlaceholder("Message New Bot")).toBeVisible();
   await expect(page.getByTestId("side-panel")).toHaveAttribute("data-panel", "closed");
-  await expect(page.getByText("What do you want me on first?", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByTestId("transcript").getByText("What do you want me on first?", { exact: true }),
+  ).toHaveCount(0);
   await captureScreenshot(page, testInfo, "create-chat-sidepanel-closed");
 
   await page.getByTestId("minimize-bots-sidebar").click();
@@ -71,23 +73,41 @@ test("later bot waits before showing the focus card; sending cancels it", async 
       .getByText("What do you want to build or get off your plate first?", { exact: true }),
   ).toBeVisible();
 
-  await page.clock.install();
+  // UI and network latency must not consume the ten-second delay under test.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const now = new Date();
+  await page.clock.install({ time: now });
+  await page.clock.pauseAt(new Date(now.getTime() + 1_000));
+  const started = page.waitForResponse("**/rpc/onboarding/start");
   await createBotFromPicker(page);
+  await (await started).finished();
   await expect(page.getByPlaceholder("Message New Bot")).toBeVisible();
-  await expect(page.getByText("What do you want me on first?", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByTestId("transcript").getByText("What do you want me on first?", { exact: true }),
+  ).toHaveCount(0);
 
   await page.clock.fastForward(9_000);
-  await expect(page.getByText("What do you want me on first?", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByTestId("transcript").getByText("What do you want me on first?", { exact: true }),
+  ).toHaveCount(0);
   await page.clock.fastForward(1_500);
-  await expect(page.getByText("What do you want me on first?", { exact: true })).toBeVisible();
+  await page.clock.resume();
+  await expect(
+    page.getByTestId("transcript").getByText("What do you want me on first?", { exact: true }),
+  ).toBeVisible();
 
   await createBotFromPicker(page, { name: "Later Bot" });
-  await expect(page.getByText("What do you want me on first?", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByTestId("transcript").getByText("What do you want me on first?", { exact: true }),
+  ).toHaveCount(0);
   const composer = page.getByPlaceholder(/Message/);
   await composer.fill("I'll set this up myself");
   await page.keyboard.press("Enter");
+  await expect(composer).toHaveValue("");
   await page.clock.fastForward(12_000);
-  await expect(page.getByText("What do you want me on first?", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByTestId("transcript").getByText("What do you want me on first?", { exact: true }),
+  ).toHaveCount(0);
 });
 
 test("plus picker can create a Private computer bot", async ({ page }, testInfo) => {
