@@ -218,7 +218,10 @@ integration("executor durable runtime boundary", () => {
   it("keeps explicit instructions minimal and exposes authorized app context only on demand", async () => {
     await app.prisma.bot.update({ where: { id: botId }, data: { instructions: "Be precise." } });
     inspectRequest = async (request) => {
-      expect(request.instructions).toBe("Be precise.");
+      expect(request.instructions.split("\n\n")).toEqual([
+        expect.stringMatching(/^Current date and time: /),
+        "Be precise.",
+      ]);
       expect(request.tools.find((tool) => tool.name === "get_bot_context")).toMatchObject({
         readOnly: true,
       });
