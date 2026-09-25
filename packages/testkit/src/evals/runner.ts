@@ -5,6 +5,7 @@ import type { ModelConnectInput, RunStatus } from "@rakazo/contracts";
 import { ACTIVE_RUN_STATUSES, isTerminal } from "@rakazo/core";
 import type { createDb } from "@rakazo/db";
 import { sessionCookieHeader } from "../index.js";
+import { seedLegacyModelCredential } from "../legacy-model-fixture.js";
 import type { EvalCase, Evidence } from "./cases.js";
 import { emptyTrial, type FailureCategory, redact, type TrialResult } from "./report.js";
 import { EvalServices } from "./services.js";
@@ -116,7 +117,13 @@ export async function runTrial(
       });
       if (!signup.ok) throw new EvalFailure("harness", `Fixture signup failed (${signup.status})`);
       cookie = sessionCookieHeader(signup);
-      await rpc(app, cookie, "models/connect", options.connection);
+      // Upgrade-era fixture state, not a call to the retired public model manager.
+      // The composed app must use LEGACY_MODEL_FIXTURE_KEY to read this credential.
+      await seedLegacyModelCredential(
+        prisma,
+        await rpc<{ userId: string; spaceId: string }>(app, cookie, "me"),
+        options.connection,
+      );
       for (const provider of scenario.connections ?? ["GMAIL", "CRM", "GITHUB"])
         await rpc(app, cookie, "connections/begin", {
           connectorId: "composio",
@@ -136,10 +143,12 @@ export async function runTrial(
         select: { userId: true, spaceId: true },
       });
       actors.push({ botId, cookie, ...persistedBot });
-      await rpc(app, cookie, "bots/update", {
-        botId,
-        modelProvider: options.connection.provider,
-        modelId: options.connection.modelId,
+      await prisma.bot.update({
+        where: { id: botId },
+        data: {
+          modelProvider: options.connection.provider,
+          modelId: options.connection.modelId,
+        },
       });
       messagingLinked = false;
       messagingAddress = `U-eval-${randomUUID()}`;

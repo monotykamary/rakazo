@@ -7,6 +7,7 @@ import { createTestProcessHost } from "../../adapters/src/pi-rpc-test-host.js";
 import { EVAL_CASES } from "./evals/cases.js";
 import { runTrial } from "./evals/runner.js";
 import { EvalSandboxProvider } from "./evals/sandbox.js";
+import { LEGACY_MODEL_FIXTURE_KEY } from "./legacy-model-fixture.js";
 import { type ModelEmulatorRequest, startModelEmulator } from "./model-emulator.js";
 
 const databaseAvailable = process.env.VERIFY_DATABASE === "1" && Boolean(process.env.DATABASE_URL);
@@ -105,7 +106,7 @@ describe.skipIf(!databaseAvailable)("offline Slack customer-support eval", () =>
         maxToolCalls: 8,
         createApp: async (composio, messaging) => {
           const sandbox = new EvalSandboxProvider();
-          const handles = await createApp({
+          return createApp({
             sandbox,
             databaseUrl: process.env.DATABASE_URL!,
             realtimeDatabaseUrl: process.env.DATABASE_URL!,
@@ -114,20 +115,16 @@ describe.skipIf(!databaseAvailable)("offline Slack customer-support eval", () =>
             dataDir,
             sandboxProvider: "fake",
             agentRuntime: "pi",
+            // Real sealed Pi over a real RPC worker, including trial cleanup aborts.
+            runtime: new PiAgentRuntime({ host: createTestProcessHost() }),
             wakeupDriver: "memory",
             signupsEnabled: "true",
             composio,
             messaging,
             messagingOpenSignup: false,
             cloudAgentProvider: "none",
-            encryptionKey: "offline-customer-eval-encryption-key",
+            encryptionKey: LEGACY_MODEL_FIXTURE_KEY,
           });
-          // Real sealed Pi over a real RPC worker; never a production supervisor host.
-          // abort stays bound so trial cleanup can stop a paused worker too.
-          const runtime = new PiAgentRuntime({ host: createTestProcessHost() });
-          handles.runtime.run = runtime.run.bind(runtime);
-          handles.runtime.abort = runtime.abort.bind(runtime);
-          return handles;
         },
       });
 

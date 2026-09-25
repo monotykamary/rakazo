@@ -5,6 +5,7 @@ import { PiAgentRuntime } from "@rakazo/adapters";
 import { describe, expect, it } from "vitest";
 import { createTestProcessHost } from "../../adapters/src/pi-rpc-test-host.js";
 import { runTrial } from "./evals/runner.js";
+import { LEGACY_MODEL_FIXTURE_KEY } from "./legacy-model-fixture.js";
 import { startModelEmulator } from "./model-emulator.js";
 
 const databaseAvailable = process.env.VERIFY_DATABASE === "1" && Boolean(process.env.DATABASE_URL);
@@ -82,7 +83,7 @@ describe.skipIf(!databaseAvailable)("eval history accounting", () => {
             timeoutMs: 45_000,
             maxToolCalls,
             createApp: async (composio) => {
-              const handles = await createApp({
+              return createApp({
                 databaseUrl: process.env.DATABASE_URL!,
                 realtimeDatabaseUrl: process.env.DATABASE_URL!,
                 authUrl: "http://127.0.0.1:5173",
@@ -90,17 +91,13 @@ describe.skipIf(!databaseAvailable)("eval history accounting", () => {
                 dataDir,
                 sandboxProvider: "fake",
                 agentRuntime: "pi",
+                // Real sealed Pi over a real RPC worker, including trial cleanup aborts.
+                runtime: new PiAgentRuntime({ host: createTestProcessHost() }),
                 wakeupDriver: "memory",
                 signupsEnabled: "true",
                 composio,
-                encryptionKey: "offline-eval-history-encryption-key",
+                encryptionKey: LEGACY_MODEL_FIXTURE_KEY,
               });
-              // Real sealed Pi over a real RPC worker; never a production supervisor host.
-              // abort stays bound so trial cleanup can stop a paused worker too.
-              const runtime = new PiAgentRuntime({ host: createTestProcessHost() });
-              handles.runtime.run = runtime.run.bind(runtime);
-              handles.runtime.abort = runtime.abort.bind(runtime);
-              return handles;
             },
           },
         );
