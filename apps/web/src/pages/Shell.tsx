@@ -5723,11 +5723,11 @@ export const Composer = memo(function Composer({
               render={
                 <Button
                   size="icon"
+                  disabled={sending || disabled || (!stopping && !canSend)}
                   className="size-9 shrink-0 rounded-none border-0 bg-transparent text-primary-foreground hover:bg-primary/80"
                 />
               }
               aria-label={actionLabel}
-              disabled={sending || disabled || (!stopping && !canSend)}
               onPointerDown={(event) => {
                 if (event.pointerType !== "touch" || queueEdit) return;
                 touchLongPressRef.current = false;
