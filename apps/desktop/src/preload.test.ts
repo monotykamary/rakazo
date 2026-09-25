@@ -24,7 +24,7 @@ function runPreload(file: string, ipc: { invoke?: unknown; on?: unknown; off?: u
 }
 
 describe("desktop preload bridge", () => {
-  it("exposes only the platform, the four window operations, the updater, and the OAuth bridge", async () => {
+  it("exposes only the platform and narrow window, updater, egress, and OAuth operations", async () => {
     const { invoke, exposeInMainWorld } = runPreload("preload.cjs");
 
     expect(exposeInMainWorld).toHaveBeenCalledTimes(1);
@@ -39,6 +39,7 @@ describe("desktop preload bridge", () => {
       "toggleMaximize",
     ]);
     expect(Object.keys(bridge.update).sort()).toEqual(["check", "download", "install", "state"]);
+    expect(Object.keys(bridge.egress ?? {}).sort()).toEqual(["onChange", "start", "state", "stop"]);
 
     await bridge.oauth.open?.("https://provider.example.com/authorize");
     await bridge.oauth.cancel?.("https://provider.example.com/authorize");
