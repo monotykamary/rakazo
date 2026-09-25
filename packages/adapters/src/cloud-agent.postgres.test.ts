@@ -238,7 +238,8 @@ describePostgres(
       await after.clear();
       await after.poll(afterId);
       expect(await after.state(afterId)).toMatchObject({ status: "cancelled", nextPollAt: null });
-      expect(await prisma.message.count({ where: { threadId: after.thread.id } })).toBe(0);
+      // Clear retains the transcript but abandons work from the previous session.
+      expect(await prisma.message.count({ where: { threadId: after.thread.id } })).toBe(1);
       expect(await after.wakes()).toHaveLength(0);
       expect(await after.tool("status", { id: afterId })).toMatchObject({
         id: afterId,
@@ -429,28 +430,33 @@ describePostgres(
       expect(h.wire.ids.size).toBe(1);
     });
 
-    it("fences concurrent pollers and preserves cancellation during launch", async () => {
-      const h = await setup();
-      const id = await h.launch();
-      const entered = deferred();
-      const release = deferred();
-      const original = h.connection.provider.launch.bind(h.connection.provider);
-      vi.spyOn(h.connection.provider, "launch").mockImplementationOnce(async (...args) => {
-        entered.resolve();
-        await release.promise;
-        return original(...args);
-      });
-      const polling = h.poll(id);
-      await entered.promise;
-      await h.poll(id);
-      await h.tool("cancel", { id });
-      release.resolve();
-      await polling;
-      await h.poll(id);
-      await h.poll(id);
-      expect(h.wire.ids.size).toBe(1);
-      expect(await h.state(id)).toMatchObject({ status: "cancelled", cancelRequested: false });
-    });
+    it.each(["cancel", "clear"] as const)(
+      "fences concurrent pollers and preserves %s during launch",
+      async (action) => {
+        const h = await setup();
+        const id = await h.launch();
+        const entered = deferred();
+        const release = deferred();
+        const original = h.connection.provider.launch.bind(h.connection.provider);
+        vi.spyOn(h.connection.provider, "launch").mockImplementationOnce(async (...args) => {
+          entered.resolve();
+          await release.promise;
+          return original(...args);
+        });
+        const polling = h.poll(id);
+        await entered.promise;
+        await h.poll(id);
+        if (action === "clear") await h.clear();
+        else await h.tool("cancel", { id });
+        release.resolve();
+        await polling;
+        await h.poll(id);
+        await h.poll(id);
+        expect(h.wire.ids.size).toBe(1);
+        expect(await h.state(id)).toMatchObject({ status: "cancelled", cancelRequested: false });
+        if (action === "clear") expect(await h.wakes()).toHaveLength(0);
+      },
+    );
 
     it("rejects overlapping follow-ups and preserves remote failure as a terminal result", async () => {
       const h = await setup();

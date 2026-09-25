@@ -13,6 +13,15 @@ import { cloudAgentsEnabled } from "./cloud-agent-factory.js";
 import { type CloudAgentDeps, cloudAgentBlock, enqueueCloudAgent } from "./cloud-agent-service.js";
 import { cloudAgentLaunchSchema, cloudAgentPromptSchema } from "./cloud-agent-tools.js";
 
+function isCurrentSessionCard(
+  card: { seq: number; thread: { sessionStartedAfterSeq: number | null } } | null,
+) {
+  return (
+    card !== null &&
+    (card.thread.sessionStartedAfterSeq === null || card.seq > card.thread.sessionStartedAfterSeq)
+  );
+}
+
 /** Reconcile one persisted intent. A fenced lease serializes remote mutations. */
 export async function pollCloudAgent(
   deps: CloudAgentDeps,
@@ -48,7 +57,7 @@ export async function pollCloudAgent(
     const [card, member, bot] = await Promise.all([
       deps.prisma.message.findFirst({
         where: { id: agent.messageId ?? "", threadId: agent.threadId },
-        select: { id: true },
+        select: { id: true, seq: true, thread: { select: { sessionStartedAfterSeq: true } } },
       }),
       deps.prisma.spaceMember.findUnique({
         where: { spaceId_userId: { spaceId: agent.spaceId, userId: agent.userId } },
@@ -58,7 +67,7 @@ export async function pollCloudAgent(
         where: { id: agent.botId, spaceId: agent.spaceId, userId: agent.userId, archivedAt: null },
       }),
     ]);
-    const abandoned = !card || !member || !bot;
+    const abandoned = !isCurrentSessionCard(card) || !member || !bot;
     if ((abandoned || agent.cancelRequested) && !agent.remoteId && !agent.launchDispatched) {
       await finishPoll(
         deps,
@@ -242,6 +251,7 @@ async function finishPoll(
             id: agent.messageId ?? "",
             threadId: agent.threadId,
           },
+          include: { thread: { select: { sessionStartedAfterSeq: true } } },
         })
       : null;
     const [member, bot] = await Promise.all([
@@ -254,7 +264,7 @@ async function finishPoll(
         select: { id: true },
       }),
     ]);
-    const detached = abandoned || !message || !member || !bot;
+    const detached = abandoned || !isCurrentSessionCard(message) || !member || !bot;
     const status = typeof data.status === "string" ? data.status : agent.status;
     const terminal = status !== "running";
     const cancelRequested =
