@@ -95,13 +95,26 @@ describe.skipIf(!databaseAvailable)("offline Pi computer approval", () => {
               const envelope = toolEnvelope(request, "observe");
               expect(envelope.isError).toBe(false);
               expect(String(envelope.text)).toContain("computer observed");
-              const image = envelope.content?.find((part) => part.type === "image") as
-                | { mimeType: string; data: string }
-                | undefined;
-              expect(image?.mimeType).toBe("image/png");
-              expect([...Buffer.from(image!.data, "base64").subarray(0, 8)]).toEqual([
-                137, 80, 78, 71, 13, 10, 26, 10,
-              ]);
+              expect(envelope.content).toContainEqual(
+                expect.objectContaining({ type: "image", mimeType: "image/png" }),
+              );
+              // Fabric keeps image bytes in model-visible parts, not the text envelope.
+              const observationIndex = request.messages.findLastIndex(
+                (message) => message.role === "tool" && message.tool_call_id === "observe",
+              );
+              expect(observationIndex).toBeGreaterThanOrEqual(0);
+              const images = request.messages
+                .slice(observationIndex + 1)
+                .flatMap((message) => (Array.isArray(message.content) ? message.content : []))
+                .filter((part) => part.type === "image_url");
+              expect(images.length).toBeGreaterThan(0);
+              for (const image of images) {
+                const imageUrl = image.image_url.url as string;
+                expect(imageUrl.startsWith("data:image/png;base64,")).toBe(true);
+                expect([...Buffer.from(imageUrl.split(",")[1]!, "base64").subarray(0, 8)]).toEqual([
+                  137, 80, 78, 71, 13, 10, 26, 10,
+                ]);
+              }
             },
             response: fabricCall("pending-action", "computer_act", approvedArgs),
           },
