@@ -7,7 +7,7 @@
   "main": "dist/main.js",
   "scripts": {
     "dev": "bun run build && electron .",
-    "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs",
+    "build": "tsc --noEmit -p tsconfig.json && bun build ./src/main.ts --target=node --format=esm --external electron --external electron-updater --outdir dist && node scripts/copy-static.mjs",
     "pack": "bun run --filter @rakazo/web build && bun run build && electron-builder --mac --win --linux",
     "pack:dir": "bun run --filter @rakazo/web build && bun run build && electron-builder --dir",
     "check": "tsc --noEmit -p tsconfig.json",

@@ -2,8 +2,8 @@ import { copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// tsc only emits the TypeScript sources; the preload bridges and the setup
-// window's static assets have to be copied into dist alongside them.
+// The main-process bundle excludes the preload bridges and setup assets; copy
+// them alongside it so import.meta.dirname resolves them in installed builds.
 const STATIC_FILES = ["preload.cjs", "setup-preload.cjs", "setup.html", "setup.css", "setup.js"];
 const TOKENS_FILE = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
